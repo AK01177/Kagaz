@@ -5,7 +5,7 @@ AI-powered document workflow automation platform. Automatically classifies docum
 Built for **IT314 – Software Engineering**, following Agile (SCRUM).
 
 ## What it does
-
+- User uploads the documents and selects the organization
 - Classifies uploaded documents (invoice, contract, HR form, academic record, etc.)
 - Extracts key fields from documents
 - Validates extracted data against organizational policy (RAG-based)
@@ -16,7 +16,7 @@ Built for **IT314 – Software Engineering**, following Agile (SCRUM).
 
 ## Team
 
-9 members — IT314 Software Engineering project.
+10 members — IT314 Software Engineering project.
 
 ## Status
 
