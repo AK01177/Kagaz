@@ -1,5 +1,3 @@
-
-
 # Contributing to Kagaz
 
 Thank you for contributing to Kagaz.
