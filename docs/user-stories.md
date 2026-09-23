@@ -598,3 +598,862 @@ I want every policy-based validation or explanation to remain linked to the poli
 **AC4.** An auditor can identify which policy version was used for a historical result.
 
 ---
+
+# EPIC 5 — Human Review, Routing & Approval
+
+## CARD US-24 — Review Queue
+
+### FRONT
+
+**As a Reviewer,**  
+I want a queue of documents requiring manual attention,  
+**so that I can work through exceptions systematically instead of searching the entire document repository.**
+
+**Stakeholder:** Reviewer  
+**Traceability:** FR-16
+
+### BACK — Acceptance Criteria
+
+**AC1.** Documents requiring manual review appear in the review queue.
+
+**AC2.** A Reviewer can see documents assigned to them.
+
+**AC3.** A Reviewer can see documents available to them according to their permissions.
+
+**AC4.** The queue reflects the current review state.
+
+**AC5.** Access to the queue respects role and organization restrictions.
+
+---
+
+## CARD US-25 — Full Document Review Workspace
+
+### FRONT
+
+**As a Reviewer,**  
+I want one review view showing the original document, extracted text, classification, extracted fields, validation results, issues, and available policy evidence,  
+**so that I can resolve exceptions using the complete available context.**
+
+**Stakeholder:** Reviewer  
+**Traceability:** FR-17, FR-26
+
+### BACK — Acceptance Criteria
+
+**AC1.** The Reviewer can open the original document.
+
+**AC2.** Extracted text is visible when available.
+
+**AC3.** The current classification is visible.
+
+**AC4.** Extracted fields are visible.
+
+**AC5.** Validation results are visible.
+
+**AC6.** Detected issues are visible.
+
+**AC7.** Relevant policy evidence is visible when available and authorized.
+
+**AC8.** The information shown represents the current stored processing state.
+
+---
+
+## CARD US-26 — Review Notes & Corrections
+
+### FRONT
+
+**As a Reviewer,**  
+I want to add review notes and make supported corrections while reviewing a document,  
+**so that my decisions and corrections become part of the document’s traceable workflow history.**
+
+**Stakeholder:** Reviewer, Auditor  
+**Traceability:** FR-18, NFR-AUD-01, NFR-AUD-02
+
+### BACK — Acceptance Criteria
+
+**AC1.** A Reviewer can add a review note.
+
+**AC2.** A Reviewer can perform supported corrections.
+
+**AC3.** Every correction records the responsible user.
+
+**AC4.** Every review action records the relevant event time.
+
+**AC5.** Historical review actions remain available in the document history.
+
+---
+
+## CARD US-27 — Automated Routing & Reassignment
+
+### FRONT
+
+**As an authorized workflow administrator,**  
+I want documents to be routed to the appropriate Reviewer or Approver and reassigned when necessary,  
+**so that every document reaches the correct decision-maker without losing workflow traceability.**
+
+**Stakeholder:** Org Admin, System Admin, Reviewer, Approver  
+**Traceability:** FR-19
+
+### BACK — Acceptance Criteria
+
+**AC1.** Kagaz routes documents according to the defined workflow rules.
+
+**AC2.** Documents requiring review can be routed to an appropriate Reviewer.
+
+**AC3.** Documents requiring approval can be routed to an appropriate Approver.
+
+**AC4.** An authorized user can reassign a document where permitted.
+
+**AC5.** Reassignment records the relevant details.
+
+**AC6.** Unauthorized users cannot redirect documents.
+
+---
+
+## CARD US-28 — Approval Queue
+
+### FRONT
+
+**As an Approver,**  
+I want a queue containing documents waiting for my decision,  
+**so that I can quickly identify and act on pending approvals.**
+
+**Stakeholder:** Approver  
+**Traceability:** FR-20
+
+### BACK — Acceptance Criteria
+
+**AC1.** Documents awaiting approval appear in the approval queue.
+
+**AC2.** The Approver can open a queued document.
+
+**AC3.** The Approver can see the information required for the decision.
+
+**AC4.** The queue does not expose documents outside the Approver’s permissions.
+
+---
+
+## CARD US-29 — Evidence-Based Approval or Rejection
+
+### FRONT
+
+**As an Approver,**  
+I want to approve or reject a document after reviewing its relevant evidence,  
+**so that the final outcome is an explicit human decision supported by the available document and policy information.**
+
+**Stakeholder:** Approver, Submitter, Vendor, Auditor  
+**Traceability:** FR-21
+
+### BACK — Acceptance Criteria
+
+**AC1.** An authorized Approver can approve a document.
+
+**AC2.** An authorized Approver can reject a document.
+
+**AC3.** When rejecting a document, the Approver can provide a reason or comment.
+
+**AC4.** The decision is stored against the document.
+
+**AC5.** The document status is updated to reflect the decision.
+
+**AC6.** The decision records the responsible Approver and event time.
+
+**AC7.** The decision becomes part of the document’s audit history.
+
+---
+
+## CARD US-30 — End-to-End Document Status
+
+### FRONT
+
+**As a Submitter,**  
+I want to see the current status of my document throughout processing,  
+**so that I know whether Kagaz is processing it, needs my document reviewed, is waiting for approval, or has completed the workflow.**
+
+**Stakeholder:** Submitter, Vendor, Reviewer, Approver, Management  
+**Traceability:** FR-22
+
+### BACK — Acceptance Criteria
+
+**AC1.** Kagaz maintains one current status for each document.
+
+**AC2.** Supported statuses include Uploaded, Processing, Classified, Review Required, Waiting for Approval, Approved, Rejected, and Processing Failed.
+
+**AC3.** Status changes reflect actual workflow transitions.
+
+**AC4.** Authorized users can view the current status.
+
+**AC5.** A failed document is not represented as successfully completed.
+
+---
+
+## CARD US-31 — Action Notifications
+
+### FRONT
+
+**As a workflow participant,**  
+I want to be notified when a document requires my action or reaches an important workflow milestone,  
+**so that work does not remain blocked because someone did not know the document was waiting for them.**
+
+**Stakeholder:** Submitter, Reviewer, Approver, Vendor  
+**Traceability:** FR-24
+
+### BACK — Acceptance Criteria
+
+**AC1.** Relevant users receive notifications when a document requires their action.
+
+**AC2.** New review assignments can generate notifications.
+
+**AC3.** Approval assignments can generate notifications.
+
+**AC4.** Approval and rejection outcomes can generate notifications to relevant recipients.
+
+**AC5.** Returned documents can generate notifications.
+
+**AC6.** Notifications do not disclose information to unauthorized recipients.
+
+---
+
+# EPIC 6 — Search, Visibility & Management Information
+
+## CARD US-32 — Document Search & Filtering
+
+### FRONT
+
+**As an authorized user,**  
+I want to search and filter documents using relevant attributes,  
+**so that I can quickly find the documents relevant to my current task.**
+
+**Stakeholder:** Submitter, Reviewer, Approver, Org Admin, Auditor, Management  
+**Traceability:** FR-25
+
+### BACK — Acceptance Criteria
+
+**AC1.** Authorized users can search for documents.
+
+**AC2.** Users can filter by document type.
+
+**AC3.** Users can filter by status.
+
+**AC4.** Users can filter by submitter.
+
+**AC5.** Users can filter by date.
+
+**AC6.** Search and filtering respect organization and permission boundaries.
+
+---
+
+## CARD US-33 — Document Details & AI Summary
+
+### FRONT
+
+**As an Approver,**  
+I want a detailed document summary containing the important information and current workflow state,  
+**so that I can understand a document without manually reconstructing the entire processing history.**
+
+**Stakeholder:** Approver, Reviewer, Management  
+**Traceability:** FR-26
+
+### BACK — Acceptance Criteria
+
+**AC1.** The document details view contains available document information.
+
+**AC2.** Processing results are displayed.
+
+**AC3.** The current document status is displayed.
+
+**AC4.** Workflow history is available.
+
+**AC5.** Supported documents have a generated summary highlighting important information.
+
+**AC6.** Summary content is associated with the correct document.
+
+---
+
+## CARD US-34 — Management Operational Dashboard
+
+### FRONT
+
+**As a Management stakeholder,**  
+I want high-level visibility into document throughput, turnaround time, bottlenecks, and approval activity,  
+**so that I can monitor operational performance and the business value of Kagaz.**
+
+**Stakeholder:** Management  
+**Traceability:** Stakeholder profile, elicitation expectations  
+**Status:** **Elicitation-derived / provisional**
+
+### BACK — Acceptance Criteria
+
+**AC1.** The management view presents agreed high-level workflow metrics.
+
+**AC2.** The view provides visibility into document throughput.
+
+**AC3.** The view provides visibility into turnaround-time performance.
+
+**AC4.** The view identifies workflow bottlenecks using agreed operational measures.
+
+**AC5.** Approval activity is represented using agreed metrics.
+
+**AC6.** Metrics are based on stored workflow data rather than manually entered estimates.
+
+**AC7.** Management reporting does not expose information outside the stakeholder’s authorized organizational scope.
+
+> Note: the source identifies dashboards, throughput, turnaround time, straight-through processing, bottlenecks, and approval analytics as management needs, but it does not yet define exact KPI formulas. Those formulas should be elicited and baselined before implementation.
+
+---
+
+# EPIC 7 — Audit, Traceability & Governance
+
+## CARD US-35 — Immutable Audit Trail
+
+### FRONT
+
+**As an Auditor,**  
+I want important document, workflow, policy, user, and decision events recorded in a tamper-resistant audit trail,  
+**so that I can rely on the system history when verifying process integrity.**
+
+**Stakeholder:** Auditor, Compliance Officer, System Admin  
+**Traceability:** FR-23, NFR-AUD-01
+
+### BACK — Acceptance Criteria
+
+**AC1.** Upload, processing, classification, correction, validation, review, routing, approval, rejection, policy, user, and relevant decision events are recorded as applicable.
+
+**AC2.** Each important event records the responsible user or system action.
+
+**AC3.** Each important event includes its event time.
+
+**AC4.** Ordinary users cannot modify or delete historical audit records through normal application functions.
+
+**AC5.** Audit records remain available after normal application restart.
+
+---
+
+## CARD US-36 — End-to-End Traceability
+
+### FRONT
+
+**As an Auditor,**  
+I want to reconstruct a document’s complete lifecycle from submission to final decision,  
+**so that I can verify how the final outcome was produced.**
+
+**Stakeholder:** Auditor, Compliance Officer  
+**Traceability:** NFR-AUD-02
+
+### BACK — Acceptance Criteria
+
+**AC1.** An authorized Auditor can trace a completed document from submission onward.
+
+**AC2.** The history shows the major AI-processing stages.
+
+**AC3.** The history shows validation.
+
+**AC4.** The history shows routing and reassignment when applicable.
+
+**AC5.** The history shows human review and corrections.
+
+**AC6.** The history shows the final approval or rejection decision.
+
+**AC7.** Each major event can be associated with its responsible actor or system action and time.
+
+---
+
+# EPIC 8 — Reliability, Recovery & Operational Control
+
+## CARD US-37 — Processing Failure Isolation
+
+### FRONT
+
+**As a System Admin,**  
+I want failures in one document’s processing chain isolated from other jobs,  
+**so that one problematic document or unavailable processing component does not stop unrelated work.**
+
+**Stakeholder:** System Admin, IT Stakeholder  
+**Traceability:** NFR-REL-01, NFR-SCAL-03
+
+### BACK — Acceptance Criteria
+
+**AC1.** A failure in OCR, classification, extraction, RAG, or policy validation for one document does not fail unrelated processing jobs.
+
+**AC2.** Concurrent jobs can continue processing when one job fails.
+
+**AC3.** The failed document receives an appropriate processing state.
+
+**AC4.** The failure is recorded for diagnosis.
+
+**AC5.** Failure isolation is verified under concurrent-processing tests.
+
+---
+
+## CARD US-38 — Retry & Recovery
+
+### FRONT
+
+**As a System Admin,**  
+I want transient processing failures to be retried or recovered without re-uploading the document,  
+**so that temporary service failures do not force users to repeat completed work.**
+
+**Stakeholder:** System Admin, Submitter, IT Stakeholder  
+**Traceability:** FR-28, NFR-REL-02
+
+### BACK — Acceptance Criteria
+
+**AC1.** A transient background-processing failure is detected.
+
+**AC2.** The failed job can be retried or recovered without requiring the user to upload the same document again.
+
+**AC3.** Retry/recovery activity is recorded.
+
+**AC4.** A permanently unusable document is routed for manual handling or marked failed as appropriate.
+
+**AC5.** The system does not falsely mark an unsuccessful retry as completed.
+
+---
+
+## CARD US-39 — Graceful External-Service Failure
+
+### FRONT
+
+**As an IT Stakeholder,**  
+I want Kagaz to fail gracefully when a non-critical external dependency is temporarily unavailable,  
+**so that users receive an honest processing state rather than incomplete or misleading results.**
+
+**Stakeholder:** IT Stakeholder, System Admin, Submitter, Reviewer  
+**Traceability:** NFR-REL-04, FR-28
+
+### BACK — Acceptance Criteria
+
+**AC1.** Temporary AI/OCR/external-service failure is detected.
+
+**AC2.** Kagaz does not silently generate an apparently valid but incomplete result.
+
+**AC3.** The document enters an appropriate processing or failure state.
+
+**AC4.** The user receives an understandable message.
+
+**AC5.** Internal diagnostics contain enough information for authorized personnel to diagnose the failure.
+
+---
+
+## CARD US-40 — Data Durability After Restart
+
+### FRONT
+
+**As an Auditor or System Admin,**  
+I want stored document and workflow records to survive normal application restarts,  
+**so that processing history and decisions are not lost during routine operations.**
+
+**Stakeholder:** Auditor, System Admin, Compliance Officer  
+**Traceability:** NFR-REL-03
+
+### BACK — Acceptance Criteria
+
+**AC1.** Successfully stored document metadata remains available after restart.
+
+**AC2.** Workflow results remain available after restart.
+
+**AC3.** Approval/rejection decisions remain available after restart.
+
+**AC4.** Audit records remain available after restart.
+
+**AC5.** The relationship between a document and its stored metadata/history remains intact.
+
+---
+
+# EPIC 9 — Performance, Scalability & Observability
+
+## CARD US-41 — Responsive Application APIs
+
+### FRONT
+
+**As a Kagaz user,**  
+I want normal application operations to respond quickly,  
+**so that routine interaction with the platform does not feel blocked by unnecessary latency.**
+
+**Stakeholder:** All application users  
+**Traceability:** NFR-PERF-01
+
+### BACK — Acceptance Criteria
+
+**AC1.** Normal synchronous API operations that do not perform long-running AI work return within **2 seconds for at least 95% of requests** under the defined normal test workload.
+
+**AC2.** Long-running AI operations are not counted as normal synchronous operations for this requirement.
+
+**AC3.** Performance is validated using measured latency during performance testing.
+
+---
+
+## CARD US-42 — Scalable Concurrent Processing
+
+### FRONT
+
+**As a System Admin,**  
+I want Kagaz to process increasing document volumes and concurrent jobs without redesigning the core architecture,  
+**so that platform usage can grow without making the workflow unreliable.**
+
+**Stakeholder:** System Admin, IT Stakeholder  
+**Traceability:** NFR-SCAL-02, NFR-SCAL-03
+
+### BACK — Acceptance Criteria
+
+**AC1.** Increasing document volume does not require redesign of the core document-processing architecture.
+
+**AC2.** Multiple document-processing jobs can run concurrently.
+
+**AC3.** Increased workload does not cause unrelated jobs to fail merely because another job is problematic.
+
+**AC4.** Load testing demonstrates acceptable operation at increasing document and job volumes.
+
+**AC5.** Queueing and retry behavior remain observable under concurrent workload.
+
+---
+
+## CARD US-43 — Processing & System Monitoring
+
+### FRONT
+
+**As a System Admin,**  
+I want operational visibility into queued, processing, completed, failed, and human-action-required work,  
+**so that I can identify platform and workflow problems before they become invisible backlogs.**
+
+**Stakeholder:** System Admin, IT Stakeholder  
+**Traceability:** NFR-OBS-02
+
+### BACK — Acceptance Criteria
+
+**AC1.** Operational information identifies queued processing jobs.
+
+**AC2.** Operational information identifies processing jobs.
+
+**AC3.** Operational information identifies completed jobs.
+
+**AC4.** Operational information identifies failed jobs.
+
+**AC5.** Operational information identifies documents waiting for human action.
+
+**AC6.** Authorized administrators can use the information to distinguish processing issues from human workflow backlog.
+
+---
+
+## CARD US-44 — Structured Operational Logging
+
+### FRONT
+
+**As an IT Stakeholder,**  
+I want structured logs for significant system and processing events,  
+**so that operational failures can be investigated without exposing unnecessary document content.**
+
+**Stakeholder:** IT Stakeholder, System Admin  
+**Traceability:** NFR-OBS-01
+
+### BACK — Acceptance Criteria
+
+**AC1.** Significant processing events generate structured log entries.
+
+**AC2.** Errors generate structured log entries.
+
+**AC3.** Warnings generate structured log entries where applicable.
+
+**AC4.** Service failures generate structured log entries.
+
+**AC5.** Logs avoid exposing sensitive document content unnecessarily.
+
+**AC6.** Representative success and failure scenarios produce useful operational log records.
+
+---
+
+## CARD US-45 — Safe Error Visibility & Diagnosis
+
+### FRONT
+
+**As an IT Stakeholder,**  
+I want detailed diagnostic information internally while users receive safe, understandable error messages,  
+**so that problems can be resolved without leaking sensitive implementation details.**
+
+**Stakeholder:** IT Stakeholder, System Admin, Submitter, Reviewer  
+**Traceability:** NFR-OBS-03, NFR-USE-01
+
+### BACK — Acceptance Criteria
+
+**AC1.** User-facing failures provide an understandable explanation of what happened and what action, if any, is required.
+
+**AC2.** Internal diagnostics contain sufficient information for authorized administrators or developers to investigate the problem.
+
+**AC3.** User-facing errors do not expose sensitive implementation details.
+
+**AC4.** Error handling communicates processing failures, missing information, and low-confidence states clearly.
+
+---
+
+# EPIC 10 — Usability, Accessibility & Maintainability
+
+## CARD US-46 — Clear Workflow Feedback
+
+### FRONT
+
+**As a Submitter or Reviewer,**  
+I want Kagaz to clearly communicate processing states, errors, missing information, low-confidence results, and required actions,  
+**so that I always understand what is happening and what I need to do next.**
+
+**Stakeholder:** Submitter, Reviewer, Approver, Vendor  
+**Traceability:** NFR-USE-01
+
+### BACK — Acceptance Criteria
+
+**AC1.** Processing states are clearly communicated.
+
+**AC2.** Errors are clearly communicated.
+
+**AC3.** Missing-information issues are clearly communicated.
+
+**AC4.** Low-confidence results are clearly identified.
+
+**AC5.** Required user actions are clearly identified.
+
+**AC6.** User messages are understandable without exposing implementation details.
+
+---
+
+## CARD US-47 — Consistent & Accessible Interface
+
+### FRONT
+
+**As a Kagaz user,**  
+I want the interface to use consistent navigation, terminology, controls, and accessible interaction patterns,  
+**so that I can use the system predictably regardless of my role or accessibility needs.**
+
+**Stakeholder:** All application users  
+**Traceability:** NFR-USE-02, NFR-USE-03
+
+### BACK — Acceptance Criteria
+
+**AC1.** User, reviewer, approver, and organization-management views use consistent terminology.
+
+**AC2.** Navigation and controls follow consistent patterns.
+
+**AC3.** Status indicators and layouts are used consistently.
+
+**AC4.** Core interactions are keyboard accessible.
+
+**AC5.** Interface controls have meaningful labels.
+
+**AC6.** Informative images have appropriate alternative text.
+
+**AC7.** Text and UI elements meet the project’s approved readability and contrast requirements.
+
+---
+
+## CARD US-48 — Modular Platform Architecture
+
+### FRONT
+
+**As an IT Stakeholder,**  
+I want Kagaz’s major concerns separated into clear modules,  
+**so that individual areas can be changed, tested, and extended without unnecessarily affecting the rest of the platform.**
+
+**Stakeholder:** IT Stakeholder, System Admin  
+**Traceability:** NFR-MAIN-01
+
+### BACK — Acceptance Criteria
+
+**AC1.** Authentication is separated as a distinct concern.
+
+**AC2.** Organization management is separated as a distinct concern.
+
+**AC3.** Documents are separated from AI-processing concerns.
+
+**AC4.** RAG and policy functionality are separated from workflow and approval concerns.
+
+**AC5.** Notification and auditing concerns are independently identifiable.
+
+**AC6.** Module boundaries are documented and reviewable.
+
+---
+
+## CARD US-49 — Replaceable External Service Providers
+
+### FRONT
+
+**As an IT Stakeholder,**  
+I want external AI, OCR, storage, and notification providers accessed through defined interfaces,  
+**so that a provider can be replaced without rewriting core business logic.**
+
+**Stakeholder:** IT Stakeholder, System Admin  
+**Traceability:** NFR-INT-02
+
+### BACK — Acceptance Criteria
+
+**AC1.** External AI services are accessed behind a defined service boundary.
+
+**AC2.** OCR services are accessed behind a defined service boundary.
+
+**AC3.** Storage services are accessed behind a defined service boundary.
+
+**AC4.** Notification services are accessed behind a defined service boundary.
+
+**AC5.** Provider-specific implementation is isolated from core workflow logic.
+
+**AC6.** A provider can be replaced through configuration or adapter implementation with minimal changes to core business logic.
+
+---
+
+## CARD US-50 — Secure Credential & Secret Management
+
+### FRONT
+
+**As an IT Stakeholder,**  
+I want credentials and integration secrets managed outside application source code,  
+**so that deployment and source repositories do not become a source of platform compromise.**
+
+**Stakeholder:** IT Stakeholder, System Admin  
+**Traceability:** NFR-SEC-05
+
+### BACK — Acceptance Criteria
+
+**AC1.** API keys are not hard-coded in source code.
+
+**AC2.** Database passwords are not committed to the repository.
+
+**AC3.** Authentication secrets are not committed to the repository.
+
+**AC4.** Deployment configuration does not expose secrets in source-controlled files.
+
+**AC5.** Repository and deployment review can verify the absence of hard-coded secrets.
+
+---
+
+## CARD US-51 — Maintainable Code & Documentation
+
+### FRONT
+
+**As an IT Stakeholder,**  
+I want the codebase and major APIs documented according to agreed conventions,  
+**so that another team member can understand, maintain, test, and extend Kagaz safely.**
+
+**Stakeholder:** IT Stakeholder  
+**Traceability:** NFR-MAIN-03
+
+### BACK — Acceptance Criteria
+
+**AC1.** Source code follows agreed project coding conventions.
+
+**AC2.** Major modules have sufficient documentation.
+
+**AC3.** Major APIs have sufficient documentation.
+
+**AC4.** Documentation is sufficient for another team member to understand the relevant component.
+
+**AC5.** Code review checks coding standards and documentation expectations.
+
+---
+
+# MASTER STAKEHOLDER COVERAGE
+
+| Stakeholder | Covered by cards |
+|---|---|
+| **Submitter** | US-01, US-04, US-06, US-09, US-10, US-12, US-21, US-30, US-31, US-32, US-33, US-39, US-46, US-47 |
+| **Reviewer** | US-04, US-06, US-10, US-11, US-12, US-13, US-14, US-15, US-16, US-17, US-19, US-20, US-21, US-24, US-25, US-26, US-27, US-31, US-32, US-33, US-39, US-45, US-46, US-47 |
+| **Approver** | US-04, US-10, US-14, US-16, US-17, US-19, US-20, US-21, US-25, US-27, US-28, US-29, US-30, US-31, US-32, US-33, US-47 |
+| **Org Admin** | US-03, US-04, US-05, US-18, US-27, US-32 |
+| **System Admin** | US-01, US-02, US-04, US-05, US-08, US-10, US-27, US-34, US-37, US-38, US-40, US-42, US-43, US-44, US-45, US-48, US-49, US-50 |
+| **Compliance Officer** | US-03, US-05, US-12, US-16, US-17, US-18, US-19, US-20, US-21, US-22, US-23, US-35, US-36, US-40 |
+| **IT Stakeholder** | US-04, US-08, US-10, US-11, US-37, US-38, US-39, US-40, US-41, US-42, US-43, US-44, US-45, US-47, US-48, US-49, US-50, US-51 |
+| **Auditor** | US-20, US-23, US-26, US-29, US-32, US-35, US-36, US-40 |
+| **Management** | US-30, US-32, US-33, US-34 |
+| **Vendor** | US-07, US-09, US-30, US-31 |
+
+---
+
+# FUNCTIONAL REQUIREMENT TRACEABILITY
+
+| Functional Requirement | Covered by |
+|---|---|
+| FR-01 Authentication | US-01 |
+| FR-02 User & role management | US-02 |
+| FR-03 Role-based access | US-04 |
+| FR-04 Document upload | US-06, US-07 |
+| FR-05 Metadata & storage | US-08 |
+| FR-06 OCR / text extraction | US-11 |
+| FR-07 Classification | US-12 |
+| FR-08 Classification correction | US-13 |
+| FR-09 Key-field extraction | US-14 |
+| FR-10 Extraction correction | US-15 |
+| FR-11 Policy & knowledge base | US-18 |
+| FR-12 Policy validation | US-19 |
+| FR-13 Validation evidence | US-20 |
+| FR-14 Missing/inconsistent information | US-16 |
+| FR-15 Low-confidence handling | US-17 |
+| FR-16 Review queue | US-24 |
+| FR-17 Document review | US-25 |
+| FR-18 Review notes/corrections | US-26 |
+| FR-19 Routing/reassignment | US-27 |
+| FR-20 Approval queue | US-28 |
+| FR-21 Approval/rejection | US-29 |
+| FR-22 Status tracking | US-30 |
+| FR-23 Audit trail | US-35 |
+| FR-24 Notifications | US-31 |
+| FR-25 Search/filtering | US-32 |
+| FR-26 Document details/summary | US-33 |
+| FR-27 AI chatbot/RAG | US-21, US-22 |
+| FR-28 Error handling/completion | US-38, US-39, US-45 |
+
+---
+
+# NFR COVERAGE
+
+| NFR | Covered by |
+|---|---|
+| NFR-PERF-01 API response time | US-41 |
+| NFR-PERF-02 Upload acknowledgement | US-09 |
+| NFR-PERF-03 Async processing | US-10 |
+| NFR-SCAL-01 Multi-organization scalability | US-05 |
+| NFR-SCAL-02 Document-volume scalability | US-42 |
+| NFR-SCAL-03 Concurrent processing | US-10, US-37, US-42 |
+| NFR-SEC-01 Authentication | US-01 |
+| NFR-SEC-02 RBAC | US-02, US-03, US-04 |
+| NFR-SEC-03 Organization isolation | US-04, US-05 |
+| NFR-SEC-04 Encryption in transit | Deployment acceptance criterion / technical validation |
+| NFR-SEC-05 Secret management | US-50 |
+| NFR-SEC-06 Secure file handling | US-08 |
+| NFR-REL-01 Failure isolation | US-37 |
+| NFR-REL-02 Retry/recovery | US-38 |
+| NFR-REL-03 Durability | US-40 |
+| NFR-REL-04 Graceful degradation | US-39 |
+| NFR-AI-01 Low-confidence handling | US-13, US-15, US-17 |
+| NFR-AI-02 Policy-grounded RAG | US-19, US-21 |
+| NFR-AI-03 Org/domain-aware retrieval | US-19, US-22 |
+| NFR-AI-04 AI evidence traceability | US-20 |
+| NFR-USE-01 Clear feedback | US-45, US-46 |
+| NFR-USE-02 Consistent UI | US-47 |
+| NFR-USE-03 Accessibility | US-47 |
+| NFR-MAIN-01 Modular architecture | US-48 |
+| NFR-MAIN-02 Configurability | US-05, US-18 |
+| NFR-MAIN-03 Code/documentation quality | US-51 |
+| NFR-AUD-01 Audit integrity | US-35 |
+| NFR-AUD-02 End-to-end traceability | US-36 |
+| NFR-AUD-03 Policy version traceability | US-23 |
+| NFR-INT-01 Supported formats | US-06, US-11 |
+| NFR-INT-02 External service abstraction | US-49 |
+| NFR-OBS-01 Application logging | US-44 |
+| NFR-OBS-02 Processing monitoring | US-43 |
+| NFR-OBS-03 Error diagnosis/visibility | US-45 |
+
+---
+
+# EPIC SUMMARY
+
+| Epic | Cards |
+|---|---:|
+| Identity, Roles & Organization Control | 5 |
+| Submission, File Handling & Ingestion | 5 |
+| AI Processing, Extraction & Exception Detection | 7 |
+| Policy, Validation & RAG | 6 |
+| Human Review, Routing & Approval | 8 |
+| Search, Visibility & Management Information | 3 |
+| Audit, Traceability & Governance | 2 |
+| Reliability, Recovery & Operational Control | 4 |
+| Performance, Scalability & Observability | 5 |
+| Usability, Accessibility & Maintainability | 6 |
+| **Total** | **51** |
+
+---
+
