@@ -140,3 +140,16 @@ def test_missing_secret_fails_closed(client, monkeypatch):
     monkeypatch.delenv("JWT_SECRET")
     assert client.post("/api/documents").status_code == 503
     assert client.get("/api/health").status_code == 200
+
+
+@pytest.mark.parametrize("extra,status", [(0, 201), (1, 413)])
+def test_file_size_boundary_with_multipart_overhead(client, pdf, extra, status):
+    # Pad before the PDF header (after its signature line) to retain a readable
+    # PDF rather than adding trailing bytes that hide its EOF marker.
+    # A PDF comment can carry the padding; pypdf repairs the shifted xref.
+    header, rest = pdf.split(b"\n", 1)
+    padding = upload.MAX_UPLOAD_BYTES + extra - len(pdf) - 2
+    content = header + b"\n%" + b" " * padding + b"\n" + rest
+    assert len(content) == upload.MAX_UPLOAD_BYTES + extra
+    response = client.post("/api/documents", files={"file": ("boundary.pdf", content, "application/pdf")})
+    assert response.status_code == status

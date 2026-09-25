@@ -7,9 +7,10 @@ from starlette.concurrency import run_in_threadpool
 from services.upload import UploadError, save_upload
 from storage.document_storage import DocumentStorage
 from api.auth import require_submitter
+from api.upload_limit import UploadLimitRoute
 
 
-router = APIRouter(prefix="/api/documents", tags=["documents"])
+router = APIRouter(prefix="/api/documents", tags=["documents"], route_class=UploadLimitRoute)
 
 
 @router.post("", status_code=201)

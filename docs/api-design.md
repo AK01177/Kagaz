@@ -227,6 +227,10 @@ database integration remain pending. JWT validation is implemented for active
 `SUBMITTER` tokens; login/token issuance and live user-status lookup remain pending.
 See `backend/README.md` for required claims and local testing instructions.
 
+The multipart request body is capped during receipt at 10 MiB plus 64 KiB of
+multipart overhead, with HTTP 413 for oversized requests. The file itself is
+still limited to 10 MiB. The request cap also applies without Content-Length.
+
 ### `POST /api/documents`
 
 Authentication: **Required**

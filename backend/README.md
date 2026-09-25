@@ -31,6 +31,12 @@ Export variables before starting the server. `.env` files are not automatically 
 
 Supports readable, unencrypted PDFs with at least one page, up to 10 MiB. DOCX and images from the broader requirements remain pending; the existing extraction service supports PDF only. Upload does not run extraction or classification.
 
+The entire upload request is limited to 10 MiB plus 64 KiB for multipart headers,
+boundaries and other fields. Incoming bytes are counted before reaching the
+multipart parser, including when Content-Length is missing or inaccurate.
+Oversized requests return 413 and partial parser files are closed. The separate
+10 MiB file check remains in place after parsing.
+
 Documents use generated IDs as filenames. Basic metadata is persisted in `storage_data/metadata/<document_id>.json`, including file size, storage path, submitter and organization. Identity comes from the verified token. Database integration and the document retrieval endpoint remain separate work.
 
 Errors use `{"error": {"code": "...", "message": "..."}}`: invalid/missing files return 400, missing/invalid tokens 401, forbidden uploads 403, oversized files 413, unsupported types 415, malformed fields 422, storage failures 500, and missing authentication configuration 503.
