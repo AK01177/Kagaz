@@ -108,7 +108,7 @@ export default function DocumentsPage() {
           </div>
           <div className="file-note" aria-label="Current file requirements">
             <span className="file-note-mark">PDF</span>
-            <span>Readable, unencrypted<br />Up to 10 MB</span>
+            <span>PDF file only<br />Up to 10 MB</span>
           </div>
         </div>
 
@@ -127,7 +127,7 @@ export default function DocumentsPage() {
           {file && state !== "error" ? (
             <div className="selected-file">
               <div className="pdf-icon">PDF</div>
-              <div className="selected-file-info"><strong>{file.name}</strong><span>{formatSize(file.size)} · Ready to upload</span></div>
+              <div className="selected-file-info"><strong>{file.name}</strong><span>{formatSize(file.size)} · Pending server validation</span></div>
               {!isBusy && <button className="icon-button" type="button" onClick={(event) => { event.stopPropagation(); reset(); }} aria-label="Remove selected file">×</button>}
             </div>
           ) : (
