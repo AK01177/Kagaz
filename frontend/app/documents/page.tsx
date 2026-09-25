@@ -41,7 +41,7 @@ export default function DocumentsPage() {
   const [result, setResult] = useState<UploadResult | null>(null);
 
   function chooseFile(nextFile?: File) {
-    if (!nextFile) return;
+    if (!nextFile || isBusy) return;
     const validationError = validateFile(nextFile);
     setError(validationError ?? "");
     setResult(null);
