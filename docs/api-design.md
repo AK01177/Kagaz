@@ -221,6 +221,12 @@ Errors:
 
 ## 5.3 Upload Document
 
+Implementation note (BE-02): the current endpoint accepts unencrypted PDF files
+up to 10 MiB and persists files plus JSON metadata locally. DOCX/image support and
+database integration remain pending. JWT validation is implemented for active
+`SUBMITTER` tokens; login/token issuance and live user-status lookup remain pending.
+See `backend/README.md` for required claims and local testing instructions.
+
 ### `POST /api/documents`
 
 Authentication: **Required**

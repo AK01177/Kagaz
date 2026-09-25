@@ -1,6 +1,8 @@
 fastapi
-uvicorn[standard]
+uvicorn
 pytest
 httpx
 pypdf
 reportlab
+python-multipart
+PyJWT>=2.10,<3
