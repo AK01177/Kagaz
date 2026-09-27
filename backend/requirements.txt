@@ -6,3 +6,6 @@ pypdf
 reportlab
 python-multipart
 PyJWT>=2.10,<3
+pydantic
+typesafe-sdk
+python-dotenv
