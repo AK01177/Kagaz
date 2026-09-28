@@ -1,11 +1,13 @@
 fastapi
-uvicorn
+sqlalchemy
+psycopg2-binary
+pydantic
+python-dotenv
 pytest
+uvicorn[standard]
 httpx
 pypdf
 reportlab
 python-multipart
 PyJWT>=2.10,<3
-pydantic
 typesafe-sdk
-python-dotenv
