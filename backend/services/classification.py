@@ -1,7 +1,7 @@
 import enum
 import os
+import httpx
 from pydantic import BaseModel, Field
-from typesafe_sdk import Choice, TypeSafeClient
 
 # Define the valid document categories
 class DocumentCategory(str, enum.Enum):
@@ -21,53 +21,44 @@ class ClassificationError(Exception):
 
 def classify_document(text: str) -> ClassificationResult:
     """
-    Classify the document text into one of the known categories using the Jev decision model
-    hosted on OpenRouter.
+    Classify the document text into one of the known categories using the Jev API.
     """
     if not text or not text.strip():
         raise ClassificationError("Document text is empty or missing.")
 
-    # We use OpenRouter API key to access the TypeSafe model
-    api_key = os.environ.get("OPENROUTER_API_KEY")
+    # We use TypeSafe API key to access the TypeSafe model
+    api_key = os.environ.get("TYPESAFE_API_KEY")
     if not api_key:
-        raise ClassificationError("OPENROUTER_API_KEY environment variable is not set.")
+        raise ClassificationError("TYPESAFE_API_KEY environment variable is not set.")
 
     try:
-        # Initialize the Jev client pointing to OpenRouter's API base URL
-        client = TypeSafeClient(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api"
-        )
-        
-        # We ask Jev a "Choice" question to pick exactly one category
-        questions = {
-            "category": Choice(
-                instructions="Classify the document into one of the following categories based on its text.",
-                criteria={
-                    "invoice": None,
-                    "contract": None,
-                    "hr_form": None,
-                    "academic_record": None,
-                    "other": None
+        response = httpx.post(
+            "https://api.jevai.org/v1/decisions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "mode": "classifier",
+                "schema_version": "v1",
+                "input": {
+                    "context": text[:10000],
+                    "classes": [c.value for c in DocumentCategory]
                 }
-            )
-        }
-        
-        # Send the first 10,000 characters of the document text to Jev (via OpenRouter)
-        # Using the specific OpenRouter Jev model identifier
-        result = client.system_one(
-            state=text[:10000], 
-            questions=questions,
-            model="typesafe/jev-1.13"
+            },
+            timeout=10.0
         )
+        response.raise_for_status()
+        data = response.json()
         
         # Extract the decision from the response
-        decision = result.choices["category"]
+        decision_val = data.get("decision") or data.get("category") or data.get("choice")
+        confidence_val = data.get("confidence", 1.0)
+        
+        if not decision_val:
+            raise ValueError(f"Unexpected API response shape: {data}")
         
         # Return our structured Pydantic model
         return ClassificationResult(
-            category=DocumentCategory(decision.choice),
-            confidence=decision.confidence
+            category=DocumentCategory(decision_val),
+            confidence=confidence_val
         )
         
     except Exception as error:
