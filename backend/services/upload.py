@@ -11,6 +11,9 @@ from pypdf import PdfReader
 from storage.document_storage import DocumentStorage
 
 
+from services.extraction import extract_text, ExtractionError
+from services.classification import classify_document, ClassificationError
+
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
@@ -24,7 +27,7 @@ class UploadError(Exception):
 
 
 def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
-    """Validate and persist a PDF and its basic metadata without running AI."""
+    """Validate and persist a PDF, extract text, and classify it."""
     filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     if not filename or "\x00" in filename:
         raise UploadError(400, "INVALID_FILE", "A valid filename is required.")
@@ -61,6 +64,21 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
             if size == 0:
                 raise UploadError(400, "INVALID_FILE", "The uploaded file is empty.")
             _validate_pdf(staged_document)
+            
+            staged_document.replace(document_path)
+            published_document = True
+
+            try:
+                text = extract_text(document_id, storage)
+                classification = classify_document(text)
+                
+                response["category"] = classification.category.value
+                response["confidence"] = classification.confidence
+            except (ExtractionError, ClassificationError) as e:
+                logger.exception("Failed to classify document %s", document_id)
+                response["category"] = "unknown"
+                response["confidence"] = 0.0
+
             metadata = {
                 **response,
                 "file_size": size,
@@ -70,8 +88,6 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
             }
             staged_metadata = Path(staging) / "metadata.json"
             staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-            staged_document.replace(document_path)
-            published_document = True
             staged_metadata.replace(metadata_path)
     except OSError as exc:
         if published_document:
