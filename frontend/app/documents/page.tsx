@@ -13,6 +13,8 @@ type UploadResult = {
   filename: string;
   status: string;
   uploaded_at: string;
+  category?: string;
+  confidence?: number;
 };
 
 type ApiError = {
@@ -144,7 +146,25 @@ export default function DocumentsPage() {
         {state === "success" && result ? (
           <div className="success-panel" role="status">
             <div className="success-check">✓</div>
-            <div><strong>Upload accepted</strong><span>{result.filename} is now in your workspace · ID {result.document_id}</span></div>
+            <div>
+              <strong>Upload accepted</strong>
+              <span>{result.filename} is now in your workspace · ID {result.document_id}</span>
+              {result.category && (
+                <div className="classification-result" style={{ marginTop: "12px", padding: "10px", backgroundColor: "rgba(0, 0, 0, 0.04)", borderRadius: "6px", border: "1px solid rgba(0,0,0,0.08)" }}>
+                  <div style={{ fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 600, color: "#555", marginBottom: "4px" }}>
+                    Jev Model Classification
+                  </div>
+                  <div style={{ fontSize: "1rem", fontWeight: 500, color: "#111" }}>
+                    Document Type: <span style={{ color: "#0066cc" }}>{result.category.replace("_", " ").toUpperCase()}</span>
+                  </div>
+                  {result.confidence !== undefined && (
+                    <div style={{ fontSize: "0.85rem", color: "#666", marginTop: "2px" }}>
+                      Confidence Score: {(result.confidence * 100).toFixed(1)}%
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <button className="text-button" type="button" onClick={reset}>Upload another</button>
           </div>
         ) : (
