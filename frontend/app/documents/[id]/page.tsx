@@ -40,7 +40,7 @@ function getCategoryInfo(rawCategory?: string | null): CategoryInfo {
       reviewUrl: "/review?type=invoice",
     };
   }
-  if (norm.includes("contract") || norm.includes("agreement") || norm.includes("nda")) {
+  if (norm.includes("contract") || norm.includes("agreement") || norm.includes("nda") || norm.includes("lease")) {
     return {
       name: "Legal Contract & Agreement",
       badge: "Legal",
@@ -50,7 +50,7 @@ function getCategoryInfo(rawCategory?: string | null): CategoryInfo {
       reviewUrl: "/review?type=contract",
     };
   }
-  if (norm.includes("academic") || norm.includes("transcript") || norm.includes("diploma")) {
+  if (norm.includes("academic") || norm.includes("transcript") || norm.includes("diploma") || norm.includes("degree")) {
     return {
       name: "Academic Record & Transcript",
       badge: "Credentials",
@@ -60,17 +60,47 @@ function getCategoryInfo(rawCategory?: string | null): CategoryInfo {
       reviewUrl: "/review?type=academic",
     };
   }
-  if (norm.includes("hr") || norm.includes("employee") || norm.includes("payroll")) {
+  if (norm.includes("hr") || norm.includes("employee") || norm.includes("payroll") || norm.includes("resume") || norm.includes("cv")) {
     return {
       name: "Human Resources Record",
       badge: "Personnel",
       icon: "👥",
-      description: "Personnel filing, onboarding form, benefit election, or employment compliance record.",
+      description: "Personnel filing, onboarding form, resume, or employment compliance record.",
       routing: "HR Records Queue",
       reviewUrl: "/review?type=hr",
     };
   }
-  if (rawCategory && rawCategory !== "unknown") {
+  if (norm.includes("financial") || norm.includes("tax") || norm.includes("statement") || norm.includes("audit") || norm.includes("report")) {
+    return {
+      name: "Financial Statement & Report",
+      badge: "Audit & Fiscal",
+      icon: "📊",
+      description: "Balance sheet, income statement, audit documentation, or corporate fiscal disclosure.",
+      routing: "Finance & Accounting Queue",
+      reviewUrl: "/review?type=financial",
+    };
+  }
+  if (norm.includes("identity") || norm.includes("id") || norm.includes("passport") || norm.includes("kyc")) {
+    return {
+      name: "Identity & Verification Record",
+      badge: "KYC Compliance",
+      icon: "🪪",
+      description: "Official identification, verification credential, or identity compliance filing.",
+      routing: "Identity Verification Queue",
+      reviewUrl: "/review?type=identity",
+    };
+  }
+  if (norm.includes("policy") || norm.includes("guideline") || norm.includes("rule")) {
+    return {
+      name: "Policy & Governance Document",
+      badge: "Governance",
+      icon: "⚖️",
+      description: "Institutional policy standard, compliance charter, or operating procedure.",
+      routing: "Policy Governance Queue",
+      reviewUrl: "/review?type=policy",
+    };
+  }
+  if (rawCategory && rawCategory !== "unknown" && rawCategory !== "general_document") {
     return {
       name: rawCategory.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
       badge: "Categorized",
@@ -81,10 +111,10 @@ function getCategoryInfo(rawCategory?: string | null): CategoryInfo {
     };
   }
   return {
-    name: "General Unclassified Document",
+    name: "Enterprise Business Document",
     badge: "General",
     icon: "📄",
-    description: "Standard document intake. Contents parsed and indexed for human review and policy triage.",
+    description: "Standard document intake. Contents parsed and indexed for policy validation.",
     routing: "General Review Queue",
     reviewUrl: "/review",
   };
@@ -138,8 +168,17 @@ export default function DocumentDetailsPage(props: {
   const documentId = unwrapped?.id || (routeParams?.id as string) || "";
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
 
-  const [document, setDocument] = useState<DocumentRecord | null>(() => (isDemo ? getDemoDocument(documentId) : null));
-  const [loading, setLoading] = useState(!isDemo);
+  const [document, setDocument] = useState<DocumentRecord | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = window.sessionStorage.getItem(`kagaz_doc_${documentId}`);
+        if (stored) return JSON.parse(stored);
+      } catch {}
+    }
+    if (isDemo) return getDemoDocument(documentId);
+    return null;
+  });
+  const [loading, setLoading] = useState(!document);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [classifying, setClassifying] = useState(false);
