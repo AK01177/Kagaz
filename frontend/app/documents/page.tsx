@@ -85,6 +85,18 @@ export default function DocumentsPage() {
         throw new Error(body.error?.message ?? "The document could not be uploaded.");
       }
       setResult(body);
+      try {
+        window.sessionStorage.setItem(
+          `kagaz_doc_${body.document_id}`,
+          JSON.stringify({
+            ...body,
+            file_size: file.size,
+            file_type: file.type || "application/pdf",
+          })
+        );
+      } catch {
+        // Ignore session storage errors
+      }
       setState("success");
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "The document could not be uploaded.");
@@ -146,7 +158,7 @@ export default function DocumentsPage() {
         {state === "success" && result ? (
           <div className="success-panel" role="status">
             <div className="success-check">✓</div>
-            <div>
+            <div style={{ flex: 1 }}>
               <strong>Upload accepted</strong>
               <span>{result.filename} is now in your workspace · ID {result.document_id}</span>
               {result.category && (
@@ -164,8 +176,17 @@ export default function DocumentsPage() {
                   )}
                 </div>
               )}
+              <div style={{ display: "flex", gap: "14px", alignItems: "center", marginTop: "14px", flexWrap: "wrap" }}>
+                <Link
+                  href={`/documents/${result.document_id}`}
+                  className="primary-button"
+                  style={{ textDecoration: "none", padding: "10px 18px", gap: "10px", fontSize: "12px" }}
+                >
+                  View Document Result <span aria-hidden="true">→</span>
+                </Link>
+                <button className="text-button" type="button" onClick={reset}>Upload another document</button>
+              </div>
             </div>
-            <button className="text-button" type="button" onClick={reset}>Upload another</button>
           </div>
         ) : (
           <div className="action-row">
@@ -177,8 +198,20 @@ export default function DocumentsPage() {
         )}
 
         <div className="process-strip" aria-label="Upload process">
-          <span className="process-active"><b>1</b> Upload</span><i />
-          <span><b>2</b> Prepare</span><i />
+          <span className={state === "success" ? "" : "process-active"}>
+            <b>{state === "success" ? "✓" : "1"}</b> Upload
+          </span>
+          <i />
+          <span className={state === "success" ? "process-active" : ""}>
+            {state === "success" && result ? (
+              <Link href={`/documents/${result.document_id}`} style={{ color: "inherit", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                <b>2</b> Result &amp; Classification
+              </Link>
+            ) : (
+              <><b>2</b> Prepare</>
+            )}
+          </span>
+          <i />
           <span><b>3</b> Review</span>
         </div>
       </section>
