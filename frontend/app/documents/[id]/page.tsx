@@ -168,17 +168,8 @@ export default function DocumentDetailsPage(props: {
   const documentId = unwrapped?.id || (routeParams?.id as string) || "";
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
 
-  const [document, setDocument] = useState<DocumentRecord | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const stored = window.sessionStorage.getItem(`kagaz_doc_${documentId}`);
-        if (stored) return JSON.parse(stored);
-      } catch {}
-    }
-    if (isDemo) return getDemoDocument(documentId);
-    return null;
-  });
-  const [loading, setLoading] = useState(!document);
+  const [document, setDocument] = useState<DocumentRecord | null>(() => (isDemo ? getDemoDocument(documentId) : null));
+  const [loading, setLoading] = useState(!isDemo);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [classifying, setClassifying] = useState(false);
