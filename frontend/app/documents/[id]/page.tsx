@@ -115,15 +115,31 @@ function formatDate(isoString?: string): string {
   }
 }
 
+function getDemoDocument(id: string): DocumentRecord {
+  return {
+    document_id: id || "doc_demo_8823f9",
+    filename: "commercial_invoice_september.pdf",
+    file_type: "application/pdf",
+    file_size: 2457812,
+    status: "CLASSIFIED",
+    uploaded_at: "2026-09-29T17:15:00Z",
+    category: "INVOICE",
+    confidence: 0.948,
+    organization_id: "org_kagaz_primary",
+    submitter_id: "usr_doc_analyst",
+  };
+}
+
 export default function DocumentDetailsPage(props: {
   params: Promise<{ id: string }>;
 }) {
   const unwrapped = use(props.params);
   const routeParams = useParams();
   const documentId = unwrapped?.id || (routeParams?.id as string) || "";
+  const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
 
-  const [document, setDocument] = useState<DocumentRecord | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [document, setDocument] = useState<DocumentRecord | null>(() => (isDemo ? getDemoDocument(documentId) : null));
+  const [loading, setLoading] = useState(!isDemo);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [classifying, setClassifying] = useState(false);
@@ -188,9 +204,38 @@ export default function DocumentDetailsPage(props: {
     }
   }, [documentId]);
 
+  const loadDemoData = useCallback(() => {
+    const demo: DocumentRecord = {
+      document_id: documentId || "doc_demo_8823f9",
+      filename: "commercial_invoice_september.pdf",
+      file_type: "application/pdf",
+      file_size: 2457812,
+      status: "CLASSIFIED",
+      uploaded_at: new Date().toISOString(),
+      category: "INVOICE",
+      confidence: 0.948,
+      organization_id: "org_kagaz_primary",
+      submitter_id: "usr_doc_analyst",
+    };
+    setDocument(demo);
+    setError(null);
+    setLoading(false);
+    setActionAlert({
+      type: "info",
+      message: "Loaded sample document processing result for interactive demonstration.",
+    });
+  }, [documentId]);
+
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const search = window.location.search;
+      if (documentId.startsWith("doc_demo") || search.includes("demo=true")) {
+        loadDemoData();
+        return;
+      }
+    }
     fetchDocument();
-  }, [fetchDocument]);
+  }, [fetchDocument, loadDemoData, documentId]);
 
   async function triggerClassification() {
     if (!documentId) return;
@@ -244,27 +289,6 @@ export default function DocumentDetailsPage(props: {
     }
   }
 
-  function loadDemoData() {
-    const demo: DocumentRecord = {
-      document_id: documentId || "doc_demo_8823f9",
-      filename: "commercial_invoice_september.pdf",
-      file_type: "application/pdf",
-      file_size: 2457812,
-      status: "CLASSIFIED",
-      uploaded_at: new Date().toISOString(),
-      category: "INVOICE",
-      confidence: 0.948,
-      organization_id: "org_kagaz_primary",
-      submitter_id: "usr_doc_analyst",
-    };
-    setDocument(demo);
-    setError(null);
-    setLoading(false);
-    setActionAlert({
-      type: "info",
-      message: "Loaded sample document processing result for interactive demonstration.",
-    });
-  }
 
   function copyId() {
     if (!documentId) return;
