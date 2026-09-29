@@ -30,6 +30,10 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("JWT_SECRET", SECRET)
     monkeypatch.setenv("JWT_ISSUER", "kagaz")
     monkeypatch.setenv("JWT_AUDIENCE", "kagaz-api")
+    
+    from services.classification import ClassificationResult, DocumentCategory
+    monkeypatch.setattr("services.upload.classify_document", lambda text: ClassificationResult(category=DocumentCategory.INVOICE, confidence=0.95))
+    
     with TestClient(app, headers={"Authorization": f"Bearer {token()}"}) as client:
         yield client
 
@@ -48,14 +52,18 @@ def test_upload_persists_and_can_be_extracted(client, pdf, tmp_path):
                            data={"organization_id": "forged_org"})
     assert response.status_code == 201
     body = response.json()
-    assert set(body) == {"document_id", "filename", "file_type", "status", "uploaded_at"}
+    assert set(body) == {"document_id", "filename", "file_type", "status", "uploaded_at", "category", "confidence"}
     assert body["status"] == "UPLOADED"
+    assert body["category"] == "invoice"
+    assert body["confidence"] == 0.95
     document_id = body["document_id"]
     assert (tmp_path / f"{document_id}.pdf").read_bytes() == pdf
     metadata = json.loads((tmp_path / "metadata" / f"{document_id}.json").read_text())
     assert metadata["file_size"] == len(pdf)
     assert metadata["submitter_id"] == "user_1"
     assert metadata["organization_id"] == "org_1"
+    assert metadata["category"] == "invoice"
+    assert metadata["confidence"] == 0.95
     assert "Upload integration test" in extract_text(document_id, DocumentStorage(tmp_path))
     another = client.post("/api/documents", files={"file": ("invoice.pdf", pdf, "application/pdf")})
     assert another.json()["document_id"] != document_id
