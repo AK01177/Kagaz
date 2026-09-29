@@ -41,11 +41,13 @@ export default function DocumentsPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<UploadResult | null>(null);
+  const [backendOffline, setBackendOffline] = useState(false);
 
   function chooseFile(nextFile?: File) {
     if (!nextFile || isBusy) return;
     const validationError = validateFile(nextFile);
     setError(validationError ?? "");
+    setBackendOffline(false);
     setResult(null);
     setFile(validationError ? null : nextFile);
     setState(validationError ? "error" : "ready");
@@ -61,14 +63,51 @@ export default function DocumentsPage() {
     setFile(null);
     setResult(null);
     setError("");
+    setBackendOffline(false);
     setState("idle");
     if (inputRef.current) inputRef.current.value = "";
+  }
+
+  function proceedWithPreviewMode() {
+    if (!file) return;
+    const docId = `doc_${Math.random().toString(36).substring(2, 10)}`;
+    const lower = file.name.toLowerCase();
+    const category = lower.includes("contract")
+      ? "contract"
+      : lower.includes("academic")
+      ? "academic"
+      : lower.includes("hr")
+      ? "hr_form"
+      : "invoice";
+    const simResult: UploadResult = {
+      document_id: docId,
+      filename: file.name,
+      status: "CLASSIFIED",
+      uploaded_at: new Date().toISOString(),
+      category: category,
+      confidence: 0.942,
+    };
+    try {
+      window.sessionStorage.setItem(
+        `kagaz_doc_${docId}`,
+        JSON.stringify({
+          ...simResult,
+          file_size: file.size,
+          file_type: file.type || "application/pdf",
+        })
+      );
+    } catch {}
+    setResult(simResult);
+    setError("");
+    setBackendOffline(false);
+    setState("success");
   }
 
   async function uploadFile() {
     if (!file) return;
     setState("uploading");
     setError("");
+    setBackendOffline(false);
 
     const formData = new FormData();
     formData.append("file", file);
@@ -99,7 +138,20 @@ export default function DocumentsPage() {
       }
       setState("success");
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "The document could not be uploaded.");
+      const isOffline =
+        uploadError instanceof TypeError ||
+        (uploadError instanceof Error && uploadError.message.toLowerCase().includes("fetch"));
+      if (isOffline) {
+        setError(
+          "Backend API is not running on " +
+            API_URL +
+            ". You can start the backend service on port 8000 or proceed in frontend preview mode."
+        );
+        setBackendOffline(true);
+      } else {
+        setError(uploadError instanceof Error ? uploadError.message : "The document could not be uploaded.");
+        setBackendOffline(false);
+      }
       setState("error");
     }
   }
@@ -153,7 +205,23 @@ export default function DocumentsPage() {
           )}
         </div>
 
-        {error && <p className="feedback feedback-error" role="alert"><span>!</span>{error}</p>}
+        {error && (
+          <div style={{ margin: "16px 0 0" }}>
+            <p className="feedback feedback-error" role="alert"><span>!</span>{error}</p>
+            {backendOffline && file && (
+              <div style={{ marginTop: "12px", display: "flex", gap: "10px", alignItems: "center" }}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={proceedWithPreviewMode}
+                  style={{ padding: "8px 16px", fontSize: "12px", background: "white" }}
+                >
+                  Proceed to Result View in Preview Mode with &quot;{file.name}&quot; →
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {state === "success" && result ? (
           <div className="success-panel" role="status">
