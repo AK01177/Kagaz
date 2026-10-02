@@ -21,7 +21,7 @@ class ClassificationError(Exception):
 
 def classify_document(text: str) -> ClassificationResult:
     """
-    Classify the document text into one of the known categories using OpenRouter.
+    Classify the document text into one of the known categories using OpenRouter Jev model.
     """
     if not text or not text.strip():
         raise ClassificationError("Document text is empty or missing.")
@@ -30,47 +30,43 @@ def classify_document(text: str) -> ClassificationResult:
     if not api_key:
         raise ClassificationError("OPENROUTER_API_KEY environment variable is not set.")
 
-    model = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
-    categories_str = ", ".join([c.value for c in DocumentCategory])
-
     try:
-        import json
         response = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            "https://openrouter.ai/api/alpha/decisions",
             headers={
                 "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
                 "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "Kagaz Document Workflow"
+                "X-OpenRouter-Title": "Kagaz"
             },
             json={
-                "model": model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": f"You are a highly accurate document classification AI. Classify the following document text into EXACTLY one of these categories: {categories_str}. You MUST respond with a valid JSON object containing exactly two fields: 'category' (string) and 'confidence' (float between 0.0 and 1.0). Do not include markdown code blocks or any other text."
-                    },
-                    {
-                        "role": "user",
-                        "content": text[:15000]
+                "model": "~typesafe/jev-latest",
+                "state": text[:10000],
+                "questions": {
+                    "category": {
+                        "type": "choice",
+                        "instructions": "Which category does this document belong to?",
+                        "criteria": {
+                            DocumentCategory.INVOICE.value: "Invoices, bills, receipts, purchase orders",
+                            DocumentCategory.CONTRACT.value: "Legal contracts, NDAs, lease agreements, terms",
+                            DocumentCategory.HR_FORM.value: "Resumes, CVs, employee forms, offer letters, payroll",
+                            DocumentCategory.ACADEMIC_RECORD.value: "Transcripts, degrees, diplomas, student records",
+                            DocumentCategory.OTHER.value: "Any other general document type"
+                        }
                     }
-                ],
+                }
             },
             timeout=15.0
         )
         response.raise_for_status()
         data = response.json()
         
-        content = data["choices"][0]["message"]["content"].strip()
-        # Clean up any potential markdown formatting the model might return
-        if content.startswith("```json"):
-            content = content.replace("```json", "", 1)
-        if content.endswith("```"):
-            content = content[:-3]
-            
-        parsed = json.loads(content.strip())
+        answers = data.get("answers", {})
+        category_answer = answers.get("category", {})
         
-        decision_val = parsed.get("category")
-        confidence_val = parsed.get("confidence", 1.0)
+        decision_val = category_answer.get("choice")
+        probabilities = category_answer.get("probabilities", {})
+        confidence_val = probabilities.get(decision_val, 1.0) if isinstance(probabilities, dict) else 1.0
         
         if not decision_val or decision_val not in [c.value for c in DocumentCategory]:
             decision_val = DocumentCategory.OTHER.value
@@ -81,5 +77,6 @@ def classify_document(text: str) -> ClassificationResult:
         )
         
     except Exception as error:
-        raise ClassificationError(f"OpenRouter Classification failed: {error}") from error
+        raise ClassificationError(f"OpenRouter Jev Classification failed: {error}") from error
+
 
