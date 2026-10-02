@@ -1,6 +1,4 @@
 from dotenv import load_dotenv
-load_dotenv()
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -10,6 +8,7 @@ from starlette.exceptions import HTTPException
 from api.health import router as health_router
 from api.documents import router as documents_router
 
+load_dotenv()
 
 app = FastAPI(
     title="Kagaz API",
