@@ -78,6 +78,7 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
                 logger.exception("Failed to classify document %s", document_id)
                 response["category"] = "unknown"
                 response["confidence"] = 0.0
+            response["file_size"] = size
 
             metadata = {
                 **response,
