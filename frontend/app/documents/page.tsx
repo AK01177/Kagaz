@@ -2,6 +2,7 @@
 
 import { DragEvent, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -61,6 +62,7 @@ function detectDocumentCategory(filename: string): { category: string; confidenc
 }
 
 export default function DocumentsPage() {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [state, setState] = useState<UploadState>("idle");
@@ -124,6 +126,7 @@ export default function DocumentsPage() {
         // Ignore session storage errors
       }
       setState("success");
+      router.push(`/documents/${body.document_id}`);
     } catch {
       const docId = `doc_${Math.random().toString(36).substring(2, 10)}`;
       const { category, confidence } = detectDocumentCategory(file.name);
@@ -148,6 +151,7 @@ export default function DocumentsPage() {
       setResult(fallbackResult);
       setError("");
       setState("success");
+      router.push(`/documents/${docId}`);
     }
   }
 
