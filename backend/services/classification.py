@@ -44,20 +44,21 @@ def classify_document(text: str) -> ClassificationResult:
             },
             json={
                 "model": "~typesafe/jev-latest",
-                "state": text[:10000],
+                # Jev expects "state" to be a key-value object, not a bare string.
+                "state": {"document_text": text[:10000]},
                 "questions": {
                     "category": {
                         "type": "choice",
-                        "instructions": "Which category does this document belong to?",
+                        "instructions": "Based on the document_text, which single category best describes the main purpose of this document? Choose 'other' only if no specific category fits.",
                         "criteria": {
                             DocumentCategory.INVOICE.value: "Invoices, bills, receipts, purchase orders, expense claims, utility bills, billing statements",
                             DocumentCategory.CONTRACT.value: "Contracts, NDAs, lease agreements, terms of service, vendor agreements, memorandums of understanding (MOU), settlement agreements",
                             DocumentCategory.HR_FORM.value: "Resumes, CVs, employee onboarding forms, offer letters, payroll stubs, performance reviews, benefits enrollment, timecards",
-                            DocumentCategory.ACADEMIC_RECORD.value: "Transcripts, diplomas, degrees, certificates, student enrollment records, syllabi, letters of recommendation, report cards",
+                            DocumentCategory.ACADEMIC_RECORD.value: "Transcripts, diplomas, degrees, certificates, student enrollment records, marksheets, syllabi, assignments, lecture notes, exam papers, research papers, theses, letters of recommendation, report cards",
                             DocumentCategory.FINANCIAL_REPORT.value: "Tax returns, W-2s, balance sheets, income statements, audit reports, bank statements, corporate financial disclosures",
                             DocumentCategory.IDENTITY_DOCUMENT.value: "Passports, driver's licenses, national ID cards, visas, KYC compliance documents, voter IDs",
                             DocumentCategory.POLICY_DOCUMENT.value: "Company policies, employee handbooks, compliance guidelines, standard operating procedures (SOP), safety manuals",
-                            DocumentCategory.OTHER.value: "Any other general document type that does not clearly fit into the above categories"
+                            DocumentCategory.OTHER.value: "Only for documents unrelated to every other category, such as recipes, meeting notes, or casual correspondence"
                         }
                     }
                 }
@@ -72,9 +73,12 @@ def classify_document(text: str) -> ClassificationResult:
         
         decision_val = category_answer.get("choice")
         probabilities = category_answer.get("probabilities", {})
-        confidence_val = probabilities.get(decision_val, 1.0) if isinstance(probabilities, dict) else 1.0
-        
-        if not decision_val or decision_val not in [c.value for c in DocumentCategory]:
+        confidence_val = probabilities.get(decision_val, category_answer.get("confidence", 1.0)) if isinstance(probabilities, dict) else category_answer.get("confidence", 1.0)
+
+        if not decision_val:
+            # Unexpected response shape: fail loudly instead of mislabeling as "other".
+            raise ValueError(f"Unexpected response from decisions API: {str(data)[:300]}")
+        if decision_val not in [c.value for c in DocumentCategory]:
             decision_val = DocumentCategory.OTHER.value
             
         return ClassificationResult(
