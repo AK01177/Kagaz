@@ -7,7 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'b
 
 from services.classification import classify_document
 
-# Load env variables manually to grab OPENROUTER_API_KEY
+# Load env variables manually to grab TYPESAFE_API_KEY
 env_file = os.path.join(os.path.dirname(__file__), '..', 'backend', '.env')
 if os.path.exists(env_file):
     with open(env_file) as f:
