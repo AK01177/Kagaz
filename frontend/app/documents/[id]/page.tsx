@@ -1,149 +1,18 @@
 "use client";
 
-import { use, useEffect, useState, useCallback } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
+import {
+  DocumentRecord,
+  VALID_DOCUMENT_TYPES,
+  getCategoryInfo,
+  formatFileSize,
+  formatDate,
+} from "@/app/classification";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
-
-interface DocumentRecord {
-  document_id: string;
-  filename: string;
-  file_type?: string;
-  file_size?: number;
-  status: string;
-  uploaded_at?: string;
-  category?: string | null;
-  confidence?: number | null;
-  submitter_id?: string;
-  organization_id?: string;
-}
-
-interface CategoryInfo {
-  name: string;
-  badge: string;
-  icon: string;
-  description: string;
-  routing: string;
-  reviewUrl: string;
-}
-
-function getCategoryInfo(rawCategory?: string | null): CategoryInfo {
-  const norm = (rawCategory ?? "").toLowerCase().trim();
-  if (norm.includes("invoice") || norm.includes("bill") || norm.includes("receipt")) {
-    return {
-      name: "Commercial Invoice",
-      badge: "Financial",
-      icon: "🧾",
-      description: "Billing statement specifying line items, supplier details, tax amounts, and payment obligations.",
-      routing: "Accounts Payable Queue",
-      reviewUrl: "/review?type=invoice",
-    };
-  }
-  if (norm.includes("contract") || norm.includes("agreement") || norm.includes("nda") || norm.includes("lease")) {
-    return {
-      name: "Legal Contract & Agreement",
-      badge: "Legal",
-      icon: "📑",
-      description: "Legally enforceable agreement defining mutual covenants, liabilities, and governance terms.",
-      routing: "Legal & Compliance Queue",
-      reviewUrl: "/review?type=contract",
-    };
-  }
-  if (norm.includes("academic") || norm.includes("transcript") || norm.includes("diploma") || norm.includes("degree")) {
-    return {
-      name: "Academic Record & Transcript",
-      badge: "Credentials",
-      icon: "🎓",
-      description: "Official institutional transcript or credential documentation verifying educational completion.",
-      routing: "Academic Verification Queue",
-      reviewUrl: "/review?type=academic",
-    };
-  }
-  if (norm.includes("hr") || norm.includes("employee") || norm.includes("payroll") || norm.includes("resume") || norm.includes("cv")) {
-    return {
-      name: "Human Resources Record",
-      badge: "Personnel",
-      icon: "👥",
-      description: "Personnel filing, onboarding form, resume, or employment compliance record.",
-      routing: "HR Records Queue",
-      reviewUrl: "/review?type=hr",
-    };
-  }
-  if (norm.includes("financial") || norm.includes("tax") || norm.includes("statement") || norm.includes("audit") || norm.includes("report")) {
-    return {
-      name: "Financial Statement & Report",
-      badge: "Audit & Fiscal",
-      icon: "📊",
-      description: "Balance sheet, income statement, audit documentation, or corporate fiscal disclosure.",
-      routing: "Finance & Accounting Queue",
-      reviewUrl: "/review?type=financial",
-    };
-  }
-  if (norm.includes("identity") || norm.includes("id") || norm.includes("passport") || norm.includes("kyc")) {
-    return {
-      name: "Identity & Verification Record",
-      badge: "KYC Compliance",
-      icon: "🪪",
-      description: "Official identification, verification credential, or identity compliance filing.",
-      routing: "Identity Verification Queue",
-      reviewUrl: "/review?type=identity",
-    };
-  }
-  if (norm.includes("policy") || norm.includes("guideline") || norm.includes("rule")) {
-    return {
-      name: "Policy & Governance Document",
-      badge: "Governance",
-      icon: "⚖️",
-      description: "Institutional policy standard, compliance charter, or operating procedure.",
-      routing: "Policy Governance Queue",
-      reviewUrl: "/review?type=policy",
-    };
-  }
-  if (rawCategory && rawCategory !== "unknown" && rawCategory !== "general_document") {
-    return {
-      name: rawCategory.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-      badge: "Categorized",
-      icon: "📋",
-      description: "Classified into standard document taxonomy for automated policy evaluation.",
-      routing: "Designated Workflow Queue",
-      reviewUrl: "/review",
-    };
-  }
-  return {
-    name: "Enterprise Business Document",
-    badge: "General",
-    icon: "📄",
-    description: "Standard document intake. Contents parsed and indexed for policy validation.",
-    routing: "General Review Queue",
-    reviewUrl: "/review",
-  };
-}
-
-function formatFileSize(bytes?: number): string {
-  if (!bytes || isNaN(bytes)) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function formatDate(isoString?: string): string {
-  if (!isoString) return "—";
-  try {
-    const d = new Date(isoString);
-    if (isNaN(d.getTime())) return isoString;
-    return d.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    });
-  } catch {
-    return isoString;
-  }
-}
 
 function getDemoDocument(id: string): DocumentRecord {
   return {
@@ -168,30 +37,118 @@ export default function DocumentDetailsPage(props: {
   const documentId = unwrapped?.id || (routeParams?.id as string) || "";
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
 
-  const [document, setDocument] = useState<DocumentRecord | null>(() => (isDemo ? getDemoDocument(documentId) : null));
+  const [document, setDocument] = useState<DocumentRecord | null>(() => {
+    if (isDemo) return getDemoDocument(documentId);
+    if (typeof window !== "undefined") {
+      try {
+        const stored = window.sessionStorage.getItem(`kagaz_doc_${documentId}`);
+        if (stored) return JSON.parse(stored) as DocumentRecord;
+      } catch {}
+    }
+    return null;
+  });
   const [loading, setLoading] = useState(!isDemo);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [classifying, setClassifying] = useState(false);
   const [actionAlert, setActionAlert] = useState<{ type: "info" | "error"; message: string } | null>(null);
 
-  const fetchDocument = useCallback(async () => {
+  // Reviewer classification correction state
+  const [isEditingClassification, setIsEditingClassification] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>("invoice");
+  const [correctionNotes, setCorrectionNotes] = useState("");
+  const [savingCorrection, setSavingCorrection] = useState(false);
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
+  const [correctionSuccess, setCorrectionSuccess] = useState<string | null>(null);
+
+  function startEditing() {
+    const rawCat = (document?.category ?? "").toLowerCase().trim();
+    const matched = VALID_DOCUMENT_TYPES.find(
+      (opt) => opt.value === rawCat || rawCat.includes(opt.value)
+    );
+    setSelectedCategory(matched ? matched.value : "invoice");
+    setCorrectionNotes("");
+    setCorrectionError(null);
+    setCorrectionSuccess(null);
+    setIsEditingClassification(true);
+  }
+
+  async function saveClassificationCorrection() {
+    if (!documentId || !selectedCategory) return;
+    setSavingCorrection(true);
+    setCorrectionError(null);
+    setCorrectionSuccess(null);
+
+    const token = typeof window !== "undefined"
+      ? (window.localStorage.getItem("kagaz_token") ?? window.sessionStorage.getItem("kagaz_token"))
+      : null;
+
+    try {
+      const response = await fetch(`${API_URL}/api/documents/${documentId}/classification`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          category: selectedCategory,
+          notes: correctionNotes.trim() || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        let errorDetail = `API Error (HTTP ${response.status})`;
+        try {
+          const body = await response.json();
+          if (body?.detail) {
+            errorDetail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+          } else if (body?.error?.message) {
+            errorDetail = body.error.message;
+          }
+        } catch {}
+        throw new Error(errorDetail);
+      }
+
+      const updated = (await response.json()) as DocumentRecord;
+      const catName = getCategoryInfo(selectedCategory).name;
+
+      setDocument((prev) => {
+        const nextDoc: DocumentRecord = {
+          ...(prev ?? { document_id: documentId, filename: "document.pdf", status: "CLASSIFIED" }),
+          ...updated,
+          category: updated.category ?? selectedCategory,
+          confidence: updated.confidence !== undefined ? updated.confidence : 1.0,
+          status: updated.status ?? "CLASSIFIED",
+          is_manually_corrected: true,
+        };
+        try {
+          window.sessionStorage.setItem(`kagaz_doc_${documentId}`, JSON.stringify(nextDoc));
+        } catch {}
+        return nextDoc;
+      });
+
+      setCorrectionSuccess(`Classification successfully corrected to "${catName}".`);
+      setActionAlert({
+        type: "info",
+        message: `Document classification updated to "${catName}" by Reviewer.`,
+      });
+      setIsEditingClassification(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to save classification correction.";
+      setCorrectionError(msg);
+      setActionAlert({
+        type: "error",
+        message: `Correction failed: ${msg}`,
+      });
+    } finally {
+      setSavingCorrection(false);
+    }
+  }
+
+  const retryFetch = async () => {
     if (!documentId) return;
     setLoading(true);
     setError(null);
-
-    // 1. Check session storage cache first for instant load if redirected after upload
-    let cachedDoc: DocumentRecord | null = null;
-    try {
-      const stored = window.sessionStorage.getItem(`kagaz_doc_${documentId}`);
-      if (stored) {
-        cachedDoc = JSON.parse(stored);
-        setDocument(cachedDoc);
-      }
-    } catch {
-      // Ignore cache retrieval failure
-    }
-
     const token = typeof window !== "undefined"
       ? (window.localStorage.getItem("kagaz_token") ?? window.sessionStorage.getItem("kagaz_token"))
       : null;
@@ -212,38 +169,15 @@ export default function DocumentDetailsPage(props: {
       setDocument(body);
       try {
         window.sessionStorage.setItem(`kagaz_doc_${documentId}`, JSON.stringify(body));
-      } catch {
-        // Ignore session storage error
-      }
-    } catch {
-      if (!cachedDoc) {
-        const lower = documentId.toLowerCase();
-        const fallback: DocumentRecord = {
-          document_id: documentId,
-          filename: documentId.endsWith(".pdf") ? documentId : `${documentId}.pdf`,
-          file_type: "application/pdf",
-          file_size: 1845200,
-          status: "CLASSIFIED",
-          uploaded_at: new Date().toISOString(),
-          category: lower.includes("contract")
-            ? "contract"
-            : lower.includes("academic")
-            ? "academic"
-            : lower.includes("hr")
-            ? "hr_form"
-            : "invoice",
-          confidence: 0.935,
-          organization_id: "org_kagaz_primary",
-          submitter_id: "usr_doc_analyst",
-        };
-        setDocument(fallback);
-      }
+      } catch {}
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to retrieve document.");
     } finally {
       setLoading(false);
     }
-  }, [documentId]);
+  };
 
-  const loadDemoData = useCallback(() => {
+  const loadDemoData = () => {
     const demo: DocumentRecord = {
       document_id: documentId || "doc_demo_8823f9",
       filename: "commercial_invoice_september.pdf",
@@ -259,18 +193,81 @@ export default function DocumentDetailsPage(props: {
     setDocument(demo);
     setError(null);
     setLoading(false);
-  }, [documentId]);
+  };
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const search = window.location.search;
-      if (documentId.startsWith("doc_demo") || search.includes("demo=true")) {
-        loadDemoData();
-        return;
+    if (isDemo || !documentId) {
+      return;
+    }
+
+    let isSubscribed = true;
+
+    async function load() {
+      const token = typeof window !== "undefined"
+        ? (window.localStorage.getItem("kagaz_token") ?? window.sessionStorage.getItem("kagaz_token"))
+        : null;
+
+      try {
+        const response = await fetch(`${API_URL}/api/documents/${documentId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error(`DOCUMENT_NOT_FOUND: Document ${documentId} does not exist on the server.`);
+          }
+          throw new Error(`API_ERROR: Received status ${response.status} from document retrieval endpoint.`);
+        }
+
+        const body = (await response.json()) as DocumentRecord;
+        if (isSubscribed) {
+          setDocument(body);
+          try {
+            window.sessionStorage.setItem(`kagaz_doc_${documentId}`, JSON.stringify(body));
+          } catch {}
+        }
+      } catch {
+        let cachedDoc: DocumentRecord | null = null;
+        try {
+          const stored = window.sessionStorage.getItem(`kagaz_doc_${documentId}`);
+          if (stored) cachedDoc = JSON.parse(stored) as DocumentRecord;
+        } catch {}
+
+        if (!cachedDoc && isSubscribed) {
+          const lower = documentId.toLowerCase();
+          const fallback: DocumentRecord = {
+            document_id: documentId,
+            filename: documentId.endsWith(".pdf") ? documentId : `${documentId}.pdf`,
+            file_type: "application/pdf",
+            file_size: 1845200,
+            status: "CLASSIFIED",
+            uploaded_at: new Date().toISOString(),
+            category: lower.includes("contract")
+              ? "contract"
+              : lower.includes("academic")
+              ? "academic"
+              : lower.includes("hr")
+              ? "hr_form"
+              : "invoice",
+            confidence: 0.935,
+            organization_id: "org_kagaz_primary",
+            submitter_id: "usr_doc_analyst",
+          };
+          setDocument(fallback);
+        }
+      } finally {
+        if (isSubscribed) {
+          setLoading(false);
+        }
       }
     }
-    fetchDocument();
-  }, [fetchDocument, loadDemoData, documentId]);
+
+    load();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [documentId, isDemo]);
 
   async function triggerClassification() {
     if (!documentId) return;
@@ -351,7 +348,7 @@ export default function DocumentDetailsPage(props: {
   const isFailed = rawStatus === "FAILED" || rawStatus === "ERROR";
   const isUploaded = rawStatus === "UPLOADED" && !isProcessing;
 
-  const categoryInfo = getCategoryInfo(document?.category);
+  const categoryInfo = getCategoryInfo(document?.category, documentId);
   const confidenceVal = document?.confidence !== undefined && document?.confidence !== null ? document.confidence : null;
   const confidencePercent = confidenceVal !== null ? Math.round(confidenceVal * 1000) / 10 : null;
 
@@ -387,7 +384,7 @@ export default function DocumentDetailsPage(props: {
             <h2>Unable to Retrieve Document</h2>
             <p>{error}</p>
             <div className="result-error-actions">
-              <button className="primary-button" type="button" onClick={fetchDocument}>
+              <button className="primary-button" type="button" onClick={retryFetch}>
                 Retry Retrieval <span aria-hidden="true">↻</span>
               </button>
               <button className="secondary-button" type="button" onClick={loadDemoData}>
@@ -593,10 +590,149 @@ export default function DocumentDetailsPage(props: {
             <div className="results-grid">
               {/* Classification Result Card */}
               <div className="result-card" aria-labelledby="classification-title">
-                <div className="card-eyebrow">Document Classification Result</div>
-                <h2 id="classification-title" className="card-title">
-                  Intelligence Analysis
-                </h2>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
+                  <div>
+                    <div className="card-eyebrow">Document Classification Result</div>
+                    <h2 id="classification-title" className="card-title" style={{ margin: 0 }}>
+                      Intelligence Analysis
+                    </h2>
+                  </div>
+                  {!isEditingClassification ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={startEditing}
+                      title="Reviewer action: correct the document classification"
+                      style={{ padding: "8px 14px", fontSize: "12px" }}
+                    >
+                      Correct Classification <span aria-hidden="true">✏️</span>
+                    </button>
+                  ) : (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => {
+                        setIsEditingClassification(false);
+                        setCorrectionError(null);
+                      }}
+                      style={{ padding: "8px 14px", fontSize: "12px" }}
+                    >
+                      Close Editor <span aria-hidden="true">×</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Inline Confirmation of Saved Correction */}
+                {correctionSuccess && !isEditingClassification && (
+                  <div className="correction-alert-inline correction-alert-inline-success" role="status" style={{ marginBottom: "16px" }}>
+                    <span aria-hidden="true">✓</span>
+                    <div>{correctionSuccess}</div>
+                  </div>
+                )}
+
+                {/* Reviewer Correction Control Box */}
+                {isEditingClassification && (
+                  <div className="correction-box" role="region" aria-label="Classification Correction Panel">
+                    <div className="correction-header">
+                      <div>
+                        <h3 className="correction-title">Reviewer Classification Correction</h3>
+                        <div className="correction-subtitle">
+                          Review current type and select a valid replacement from the Kagaz document taxonomy.
+                        </div>
+                      </div>
+                      <span className="correction-badge-verified">Reviewer Control</span>
+                    </div>
+
+                    <div className="correction-form">
+                      {/* Current Classification Display */}
+                      <div className="form-group">
+                        <span className="form-label">Current Classification</span>
+                        <div className="form-current-preview">
+                          <span aria-hidden="true">{categoryInfo.icon}</span>
+                          <span>
+                            <strong>{categoryInfo.name}</strong> ({categoryInfo.badge}) ·{" "}
+                            {document.is_manually_corrected ? "100% (Reviewer Verified)" : confidencePercent !== null ? `${confidencePercent}% confidence` : "Not evaluated"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Replacement Category Selector */}
+                      <div className="form-group">
+                        <label htmlFor="category-select" className="form-label">
+                          Valid Replacement Document Type
+                        </label>
+                        <select
+                          id="category-select"
+                          className="form-select"
+                          value={selectedCategory}
+                          onChange={(e) => setSelectedCategory(e.target.value)}
+                          disabled={savingCorrection}
+                          aria-label="Select valid replacement document type"
+                        >
+                          {VALID_DOCUMENT_TYPES.map((typeOption) => (
+                            <option key={typeOption.value} value={typeOption.value}>
+                              {typeOption.label} ({typeOption.badge})
+                            </option>
+                          ))}
+                        </select>
+                        <span className="form-hint">
+                          {VALID_DOCUMENT_TYPES.find((t) => t.value === selectedCategory)?.description}
+                        </span>
+                      </div>
+
+                      {/* Optional Reviewer Notes */}
+                      <div className="form-group">
+                        <label htmlFor="correction-notes" className="form-label">
+                          Reviewer Notes / Rationale (Optional)
+                        </label>
+                        <input
+                          id="correction-notes"
+                          type="text"
+                          className="form-input"
+                          placeholder="e.g. Contains supplier tax invoice line items, reclassified from contract"
+                          value={correctionNotes}
+                          onChange={(e) => setCorrectionNotes(e.target.value)}
+                          disabled={savingCorrection}
+                        />
+                      </div>
+
+                      {/* API Error Display */}
+                      {correctionError && (
+                        <div className="correction-alert-inline correction-alert-inline-error" role="alert">
+                          <span aria-hidden="true">⚠️</span>
+                          <div>
+                            <strong>API Error:</strong> {correctionError}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Save Action Buttons */}
+                      <div className="correction-actions">
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={savingCorrection || !selectedCategory}
+                          onClick={saveClassificationCorrection}
+                          style={{ padding: "12px 20px" }}
+                        >
+                          {savingCorrection ? "Saving Correction..." : "Save Classification"}
+                          <span aria-hidden="true">{savingCorrection ? "⏳" : "✓"}</span>
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={savingCorrection}
+                          onClick={() => {
+                            setIsEditingClassification(false);
+                            setCorrectionError(null);
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Main Category Box */}
                 <div className="category-highlight-box">
@@ -605,7 +741,14 @@ export default function DocumentDetailsPage(props: {
                       <span aria-hidden="true" style={{ marginRight: "10px" }}>{categoryInfo.icon}</span>
                       {categoryInfo.name}
                     </div>
-                    <span className="category-badge-chip">{categoryInfo.badge}</span>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      {document.is_manually_corrected && (
+                        <span className="correction-badge-verified">
+                          ✓ Reviewer Verified
+                        </span>
+                      )}
+                      <span className="category-badge-chip">{categoryInfo.badge}</span>
+                    </div>
                   </div>
                   <p className="category-description">{categoryInfo.description}</p>
                 </div>
@@ -613,16 +756,20 @@ export default function DocumentDetailsPage(props: {
                 {/* Confidence Meter */}
                 <div className="confidence-box" aria-label="Model Confidence Score">
                   <div className="confidence-header">
-                    <span className="confidence-label">Model Confidence</span>
+                    <span className="confidence-label">
+                      {document.is_manually_corrected ? "Verification Status" : "Model Confidence"}
+                    </span>
                     <span className="confidence-value">
-                      {confidencePercent !== null ? `${confidencePercent}%` : "Not evaluated"}
+                      {document.is_manually_corrected ? "100%" : confidencePercent !== null ? `${confidencePercent}%` : "Not evaluated"}
                     </span>
                   </div>
 
-                  <div className="confidence-bar-track" role="progressbar" aria-valuenow={confidencePercent ?? 0} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="confidence-bar-track" role="progressbar" aria-valuenow={document.is_manually_corrected ? 100 : (confidencePercent ?? 0)} aria-valuemin={0} aria-valuemax={100}>
                     <div
                       className={`confidence-bar-fill ${
-                        confidencePercent === null
+                        document.is_manually_corrected
+                          ? "confidence-bar-high"
+                          : confidencePercent === null
                           ? ""
                           : confidencePercent >= 80
                           ? "confidence-bar-high"
@@ -630,13 +777,17 @@ export default function DocumentDetailsPage(props: {
                           ? "confidence-bar-med"
                           : "confidence-bar-low"
                       }`}
-                      style={{ width: `${Math.max(confidencePercent ?? 0, 4)}%` }}
+                      style={{ width: `${document.is_manually_corrected ? 100 : Math.max(confidencePercent ?? 0, 4)}%` }}
                     />
                   </div>
 
                   <div className="confidence-tier-note">
                     <span>Evaluation Threshold</span>
-                    {confidencePercent !== null ? (
+                    {document.is_manually_corrected ? (
+                      <span className="confidence-tier-badge tier-high">
+                        Human Verified — Overridden by Authorized Reviewer
+                      </span>
+                    ) : confidencePercent !== null ? (
                       <span
                         className={`confidence-tier-badge ${
                           confidencePercent >= 85
