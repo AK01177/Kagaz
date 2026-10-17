@@ -161,3 +161,52 @@ def test_file_size_boundary_with_multipart_overhead(client, pdf, extra, status):
     assert len(content) == upload.MAX_UPLOAD_BYTES + extra
     response = client.post("/api/documents", files={"file": ("boundary.pdf", content, "application/pdf")})
     assert response.status_code == status
+
+
+def test_correct_classification_success(client, pdf):
+    # First upload a document
+    upload_res = client.post("/api/documents", files={"file": ("invoice.pdf", pdf, "application/pdf")})
+    assert upload_res.status_code == 201
+    doc_id = upload_res.json()["document_id"]
+
+    # Now correct its classification
+    patch_res = client.patch(
+        f"/api/documents/{doc_id}/classification",
+        json={"category": "contract", "notes": "Reclassified by reviewer"},
+    )
+    assert patch_res.status_code == 200
+    body = patch_res.json()
+    assert body["category"] == "contract"
+    assert body["confidence"] == 1.0
+    assert body["is_manually_corrected"] is True
+    assert len(body["classification_history"]) == 1
+    assert body["classification_history"][0]["previous_category"] == "invoice"
+    assert body["classification_history"][0]["updated_category"] == "contract"
+    assert body["classification_history"][0]["notes"] == "Reclassified by reviewer"
+
+    # Verify GET returns updated data
+    get_res = client.get(f"/api/documents/{doc_id}")
+    assert get_res.status_code == 200
+    assert get_res.json()["category"] == "contract"
+    assert get_res.json()["is_manually_corrected"] is True
+
+
+def test_correct_classification_invalid_category(client, pdf):
+    upload_res = client.post("/api/documents", files={"file": ("invoice.pdf", pdf, "application/pdf")})
+    doc_id = upload_res.json()["document_id"]
+
+    patch_res = client.patch(
+        f"/api/documents/{doc_id}/classification",
+        json={"category": "non_existent_category"},
+    )
+    assert patch_res.status_code == 422
+    assert "Invalid category" in patch_res.text
+
+
+def test_correct_classification_not_found(client):
+    patch_res = client.patch(
+        "/api/documents/non_existent_doc_id/classification",
+        json={"category": "contract"},
+    )
+    assert patch_res.status_code == 404
+
