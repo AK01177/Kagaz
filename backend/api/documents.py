@@ -1,18 +1,18 @@
-from typing import Annotated, Optional
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
-
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
-from starlette.concurrency import run_in_threadpool
 import json
+from typing import Annotated, Optional
 
-from services.upload import UploadError, save_upload
-from services.classification import DocumentCategory, classify_document, ClassificationError
-from services.extraction import extract_text, ExtractionError
-from storage.document_storage import DocumentStorage
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+
 from api.auth import require_submitter
 from api.upload_limit import UploadLimitRoute
+from services.classification import ClassificationError, DocumentCategory, classify_document
+from services.extraction import ExtractionError, extract_text
+from services.upload import UploadError, save_upload
+from storage.document_storage import DocumentStorage
 
 
 router = APIRouter(prefix="/api/documents", tags=["documents"], route_class=UploadLimitRoute)
@@ -126,6 +126,8 @@ async def reclassify_document(document_id: str):
         metadata["confidence"] = result.confidence
         metadata["status"] = "CLASSIFIED"
         metadata["is_manually_corrected"] = False
+    except (ExtractionError, ClassificationError) as exc:
+        raise HTTPException(status_code=422, detail=f"Classification failed: {exc}")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Classification failed: {exc}")
 

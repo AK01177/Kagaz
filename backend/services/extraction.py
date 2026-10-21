@@ -49,3 +49,30 @@ def _normalize_whitespace(text: str) -> str:
     text = _WHITESPACE_RUN.sub(" ", text)
     text = _BLANK_LINE_RUN.sub("\n\n", text)
     return text.strip()
+
+
+# Re-export structured extraction functionality
+try:
+    from services.structured_extraction import (
+        StructuredExtractionError,
+        extract_structured_fields,
+        parse_and_validate_fields,
+    )
+except ImportError:
+    from backend.services.structured_extraction import (
+        StructuredExtractionError,
+        extract_structured_fields,
+        parse_and_validate_fields,
+    )
+
+__all__ = [
+    "SUPPORTED_EXTENSIONS",
+    "ExtractionError",
+    "UnsupportedDocumentTypeError",
+    "extract_text",
+    "StructuredExtractionError",
+    "extract_structured_fields",
+    "parse_and_validate_fields",
+]
+
+
