@@ -16,18 +16,19 @@ if os.path.exists(env_file):
                 key, val = line.strip().split("=", 1)
                 os.environ[key] = val.strip("'\"")
 
-# The evaluation dataset mapping filenames to expected categories
+# The evaluation dataset mapping filenames to the 4 canonical domains:
+# 1) academics, 2) hr_documents, 3) financial, 4) general_confidential
 DATASET = [
-    {"filename": "invoice_1.pdf", "expected": "invoice"},
-    {"filename": "invoice_2.pdf", "expected": "invoice"},
-    {"filename": "contract_1.pdf", "expected": "contract"},
-    {"filename": "contract_2.pdf", "expected": "contract"},
-    {"filename": "hr_form_1.pdf", "expected": "hr_form"},
-    {"filename": "hr_form_2.pdf", "expected": "hr_form"},
-    {"filename": "academic_1.pdf", "expected": "academic_record"},
-    {"filename": "academic_2.pdf", "expected": "academic_record"},
-    {"filename": "other_1.pdf", "expected": "other"},
-    {"filename": "other_2.pdf", "expected": "other"}
+    {"filename": "invoice_1.pdf", "expected": "financial"},
+    {"filename": "invoice_2.pdf", "expected": "financial"},
+    {"filename": "contract_1.pdf", "expected": "general_confidential"},
+    {"filename": "contract_2.pdf", "expected": "general_confidential"},
+    {"filename": "hr_form_1.pdf", "expected": "hr_documents"},
+    {"filename": "hr_form_2.pdf", "expected": "hr_documents"},
+    {"filename": "academic_1.pdf", "expected": "academics"},
+    {"filename": "academic_2.pdf", "expected": "academics"},
+    {"filename": "other_1.pdf", "expected": "general_confidential"},
+    {"filename": "other_2.pdf", "expected": "general_confidential"}
 ]
 
 def extract_text_from_pdf(pdf_path):
@@ -90,7 +91,7 @@ def evaluate():
         accuracy = (correct / total) * 100
         print(f"\nEvaluation Complete! Accuracy: {accuracy:.1f}%")
         
-        report.write(f"\n## Summary\n")
+        report.write("\n## Summary\n")
         report.write(f"- **Total PDF Samples:** {total}\n")
         report.write(f"- **Accuracy:** {accuracy:.1f}%\n\n")
         
