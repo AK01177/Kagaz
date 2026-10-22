@@ -8,7 +8,7 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg2://postgres:postgres@localhost:5432/kagaz",
 )
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
