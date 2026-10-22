@@ -1,4 +1,4 @@
-﻿# Kagaz backend
+# Kagaz backend
 
 FastAPI backend with a public health check, authenticated PDF uploads, and PDF text extraction. Requires Python 3.10 or newer.
 
@@ -18,12 +18,14 @@ Interactive documentation: http://127.0.0.1:8000/docs. `GET /api/health` is publ
 
 | Environment variable | Meaning | Default |
 |---|---|---|
+| `DATABASE_URL` | PostgreSQL SQLAlchemy connection URL | `postgresql+psycopg2://postgres:postgres@localhost:5432/kagaz` |
 | `JWT_SECRET` | Shared HS256 signing secret, at least 32 bytes | Required for authenticated requests |
 | `JWT_ISSUER` | Trusted token issuer | `kagaz` |
 | `JWT_AUDIENCE` | Expected token audience | `kagaz-api` |
 | `DOCUMENT_STORAGE_DIR` | Local storage directory | `storage_data`, relative to working directory |
 
-Export variables before starting the server. `.env` files are not automatically loaded. Use a persistent secret shared with the trusted token issuer outside local testing.
+Export variables or create a `.env` file (see `backend/.env.example`). Use a persistent secret shared with the trusted token issuer outside local testing.
+
 
 ## Upload API (BE-02)
 
@@ -63,3 +65,23 @@ From `backend`:
 ```
 
 Covers health, extraction, upload persistence, extraction compatibility, file validation, rollback, identity attribution and JWT rejection paths.
+
+## Database Migrations
+
+Alembic manages migrations for PostgreSQL:
+
+```bash
+# View migration history
+alembic history
+
+# Apply migrations
+alembic upgrade head
+
+# Roll back last migration
+alembic downgrade -1
+
+# Generate SQL offline without live database
+alembic upgrade head --sql
+```
+
+For complete database documentation, schema details, and setup instructions, see `database/db.md`.

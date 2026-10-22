@@ -4,11 +4,25 @@ Defines the persistence model for uploaded document metadata.
 """
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, Integer, Float, DateTime, Enum
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    Enum,
+    Float,
+    Integer,
+    String,
+)
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
+
+
+def utc_now() -> datetime:
+    """Return timezone-aware current UTC datetime."""
+    return datetime.now(timezone.utc)
 
 
 class DocumentStatus(str, enum.Enum):
@@ -29,6 +43,13 @@ class Document(Base):
     lifecycle status.
     """
     __tablename__ = "documents"
+
+    __table_args__ = (
+        CheckConstraint(
+            "classification_confidence IS NULL OR (classification_confidence >= 0.0 AND classification_confidence <= 1.0)",
+            name="ck_documents_classification_confidence_range",
+        ),
+    )
 
     # Stored as String(36) rather than a Postgres-native UUID column so
     # the model runs identically against Postgres (prod) and SQLite
@@ -53,11 +74,19 @@ class Document(Base):
 
     # Lifecycle
     status = Column(Enum(DocumentStatus), nullable=False, default=DocumentStatus.UPLOADED, index=True)
-    upload_timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+    upload_timestamp = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     # Populated once classification runs (BE-04) — nullable until then
     classification = Column(String, nullable=True)            # e.g. "invoice", "transcript"
     classification_confidence = Column(Float, nullable=True)  # 0.0–1.0
+
+    # Relationships
+    extractions = relationship(
+        "Extraction",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     def __repr__(self) -> str:
         return f"<Document id={self.id} filename={self.filename} status={self.status}>"

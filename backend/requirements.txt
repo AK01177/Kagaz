@@ -11,3 +11,4 @@ reportlab
 python-multipart
 PyJWT>=2.10,<3
 typesafe-sdk
+alembic
