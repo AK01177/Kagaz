@@ -1,49 +1,71 @@
-
-name: Backend CI
+# Place this file at: .github/workflows/ci.yml
+name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
-permissions:
-  contents: read
-
+# Cancel older runs of the same branch/PR when a new commit is pushed
 concurrency:
-  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  backend-tests:
-    name: Backend tests
+  backend:
+    name: Backend - install, build check & tests
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: backend
+    timeout-minutes: 15
 
     steps:
-      - name: Check out repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"          # change to the version your team uses
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
-      - name: Install backend dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-cov
 
-      - name: Run backend tests
+      - name: Build check (compile all backend code)
+        run: python -m compileall -q backend
+
+      - name: Run tests
         env:
-          JWT_SECRET: ci-test-secret-that-is-at-least-32-bytes-long
-          JWT_ISSUER: kagaz
-          JWT_AUDIENCE: kagaz-api
-          TYPESAFE_API_KEY: fake-ci-key
-        run: python -m pytest -q
+          # Dummy values so tests never need real secrets / paid API calls.
+          # Mock external calls (LLM / classifier API) inside the tests.
+          TYPESAFE_API_KEY: "dummy-key-for-ci"
+        run: pytest test backend -v --maxfail=5 --cov=backend --cov-report=term-missing
+
+  frontend:
+    name: Frontend - install & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Remove this job if the frontend isn't part of the CI scope yet.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
