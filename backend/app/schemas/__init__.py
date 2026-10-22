@@ -9,6 +9,15 @@ from app.schemas.extraction import (
     ExtractionCreate,
     ExtractionResponse,
     DocumentExtractionsResponse,
+    ExtractedField,
+    BaseDocumentExtraction,
+    InvoiceExtraction,
+    ResumeExtraction,
+    ExtractionDocumentType,
+    EXTRACTION_SCHEMA_REGISTRY,
+    get_extraction_schema,
+    get_supported_extraction_types,
+    get_field_definitions,
 )
 
 __all__ = [
@@ -19,4 +28,13 @@ __all__ = [
     "ExtractionCreate",
     "ExtractionResponse",
     "DocumentExtractionsResponse",
+    "ExtractedField",
+    "BaseDocumentExtraction",
+    "InvoiceExtraction",
+    "ResumeExtraction",
+    "ExtractionDocumentType",
+    "EXTRACTION_SCHEMA_REGISTRY",
+    "get_extraction_schema",
+    "get_supported_extraction_types",
+    "get_field_definitions",
 ]

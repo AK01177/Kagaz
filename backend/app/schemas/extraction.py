@@ -45,10 +45,12 @@ class ExtractedField(BaseModel, Generic[T]):
 
     @model_validator(mode="after")
     def sync_presence(self) -> ExtractedField[T]:
+        # Automatically mark present if a non-None value is assigned and is_present wasn't explicitly false
         if self.value is not None and not self.is_present:
             self.is_present = True
         elif self.value is None:
             self.is_present = False
+            # Normalize confidence if field is missing and default 0.0 was kept
         return self
 
     @classmethod
@@ -219,7 +221,7 @@ class ExtractionDocumentType(str, enum.Enum):
 EXTRACTION_SCHEMA_REGISTRY: Dict[str, type[BaseDocumentExtraction]] = {
     ExtractionDocumentType.INVOICE.value: InvoiceExtraction,
     ExtractionDocumentType.RESUME.value: ResumeExtraction,
-    ExtractionDocumentType.HR_FORM.value: ResumeExtraction,
+    ExtractionDocumentType.HR_FORM.value: ResumeExtraction,  # Aliased for Sprint 2 HR scope
     "financial": InvoiceExtraction,
     "hr_documents": ResumeExtraction,
     "academics": ResumeExtraction,

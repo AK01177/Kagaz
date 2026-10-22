@@ -37,28 +37,16 @@ function validateFile(file: File) {
 
 function detectDocumentCategory(filename: string): { category: string; confidence: number } {
   const name = filename.toLowerCase();
-  if (name.includes("contract") || name.includes("agreement") || name.includes("nda") || name.includes("lease") || name.includes("terms")) {
-    return { category: "CONTRACT", confidence: 0.965 };
-  }
   if (name.includes("academic") || name.includes("transcript") || name.includes("diploma") || name.includes("degree") || name.includes("student") || name.includes("grade")) {
-    return { category: "ACADEMIC", confidence: 0.948 };
+    return { category: "ACADEMICS", confidence: 0.948 };
   }
-  if (name.includes("hr") || name.includes("employee") || name.includes("resume") || name.includes("cv") || name.includes("payroll") || name.includes("onboarding") || name.includes("offer")) {
-    return { category: "HR_FORM", confidence: 0.952 };
+  if (name.includes("hr") || name.includes("employee") || name.includes("resume") || name.includes("cv") || name.includes("payroll") || name.includes("onboarding") || name.includes("offer") || name.includes("timesheet")) {
+    return { category: "HR_DOCUMENTS", confidence: 0.952 };
   }
-  if (name.includes("invoice") || name.includes("bill") || name.includes("receipt") || name.includes("inv") || name.includes("purchase")) {
-    return { category: "INVOICE", confidence: 0.978 };
+  if (name.includes("invoice") || name.includes("bill") || name.includes("receipt") || name.includes("inv") || name.includes("purchase") || name.includes("financial") || name.includes("tax") || name.includes("balance") || name.includes("bank")) {
+    return { category: "FINANCIAL", confidence: 0.978 };
   }
-  if (name.includes("financial") || name.includes("tax") || name.includes("audit") || name.includes("statement") || name.includes("balance") || name.includes("bank") || name.includes("report")) {
-    return { category: "FINANCIAL_REPORT", confidence: 0.936 };
-  }
-  if (name.includes("id") || name.includes("passport") || name.includes("license") || name.includes("kyc")) {
-    return { category: "IDENTITY_DOCUMENT", confidence: 0.984 };
-  }
-  if (name.includes("policy") || name.includes("guideline") || name.includes("manual")) {
-    return { category: "POLICY_DOCUMENT", confidence: 0.921 };
-  }
-  return { category: "GENERAL_DOCUMENT", confidence: 0.895 };
+  return { category: "GENERAL_CONFIDENTIAL", confidence: 0.925 };
 }
 
 export default function DocumentsPage() {
