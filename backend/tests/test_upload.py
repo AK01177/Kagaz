@@ -172,9 +172,19 @@ def test_correct_classification_success(client, pdf):
     assert upload_res.status_code == 201
     doc_id = upload_res.json()["document_id"]
 
-    # Now correct its classification
+    reviewer_headers = {"Authorization": f"Bearer {token(role='REVIEWER')}"}
+
+    # Unauthorized submitter cannot correct classification
+    unauth_res = client.patch(
+        f"/api/documents/{doc_id}/classification",
+        json={"category": "general_confidential"},
+    )
+    assert unauth_res.status_code == 403
+
+    # Now correct its classification with reviewer token
     patch_res = client.patch(
         f"/api/documents/{doc_id}/classification",
+        headers=reviewer_headers,
         json={"category": "general_confidential", "notes": "Reclassified by reviewer"},
     )
     assert patch_res.status_code == 200
@@ -197,9 +207,11 @@ def test_correct_classification_success(client, pdf):
 def test_correct_classification_invalid_category(client, pdf):
     upload_res = client.post("/api/documents", files={"file": ("invoice.pdf", pdf, "application/pdf")})
     doc_id = upload_res.json()["document_id"]
+    reviewer_headers = {"Authorization": f"Bearer {token(role='REVIEWER')}"}
 
     patch_res = client.patch(
         f"/api/documents/{doc_id}/classification",
+        headers=reviewer_headers,
         json={"category": "non_existent_category"},
     )
     assert patch_res.status_code == 422
@@ -207,8 +219,10 @@ def test_correct_classification_invalid_category(client, pdf):
 
 
 def test_correct_classification_not_found(client):
+    reviewer_headers = {"Authorization": f"Bearer {token(role='REVIEWER')}"}
     patch_res = client.patch(
         "/api/documents/non_existent_doc_id/classification",
+        headers=reviewer_headers,
         json={"category": "contract"},
     )
     assert patch_res.status_code == 404

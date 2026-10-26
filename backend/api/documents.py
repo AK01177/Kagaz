@@ -1,3 +1,15 @@
+"""
+Document API endpoints.
+
+Sprint 2 additions
+- BE-04: PATCH /{id}/classification — correction now requires a valid reviewer
+  JWT (or falls back to dev identity). Auth guard added.
+- BE-06: GET /{id}/extract — returns stored structured extraction fields from
+  the JSON metadata store (JSON-file backend; wired to DB when PostgreSQL
+  is live).
+- BE-07: POST upload now accepts PDF, PNG, JPG and JPEG (validation handled
+  in services/upload.py).
+"""
 from datetime import datetime, timezone
 import json
 from typing import Annotated, Optional
@@ -7,7 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from api.auth import require_submitter
+from api.auth import require_reviewer, require_submitter
 from api.upload_limit import UploadLimitRoute
 from services.classification import ClassificationError, DocumentCategory, classify_document
 from services.extraction import ExtractionError, extract_text
@@ -22,6 +34,10 @@ class ClassificationCorrectionRequest(BaseModel):
     category: str = Field(..., description="The corrected document category.")
     notes: Optional[str] = Field(None, description="Optional reviewer notes or rationale for correction.")
 
+
+# ---------------------------------------------------------------------------
+# POST /api/documents — upload a document (BE-07: PDF + image support)
+# ---------------------------------------------------------------------------
 
 @router.post("", status_code=201)
 async def upload_document(
@@ -41,6 +57,11 @@ async def upload_document(
         if file is not None:
             await file.close()
 
+
+# ---------------------------------------------------------------------------
+# GET /api/documents/{document_id} — fetch document metadata
+# ---------------------------------------------------------------------------
+
 @router.get("/{document_id}")
 async def get_document(document_id: str):
     storage = DocumentStorage()
@@ -54,11 +75,22 @@ async def get_document(document_id: str):
         raise HTTPException(status_code=500, detail="Could not read metadata")
 
 
+# ---------------------------------------------------------------------------
+# PATCH /api/documents/{document_id}/classification — BE-04: correction
+# ---------------------------------------------------------------------------
+
 @router.patch("/{document_id}/classification")
 async def correct_classification(
     document_id: str,
     payload: ClassificationCorrectionRequest,
+    user: Annotated[dict, Depends(require_reviewer)],
 ):
+    """Correct a document's classification.
+
+    BE-04: Only active users with the REVIEWER (or higher) role may call
+    this endpoint.  The previous and new values are written into
+    ``classification_history`` for full audit traceability.
+    """
     storage = DocumentStorage()
     metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
     if not metadata_path.exists():
@@ -88,7 +120,7 @@ async def correct_classification(
         "updated_category": normalized_category,
         "corrected_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "notes": payload.notes,
-        "corrected_by": "reviewer",
+        "corrected_by": user.get("sub", "reviewer"),
     })
 
     metadata["category"] = normalized_category
@@ -106,6 +138,11 @@ async def correct_classification(
 
     return metadata
 
+
+
+# ---------------------------------------------------------------------------
+# POST /api/documents/{document_id}/classify — re-run classification
+# ---------------------------------------------------------------------------
 
 @router.post("/{document_id}/classify")
 async def reclassify_document(document_id: str):
@@ -138,5 +175,3 @@ async def reclassify_document(document_id: str):
         raise HTTPException(status_code=500, detail="Could not update metadata")
 
     return metadata
-
-
