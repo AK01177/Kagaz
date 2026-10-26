@@ -18,6 +18,22 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
 
+# BE-07: Supported upload formats
+# Maps normalised lowercase extension -> canonical MIME type stored in metadata
+SUPPORTED_MIME_BY_EXT: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+}
+# Content-types that browsers/clients may send for any binary upload
+_AMBIGUOUS_CONTENT_TYPES = {"application/octet-stream", None}
+# Magic-byte signatures for image formats
+_IMAGE_SIGNATURES: list[tuple[bytes, str]] = [
+    (b"\x89PNG\r\n\x1a\n", "PNG"),
+    (b"\xff\xd8\xff", "JPEG"),
+]
+
 
 class UploadError(Exception):
     def __init__(self, status_code: int, code: str, message: str):
@@ -27,24 +43,48 @@ class UploadError(Exception):
 
 
 def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
-    """Validate and persist a PDF, extract text, and classify it."""
+    """Validate and persist a PDF or image file, extract text, and classify it.
+
+    BE-07: Accepts PDF, PNG, JPG and JPEG.  Validates by extension and,
+    where practical, by magic bytes / PDF header.  The canonical MIME type
+    is derived from the extension and stored in metadata regardless of what
+    the client sent.
+    """
     filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     if not filename or "\x00" in filename:
         raise UploadError(400, "INVALID_FILE", "A valid filename is required.")
-    if Path(filename).suffix.lower() != ".pdf" or file.content_type not in {
-        "application/pdf", "application/octet-stream", None,
-    }:
-        raise UploadError(415, "UNSUPPORTED_FILE_TYPE", "Only PDF files are supported.")
+
+    ext = Path(filename).suffix.lower()
+    canonical_mime = SUPPORTED_MIME_BY_EXT.get(ext)
+    if canonical_mime is None:
+        raise UploadError(
+            415,
+            "UNSUPPORTED_FILE_TYPE",
+            "Only PDF, PNG, JPG and JPEG files are supported.",
+        )
+
+    # If the client provides an explicit non-ambiguous content-type, check
+    # that it is consistent with the file extension.
+    client_ct = (file.content_type or "").lower().split(";")[0].strip()
+    if client_ct and client_ct not in _AMBIGUOUS_CONTENT_TYPES:
+        allowed_cts = {canonical_mime, "application/octet-stream"}
+        if client_ct not in allowed_cts:
+            raise UploadError(
+                415,
+                "UNSUPPORTED_FILE_TYPE",
+                "Only PDF, PNG, JPG and JPEG files are supported.",
+            )
 
     document_id = f"doc_{uuid4().hex}"
     response = {
         "document_id": document_id,
         "filename": filename,
-        "file_type": "application/pdf",
+        "file_type": canonical_mime,
         "status": "UPLOADED",
         "uploaded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    document_path = storage.base_dir / f"{document_id}.pdf"
+    # Store with the correct extension derived from the upload filename
+    document_path = storage.base_dir / f"{document_id}{ext}"
     # Keep metadata outside the document glob used by the extraction service.
     metadata_dir = storage.base_dir / "metadata"
     metadata_path = metadata_dir / f"{document_id}.json"
@@ -53,7 +93,7 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
         storage.base_dir.mkdir(parents=True, exist_ok=True)
         metadata_dir.mkdir(exist_ok=True)
         with TemporaryDirectory(prefix="upload_", dir=storage.base_dir) as staging:
-            staged_document = Path(staging) / "document.pdf"
+            staged_document = Path(staging) / f"document{ext}"
             size = 0
             with staged_document.open("wb") as destination:
                 while chunk := file.file.read(CHUNK_BYTES):
@@ -63,8 +103,13 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
                     destination.write(chunk)
             if size == 0:
                 raise UploadError(400, "INVALID_FILE", "The uploaded file is empty.")
-            _validate_pdf(staged_document)
-            
+
+            # Validate file contents by format
+            if ext == ".pdf":
+                _validate_pdf(staged_document)
+            else:
+                _validate_image(staged_document, ext)
+
             staged_document.replace(document_path)
             published_document = True
 
@@ -116,3 +161,22 @@ def _validate_pdf(path: Path) -> None:
         raise
     except Exception as exc:
         raise UploadError(400, "INVALID_FILE", "Provide a readable, unencrypted PDF with at least one page.") from exc
+
+
+def _validate_image(path: Path, ext: str) -> None:
+    """Check magic bytes to confirm the file is actually a PNG or JPEG."""
+    try:
+        with path.open("rb") as f:
+            header = f.read(16)
+    except OSError:
+        raise
+
+    for magic, label in _IMAGE_SIGNATURES:
+        if header.startswith(magic):
+            return  # magic bytes match — file is valid
+
+    raise UploadError(
+        400,
+        "INVALID_FILE",
+        f"The uploaded file does not appear to be a valid {ext.lstrip('.').upper()} image.",
+    )
