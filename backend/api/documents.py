@@ -139,6 +139,55 @@ async def correct_classification(
     return metadata
 
 
+# ---------------------------------------------------------------------------
+# GET /api/documents/{document_id}/extract — BE-06: extraction results
+# ---------------------------------------------------------------------------
+
+@router.get("/{document_id}/extract")
+async def get_extraction_results(
+    document_id: str,
+    user: Annotated[dict, Depends(require_reviewer)],
+):
+    """Return stored structured extraction fields for a document.
+
+    BE-06: Response shape matches the contract in docs/api-design.md.
+    Fields and confidence values are read from the document's JSON metadata
+    (populated when structured extraction runs).  When no fields have been
+    extracted yet the ``fields`` and ``confidence`` dicts are empty.
+
+    Response (200):
+    {
+      "document_id": "doc_001",
+      "document_type": "financial",
+      "fields": {"invoice_number": "INV-1042", ...},
+      "confidence": {"invoice_number": 0.97, ...},
+      "status": "EXTRACTED"
+    }
+    """
+    storage = DocumentStorage()
+    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+    if not metadata_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    # Read stored extraction fields (set by the structured extraction service)
+    fields: dict = metadata.get("extracted_fields", {})
+    confidence: dict = metadata.get("extracted_confidence", {})
+    extraction_status = "EXTRACTED" if fields else metadata.get("status", "UPLOADED")
+
+    return {
+        "document_id": document_id,
+        "document_type": metadata.get("category"),
+        "fields": fields,
+        "confidence": confidence,
+        "status": extraction_status,
+    }
+
 
 # ---------------------------------------------------------------------------
 # POST /api/documents/{document_id}/classify — re-run classification
