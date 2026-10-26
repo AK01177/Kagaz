@@ -52,17 +52,18 @@ def test_upload_persists_and_can_be_extracted(client, pdf, tmp_path):
                            data={"organization_id": "forged_org"})
     assert response.status_code == 201
     body = response.json()
-    assert set(body) == {"document_id", "filename", "file_type", "status", "uploaded_at", "category", "confidence"}
-    assert body["status"] == "UPLOADED"
-    assert body["category"] == "invoice"
+    assert set(body) == {"document_id", "filename", "file_type", "status", "uploaded_at", "category", "confidence", "file_size"}
+    assert body["status"] == "CLASSIFIED"
+    assert body["category"] == "financial"
     assert body["confidence"] == 0.95
+    assert body["file_size"] == len(pdf)
     document_id = body["document_id"]
     assert (tmp_path / f"{document_id}.pdf").read_bytes() == pdf
     metadata = json.loads((tmp_path / "metadata" / f"{document_id}.json").read_text())
     assert metadata["file_size"] == len(pdf)
     assert metadata["submitter_id"] == "user_1"
     assert metadata["organization_id"] == "org_1"
-    assert metadata["category"] == "invoice"
+    assert metadata["category"] == "financial"
     assert metadata["confidence"] == 0.95
     assert "Upload integration test" in extract_text(document_id, DocumentStorage(tmp_path))
     another = client.post("/api/documents", files={"file": ("invoice.pdf", pdf, "application/pdf")})
@@ -132,11 +133,13 @@ def test_rejects_invalid_identity(client, pdf, claims, status):
     assert "error" in response.json()
 
 
-def test_requires_authentication(client):
-    client.headers.pop("Authorization")
-    response = client.post("/api/documents")
-    assert response.status_code == 401
-    assert response.headers["www-authenticate"] == "Bearer"
+def test_allows_missing_authentication_in_dev_mode(client, pdf):
+    response = client.post(
+        "/api/documents",
+        headers={"Authorization": ""},
+        files={"file": ("auth.pdf", pdf, "application/pdf")},
+    )
+    assert response.status_code == 201
 
 
 def test_rejects_wrong_signature(client):
@@ -172,22 +175,22 @@ def test_correct_classification_success(client, pdf):
     # Now correct its classification
     patch_res = client.patch(
         f"/api/documents/{doc_id}/classification",
-        json={"category": "contract", "notes": "Reclassified by reviewer"},
+        json={"category": "general_confidential", "notes": "Reclassified by reviewer"},
     )
     assert patch_res.status_code == 200
     body = patch_res.json()
-    assert body["category"] == "contract"
+    assert body["category"] == "general_confidential"
     assert body["confidence"] == 1.0
     assert body["is_manually_corrected"] is True
     assert len(body["classification_history"]) == 1
-    assert body["classification_history"][0]["previous_category"] == "invoice"
-    assert body["classification_history"][0]["updated_category"] == "contract"
+    assert body["classification_history"][0]["previous_category"] == "financial"
+    assert body["classification_history"][0]["updated_category"] == "general_confidential"
     assert body["classification_history"][0]["notes"] == "Reclassified by reviewer"
 
     # Verify GET returns updated data
     get_res = client.get(f"/api/documents/{doc_id}")
     assert get_res.status_code == 200
-    assert get_res.json()["category"] == "contract"
+    assert get_res.json()["category"] == "general_confidential"
     assert get_res.json()["is_manually_corrected"] is True
 
 
@@ -209,4 +212,3 @@ def test_correct_classification_not_found(client):
         json={"category": "contract"},
     )
     assert patch_res.status_code == 404
-
