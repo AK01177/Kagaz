@@ -210,3 +210,73 @@ def test_sanitize_field_values_helpers():
     # Skills conversions from string to list
     assert _sanitize_field_value("skills", "Python, Docker, SQL") == ["Python", "Docker", "SQL"]
     assert _sanitize_field_value("skills", ["React", "TypeScript"]) == ["React", "TypeScript"]
+
+
+def test_invalid_field_type_is_handled_safely():
+    """Invalid amount values should become missing fields."""
+    result = parse_and_validate_fields(
+        {"total_amount": "not-a-number"},
+        InvoiceExtraction,
+    )
+
+    assert result.total_amount.value is None
+    assert result.total_amount.is_present is False
+    assert result.total_amount.confidence == 0.0
+
+
+def test_low_confidence_is_preserved():
+    """Low model confidence should be preserved, not raised artificially."""
+    result = parse_and_validate_fields(
+        {
+            "invoice_number": {
+                "value": "INV-LOW",
+                "confidence": 0.1,
+                "raw_value": "INV-LOW",
+            }
+        },
+        InvoiceExtraction,
+    )
+
+    assert result.invoice_number.value == "INV-LOW"
+    assert result.invoice_number.is_present is True
+    assert result.invoice_number.confidence == 0.1
+
+
+def test_provider_http_failure_is_wrapped(monkeypatch):
+    """An HTTP error from the provider should become a structured extraction error."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake_key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": "Service unavailable"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(StructuredExtractionError):
+            extract_structured_fields(
+                text="Invoice text",
+                document_type="invoice",
+                client=client,
+            )
+    finally:
+        client.close()
+
+
+def test_invalid_provider_response_structure_is_wrapped(monkeypatch):
+    """A response without completion choices should raise a safe extraction error."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake_key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "response"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(StructuredExtractionError):
+            extract_structured_fields(
+                text="Invoice text",
+                document_type="invoice",
+                client=client,
+            )
+    finally:
+        client.close()
