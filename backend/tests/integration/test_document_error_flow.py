@@ -74,9 +74,10 @@ class TestInvalidDocumentIdErrors:
     def test_classify_nonexistent_document(self, client):
         assert client.post("/api/documents/doc_fake_123/classify").status_code == 404
 
-    def test_correct_nonexistent_document(self, client):
+    def test_correct_nonexistent_document(self, client, reviewer_headers):
         resp = client.patch(
             "/api/documents/doc_fake_123/classification",
+            headers=reviewer_headers,
             json={"category": "financial"},
         )
         assert resp.status_code == 404
@@ -140,6 +141,15 @@ class TestAuthErrors:
         )
         assert resp.status_code == 201
 
+    def test_submitter_cannot_correct_classification(self, client, sample_pdf):
+        """Submitters cannot correct document classifications (403)."""
+        doc_id = upload_document(client, sample_pdf)["body"]["document_id"]
+        resp = client.patch(
+            f"/api/documents/{doc_id}/classification",
+            json={"category": "financial"},
+        )
+        assert resp.status_code == 403
+
 
 # ---------------------------------------------------------------------------
 # Classification provider errors via reclassify endpoint
@@ -171,26 +181,29 @@ class TestReclassifyProviderErrors:
 class TestInvalidCorrectionPayloads:
     """PATCH /api/documents/{id}/classification rejects bad inputs."""
 
-    def test_invalid_category_returns_422(self, client, sample_pdf):
+    def test_invalid_category_returns_422(self, client, sample_pdf, reviewer_headers):
         doc_id = upload_document(client, sample_pdf)["body"]["document_id"]
         resp = client.patch(
             f"/api/documents/{doc_id}/classification",
+            headers=reviewer_headers,
             json={"category": "nonexistent_type"},
         )
         assert resp.status_code == 422
 
-    def test_missing_category_field_returns_422(self, client, sample_pdf):
+    def test_missing_category_field_returns_422(self, client, sample_pdf, reviewer_headers):
         doc_id = upload_document(client, sample_pdf)["body"]["document_id"]
         resp = client.patch(
             f"/api/documents/{doc_id}/classification",
+            headers=reviewer_headers,
             json={"notes": "Missing category"},
         )
         assert resp.status_code == 422
 
-    def test_empty_category_returns_422(self, client, sample_pdf):
+    def test_empty_category_returns_422(self, client, sample_pdf, reviewer_headers):
         doc_id = upload_document(client, sample_pdf)["body"]["document_id"]
         resp = client.patch(
             f"/api/documents/{doc_id}/classification",
+            headers=reviewer_headers,
             json={"category": ""},
         )
         assert resp.status_code == 422

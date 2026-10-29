@@ -67,6 +67,11 @@ def make_token(**overrides) -> str:
     return jwt.encode(claims, JWT_SECRET, algorithm="HS256")
 
 
+def make_reviewer_token(**overrides) -> str:
+    """Create a signed JWT matching the ``require_reviewer`` dependency."""
+    return make_token(sub="integration_reviewer", role="REVIEWER", **overrides)
+
+
 # ---------------------------------------------------------------------------
 # Mock: OpenRouter classification API
 # ---------------------------------------------------------------------------
@@ -184,6 +189,28 @@ def client(monkeypatch, storage_dir):
     _OpenRouterMock.reset()
 
     with TestClient(app, headers={"Authorization": f"Bearer {make_token()}"}) as tc:
+        yield tc
+
+
+@pytest.fixture()
+def reviewer_headers():
+    """Return Authorization headers for an authenticated user with the REVIEWER role."""
+    return {"Authorization": f"Bearer {make_reviewer_token()}"}
+
+
+@pytest.fixture()
+def reviewer_client(monkeypatch, storage_dir):
+    """Yield a TestClient authenticated with the REVIEWER role."""
+    monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(storage_dir))
+    monkeypatch.setenv("JWT_SECRET", JWT_SECRET)
+    monkeypatch.setenv("JWT_ISSUER", "kagaz")
+    monkeypatch.setenv("JWT_AUDIENCE", "kagaz-api")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-integration-test-key")
+
+    monkeypatch.setattr(httpx, "post", _OpenRouterMock.handler)
+    _OpenRouterMock.reset()
+
+    with TestClient(app, headers={"Authorization": f"Bearer {make_reviewer_token()}"}) as tc:
         yield tc
 
 

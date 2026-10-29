@@ -164,11 +164,14 @@ class TestManualClassificationCorrection:
     """PATCH /api/documents/{document_id}/classification allows reviewers
     to correct a classification after upload."""
 
-    def test_correct_classification_updates_category(self, client, invoice_pdf):
+    def test_correct_classification_updates_category(
+        self, client, invoice_pdf, reviewer_headers
+    ):
         doc_id = upload_document(client, invoice_pdf)["body"]["document_id"]
 
         resp = client.patch(
             f"/api/documents/{doc_id}/classification",
+            headers=reviewer_headers,
             json={"category": "academics", "notes": "Re-filed as academic"},
         )
         assert resp.status_code == 200
@@ -177,13 +180,17 @@ class TestManualClassificationCorrection:
         assert body["confidence"] == 1.0
         assert body["is_manually_corrected"] is True
 
-    def test_correction_records_history(self, client, invoice_pdf):
+    def test_correction_records_history(
+        self, client, invoice_pdf, reviewer_headers
+    ):
         doc_id = upload_document(client, invoice_pdf)["body"]["document_id"]
 
-        client.patch(
+        resp = client.patch(
             f"/api/documents/{doc_id}/classification",
+            headers=reviewer_headers,
             json={"category": "hr_documents"},
         )
+        assert resp.status_code == 200
         resp = client.get(f"/api/documents/{doc_id}")
         body = resp.json()
         assert len(body["classification_history"]) == 1
@@ -191,15 +198,17 @@ class TestManualClassificationCorrection:
         assert body["classification_history"][0]["updated_category"] == "hr_documents"
 
     def test_correct_then_reclassify_overwrites_manual_flag(
-        self, client, invoice_pdf
+        self, client, invoice_pdf, reviewer_headers
     ):
         doc_id = upload_document(client, invoice_pdf)["body"]["document_id"]
 
         # Manually correct …
-        client.patch(
+        resp = client.patch(
             f"/api/documents/{doc_id}/classification",
+            headers=reviewer_headers,
             json={"category": "academics"},
         )
+        assert resp.status_code == 200
 
         # … then reclassify via the API.
         resp = client.post(f"/api/documents/{doc_id}/classify")
