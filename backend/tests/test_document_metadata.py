@@ -88,3 +88,88 @@ def test_update_status_after_classification(db_session):
     assert updated.status == DocumentStatus.CLASSIFIED
     assert updated.classification == "academic_transcript"
     assert updated.classification_confidence == 0.91
+
+
+# QA-02: Isolated backend unit tests
+
+import uuid
+
+import pytest
+from pydantic import ValidationError
+
+from app.models.document import DocumentStatus
+from app.schemas.document import DocumentMetadataCreate, DocumentStatusUpdate
+
+
+def valid_metadata(**overrides):
+    data = {
+        "organization_id": uuid.uuid4(),
+        "uploaded_by": uuid.uuid4(),
+        "filename": "receipt.pdf",
+        "file_type": "application/pdf",
+        "file_size": 1024,
+        "storage_path": "uploads/receipt.pdf",
+    }
+    data.update(overrides)
+    return data
+
+
+def test_metadata_accepts_valid_fields_and_uuid_strings():
+    data = valid_metadata()
+    data["organization_id"] = str(data["organization_id"])
+    data["uploaded_by"] = str(data["uploaded_by"])
+
+    model = DocumentMetadataCreate(**data)
+
+    assert isinstance(model.organization_id, uuid.UUID)
+    assert isinstance(model.uploaded_by, uuid.UUID)
+    assert model.file_size == 1024
+    assert model.filename == "receipt.pdf"
+
+
+@pytest.mark.parametrize("file_size", [0, -1, -1024])
+def test_metadata_rejects_non_positive_file_size(file_size):
+    with pytest.raises(ValidationError):
+        DocumentMetadataCreate(**valid_metadata(file_size=file_size))
+
+
+@pytest.mark.parametrize("field", ["organization_id", "uploaded_by", "filename", "file_type", "file_size", "storage_path"])
+def test_metadata_requires_each_document_field(field):
+    data = valid_metadata()
+    del data[field]
+
+    with pytest.raises(ValidationError):
+        DocumentMetadataCreate(**data)
+
+
+@pytest.mark.parametrize("value", ["not-a-uuid", "", None])
+def test_metadata_rejects_invalid_organization_id(value):
+    with pytest.raises(ValidationError):
+        DocumentMetadataCreate(**valid_metadata(organization_id=value))
+
+
+@pytest.mark.parametrize("confidence", [0.0, 0.5, 1.0])
+def test_status_update_accepts_confidence_in_range(confidence):
+    update = DocumentStatusUpdate(status=DocumentStatus.CLASSIFIED, classification_confidence=confidence)
+
+    assert update.status is DocumentStatus.CLASSIFIED
+    assert update.classification_confidence == confidence
+
+
+@pytest.mark.parametrize("confidence", [-0.01, 1.01])
+def test_status_update_rejects_out_of_range_confidence(confidence):
+    with pytest.raises(ValidationError):
+        DocumentStatusUpdate(classification_confidence=confidence)
+
+
+def test_status_update_rejects_unknown_status():
+    with pytest.raises(ValidationError):
+        DocumentStatusUpdate(status="NONEXISTENT")
+
+
+def test_partial_status_update_does_not_overwrite_other_fields():
+    update = DocumentStatusUpdate(classification="financial")
+
+    assert update.status is None
+    assert update.classification == "financial"
+    assert update.classification_confidence is None
