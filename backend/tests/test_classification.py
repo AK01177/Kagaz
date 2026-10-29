@@ -183,3 +183,89 @@ def test_classify_missing_decision_choice(monkeypatch):
 
     with pytest.raises(ClassificationError, match="Classification failed"):
         classify_document("Some text")
+
+
+# QA-02: Isolated backend unit tests
+
+import pytest
+
+from services import classification
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        (
+            {"answers": {"category": {"choice": "invoice", "confidence": 0.8, "probabilities": {"invoice": 0.9}}}},
+            ("invoice", 0.8, {"invoice": 0.9}),
+        ),
+        (
+            {"decision": "hr_documents", "confidence": 0.75},
+            ("hr_documents", 0.75, {}),
+        ),
+        (
+            {"category": "financial", "probabilities": [0.4, 0.6]},
+            ("financial", None, {}),
+        ),
+    ],
+)
+def test_decision_parser_handles_valid_provider_shapes(payload, expected):
+    assert classification._extract_decision_fields(payload) == expected
+
+
+@pytest.mark.parametrize("payload", [None, [], "invalid", 123])
+def test_decision_parser_rejects_non_object_payload(payload):
+    with pytest.raises(ValueError, match="Expected dict response"):
+        classification._extract_decision_fields(payload)
+
+
+@pytest.mark.parametrize(
+    "resolved,raw,confidence,probabilities,expected",
+    [
+        ("financial", "invoice", 0.3, {"invoice": 0.8, "financial": 0.5}, 0.8),
+        ("financial", "invoice", 0.3, {"financial": 0.7}, 0.7),
+        ("financial", "invoice", 0.3, {"other": 0.7}, 0.3),
+        ("financial", "invoice", 1.5, {}, 1.0),
+        ("financial", "invoice", -0.2, {}, 0.0),
+        ("financial", "invoice", "not-a-number", {}, 1.0),
+        ("financial", "invoice", None, {}, 1.0),
+    ],
+)
+def test_confidence_resolution_and_bounds(resolved, raw, confidence, probabilities, expected):
+    result = classification._calculate_confidence(resolved, raw, confidence, probabilities)
+    assert result == expected
+
+
+def test_classification_normalizes_hyphenated_category(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "unit-test-key")
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"decision": "HR-Documents", "confidence": 0.82}
+
+    monkeypatch.setattr(classification.httpx, "post", lambda *args, **kwargs: Response())
+
+    result = classification.classify_document("Employee onboarding document")
+
+    assert result.category == classification.DocumentCategory.HR_DOCUMENTS
+    assert result.confidence == 0.82
+
+
+@pytest.mark.parametrize("payload", [{"answers": {"category": {"choice": ""}}}, ["financial"], {}])
+def test_classification_wraps_invalid_provider_responses(monkeypatch, payload):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "unit-test-key")
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return payload
+
+    monkeypatch.setattr(classification.httpx, "post", lambda *args, **kwargs: Response())
+
+    with pytest.raises(classification.ClassificationError, match="Classification failed"):
+        classification.classify_document("An invoice document")
