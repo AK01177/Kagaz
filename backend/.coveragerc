@@ -1,0 +1,16 @@
+[run]
+branch = True
+source =
+    api
+    app
+    services
+    storage
+    main
+omit =
+    tests/*
+    migrations/*
+    */__init__.py
+
+[report]
+show_missing = True
+skip_covered = False

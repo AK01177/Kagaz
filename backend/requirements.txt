@@ -4,6 +4,7 @@ psycopg2-binary
 pydantic
 python-dotenv
 pytest
+pytest-cov
 uvicorn[standard]
 httpx
 pypdf
