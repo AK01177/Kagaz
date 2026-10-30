@@ -13,6 +13,11 @@ from storage.document_storage import DocumentStorage
 
 from services.extraction import extract_text, ExtractionError
 from services.classification import classify_document, ClassificationError
+from services.structured_extraction import (
+    StructuredExtractionError,
+    UnsupportedDocumentTypeError,
+    extract_structured_fields,
+)
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
@@ -42,7 +47,7 @@ class UploadError(Exception):
         self.code = code
 
 
-def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
+def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any = None) -> dict:
     """Validate and persist a PDF or image file, extract text, and classify it.
 
     BE-07: Accepts PDF, PNG, JPG and JPEG.  Validates by extension and,
@@ -113,6 +118,9 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
             staged_document.replace(document_path)
             published_document = True
 
+            extracted_fields = None
+            extracted_confidences = None
+
             try:
                 text = extract_text(document_id, storage)
                 classification = classify_document(text)
@@ -120,6 +128,25 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
                 response["category"] = classification.category.value
                 response["confidence"] = classification.confidence
                 response["status"] = "CLASSIFIED"
+
+                # Structured extraction: hand-off from classification
+                try:
+                    extraction = extract_structured_fields(text, classification.category.value)
+                    extracted_fields = extraction.to_flat_dict()
+                    extracted_confidences = extraction.get_field_confidences()
+                    response["status"] = "EXTRACTED"
+
+                    if db is not None:
+                        try:
+                            from services.extraction_persistence import persist_extraction_result
+                            persist_extraction_result(db, document_id, extraction)
+                        except Exception as p_err:
+                            logger.exception("Failed to persist extraction to db for %s: %s", document_id, p_err)
+                            response["status"] = "CLASSIFIED"
+                            extracted_fields = None
+                            extracted_confidences = None
+                except (StructuredExtractionError, UnsupportedDocumentTypeError) as exc:
+                    logger.info("Structured extraction skipped or failed for document %s: %s", document_id, exc)
             except (ExtractionError, ClassificationError) as e:
                 logger.exception("Failed to classify document %s", document_id)
                 response["category"] = "unknown"
@@ -133,6 +160,10 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
                 "submitter_id": user["sub"],
                 "organization_id": user["organization_id"],
             }
+            if extracted_fields is not None:
+                metadata["extracted_fields"] = extracted_fields
+                metadata["extracted_confidence"] = extracted_confidences
+                metadata["status"] = "EXTRACTED"
             staged_metadata = Path(staging) / "metadata.json"
             staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             staged_metadata.replace(metadata_path)
