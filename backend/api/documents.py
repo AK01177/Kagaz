@@ -23,6 +23,11 @@ from api.auth import require_reviewer, require_submitter
 from api.upload_limit import UploadLimitRoute
 from services.classification import ClassificationError, DocumentCategory, classify_document
 from services.extraction import ExtractionError, extract_text
+from services.structured_extraction import (
+    StructuredExtractionError,
+    UnsupportedDocumentTypeError,
+    extract_structured_fields,
+)
 from services.upload import UploadError, save_upload
 from storage.document_storage import DocumentStorage
 
@@ -131,6 +136,17 @@ async def correct_classification(
     metadata["classification_history"] = history
 
     try:
+        text = extract_text(document_id, storage)
+        extraction = extract_structured_fields(text, normalized_category)
+        metadata["extracted_fields"] = extraction.to_flat_dict()
+        metadata["extracted_confidence"] = extraction.get_field_confidences()
+        metadata["status"] = "EXTRACTED"
+    except Exception:
+        metadata.pop("extracted_fields", None)
+        metadata.pop("extracted_confidence", None)
+        metadata["status"] = "CLASSIFIED"
+
+    try:
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
     except Exception:
@@ -212,6 +228,16 @@ async def reclassify_document(document_id: str):
         metadata["confidence"] = result.confidence
         metadata["status"] = "CLASSIFIED"
         metadata["is_manually_corrected"] = False
+
+        try:
+            extraction = extract_structured_fields(text, result.category.value)
+            metadata["extracted_fields"] = extraction.to_flat_dict()
+            metadata["extracted_confidence"] = extraction.get_field_confidences()
+            metadata["status"] = "EXTRACTED"
+        except Exception:
+            metadata.pop("extracted_fields", None)
+            metadata.pop("extracted_confidence", None)
+            metadata["status"] = "CLASSIFIED"
     except (ExtractionError, ClassificationError) as exc:
         raise HTTPException(status_code=422, detail=f"Classification failed: {exc}")
     except Exception as exc:
