@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -15,18 +15,17 @@ export function Header({ queueCount = 4 }: HeaderProps) {
   const isReview = pathname.startsWith("/review");
   const isLogin = pathname === "/login";
 
-  const [userEmail] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        return (
-          localStorage.getItem("kagaz_user_email") ||
-          sessionStorage.getItem("kagaz_user_email") ||
-          null
-        );
-      } catch {}
-    }
-    return null;
-  });
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const email =
+        localStorage.getItem("kagaz_user_email") ||
+        sessionStorage.getItem("kagaz_user_email") ||
+        null;
+      if (email) setUserEmail(email);
+    } catch {}
+  }, []);
 
   return (
     <header className="header">
