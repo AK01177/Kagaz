@@ -1,0 +1,7 @@
+{
+  "text": "INVOICE\nInvoice Number: INV-007\nSupplier: Test Company\nTotal: 1250",
+  "invoice_number": "INV-007",
+  "supplier_name": "Test Company",
+  "total_amount": 1250,
+  "oversized_bytes": 10485761
+}
