@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Header, Footer } from "../Header";
@@ -28,19 +28,22 @@ function GoogleIcon() {
   );
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+
 export default function LoginPage() {
   const router = useRouter();
 
-  const [activeUser, setActiveUser] = useState<string | null>(() => {
-    if (typeof window !== "undefined") {
-      return (
+  const [activeUser, setActiveUser] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const email =
         localStorage.getItem("kagaz_user_email") ||
         sessionStorage.getItem("kagaz_user_email") ||
-        null
-      );
-    }
-    return null;
-  });
+        null;
+      if (email) setActiveUser(email);
+    } catch {}
+  }, []);
 
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [email, setEmail] = useState("");
@@ -51,26 +54,41 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
-  function authenticateSession(userEmail: string, role = "SUBMITTER") {
-    // Generate simulated authenticated token matching backend expectation
-    const mockToken = `kgz_jwt_${btoa(
-      JSON.stringify({
-        sub: userEmail.split("@")[0],
-        email: userEmail,
-        role: role,
-        organization_id: "org_kagaz_primary",
-        active: true,
-        iat: Math.floor(Date.now() / 1000),
-      })
-    )}`;
+  async function authenticateSession(userEmail: string, role = "REVIEWER") {
+    setIsSubmitting(true);
+    let finalToken = "";
+    try {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: userEmail, role }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        finalToken = data.access_token;
+      }
+    } catch {}
+
+    if (!finalToken) {
+      finalToken = `kgz_jwt_${btoa(
+        JSON.stringify({
+          sub: userEmail.split("@")[0],
+          email: userEmail,
+          role: role,
+          organization_id: "org_kagaz_primary",
+          active: true,
+          iat: Math.floor(Date.now() / 1000),
+        })
+      )}`;
+    }
 
     try {
       if (rememberMe) {
-        localStorage.setItem("kagaz_token", mockToken);
+        localStorage.setItem("kagaz_token", finalToken);
         localStorage.setItem("kagaz_user_email", userEmail);
         localStorage.setItem("kagaz_user_role", role);
       }
-      sessionStorage.setItem("kagaz_token", mockToken);
+      sessionStorage.setItem("kagaz_token", finalToken);
       sessionStorage.setItem("kagaz_user_email", userEmail);
       sessionStorage.setItem("kagaz_user_role", role);
     } catch {}
@@ -85,10 +103,7 @@ export default function LoginPage() {
   function handleGoogleLogin() {
     setIsSubmitting(true);
     setError(null);
-    setTimeout(() => {
-      authenticateSession("reviewer.google@kagaz.ai", "SUBMITTER");
-      setIsSubmitting(false);
-    }, 600);
+    authenticateSession("reviewer.google@kagaz.ai", "REVIEWER");
   }
 
   function handleEmailSubmit(e: React.FormEvent) {
@@ -104,11 +119,8 @@ export default function LoginPage() {
       return;
     }
 
-    setIsSubmitting(true);
-    setTimeout(() => {
-      authenticateSession(email.trim().toLowerCase(), "SUBMITTER");
-      setIsSubmitting(false);
-    }, 650);
+    const assignedRole = email.toLowerCase().includes("submitter") ? "SUBMITTER" : "REVIEWER";
+    authenticateSession(email.trim().toLowerCase(), assignedRole);
   }
 
   function handleQuickLogin(testEmail: string, role: string) {
@@ -281,7 +293,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     className="demo-pill"
-                    onClick={() => handleQuickLogin("reviewer.clerk@kagaz.ai", "SUBMITTER")}
+                    onClick={() => handleQuickLogin("reviewer.clerk@kagaz.ai", "REVIEWER")}
                   >
                     ⚡ Auditor / Reviewer Desk
                   </button>
