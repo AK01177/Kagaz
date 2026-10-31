@@ -90,6 +90,7 @@ export default function DocumentsPage() {
   const [files, setFiles] = useState<FileItem[]>(DEFAULT_FILES);
 
   useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
       if (keys.length > 0) {
@@ -106,10 +107,16 @@ export default function DocumentsPage() {
           }
         }
         if (loaded.length > 0) {
-          setFiles([...loaded, ...DEFAULT_FILES.filter((d) => !loaded.some((l) => l.id === d.id))]);
+          const merged = [...loaded, ...DEFAULT_FILES.filter((d) => !loaded.some((l) => l.id === d.id))];
+          timeoutId = setTimeout(() => {
+            setFiles(merged);
+          }, 0);
         }
       }
     } catch {}
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
   function chooseFile(nextFile?: File) {

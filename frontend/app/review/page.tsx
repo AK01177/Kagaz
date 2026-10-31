@@ -75,6 +75,7 @@ function ReviewQueueInner() {
   const [activeIndex, setActiveIndex] = useState<number>(0);
 
   useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       const extra: ReviewQueueItem[] = [];
       for (let i = 0; i < window.sessionStorage.length; i++) {
@@ -104,16 +105,25 @@ function ReviewQueueInner() {
       if (extra.length > 0) {
         const existingIds = new Set(DEFAULT_QUEUE.map((d) => d.id));
         const combined = [...extra.filter((d) => !existingIds.has(d.id)), ...DEFAULT_QUEUE];
-        setQueue(combined);
-        if (queryId) {
-          const idx = combined.findIndex((item) => item.id === queryId);
-          if (idx !== -1) setActiveIndex(idx);
-        }
+        timeoutId = setTimeout(() => {
+          setQueue(combined);
+          if (queryId) {
+            const idx = combined.findIndex((item) => item.id === queryId);
+            if (idx !== -1) setActiveIndex(idx);
+          }
+        }, 0);
       } else if (queryId) {
         const idx = DEFAULT_QUEUE.findIndex((item) => item.id === queryId);
-        if (idx !== -1) setActiveIndex(idx);
+        if (idx !== -1) {
+          timeoutId = setTimeout(() => {
+            setActiveIndex(idx);
+          }, 0);
+        }
       }
     } catch {}
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [queryId]);
   const [userSelectedType, setUserSelectedType] = useState<string | null>(null);
   const [notes, setNotes] = useState<string>("");

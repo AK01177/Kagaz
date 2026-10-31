@@ -188,8 +188,11 @@ function ExtractionPanel({
   }
 
   useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     if (documentId && !documentId.startsWith("doc_demo")) {
-      loadExtraction();
+      timeoutId = setTimeout(() => {
+        loadExtraction();
+      }, 0);
     } else {
       // Demo mode: show sample fields based on category
       const demoFields: Record<string, string | number | string[]> = category?.toLowerCase().includes("financial")
@@ -208,16 +211,21 @@ function ExtractionPanel({
       const demoConf: Record<string, number> = Object.fromEntries(
         Object.keys(demoFields).map((k) => [k, 0.92 + Math.random() * 0.07])
       );
-      setExtraction({
-        document_id: documentId,
-        document_type: category ?? null,
-        fields: demoFields,
-        confidence: demoConf,
-        status: "EXTRACTED",
-        ocr_text_length: 3241,
-      });
-      setLoading(false);
+      timeoutId = setTimeout(() => {
+        setExtraction({
+          document_id: documentId,
+          document_type: category ?? null,
+          fields: demoFields,
+          confidence: demoConf,
+          status: "EXTRACTED",
+          ocr_text_length: 3241,
+        });
+        setLoading(false);
+      }, 0);
     }
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
@@ -480,7 +488,10 @@ export default function DocumentDetailsPage(props: {
 
   // Load document from backend API or session cache
   useEffect(() => {
-    loadDocument();
+    const timeoutId = setTimeout(() => {
+      loadDocument();
+    }, 0);
+    return () => clearTimeout(timeoutId);
   }, [documentId, isDemo]);
 
   const copyId = () => {

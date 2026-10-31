@@ -36,13 +36,21 @@ export default function LoginPage() {
   const [activeUser, setActiveUser] = useState<string | null>(null);
 
   useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       const email =
         localStorage.getItem("kagaz_user_email") ||
         sessionStorage.getItem("kagaz_user_email") ||
         null;
-      if (email) setActiveUser(email);
+      if (email) {
+        timeoutId = setTimeout(() => {
+          setActiveUser(email);
+        }, 0);
+      }
     } catch {}
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
   const [showEmailForm, setShowEmailForm] = useState(false);
