@@ -43,12 +43,16 @@ class UploadError(Exception):
 
 
 def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
-    """Validate and persist a PDF or image file, extract text, and classify it.
+    """Validate and persist a PDF or image file, extract text, classify and field-extract it.
 
     BE-07: Accepts PDF, PNG, JPG and JPEG.  Validates by extension and,
     where practical, by magic bytes / PDF header.  The canonical MIME type
     is derived from the extension and stored in metadata regardless of what
     the client sent.
+
+    Sprint 2: After classification, automatically runs structured field
+    extraction and persists fields + confidence into the metadata JSON so
+    that GET /api/documents/{id}/extract can return them immediately.
     """
     filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     if not filename or "\x00" in filename:
@@ -89,6 +93,7 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
     metadata_dir = storage.base_dir / "metadata"
     metadata_path = metadata_dir / f"{document_id}.json"
     published_document = False
+
     try:
         storage.base_dir.mkdir(parents=True, exist_ok=True)
         metadata_dir.mkdir(exist_ok=True)
@@ -113,17 +118,59 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
             staged_document.replace(document_path)
             published_document = True
 
+            # ---- Pipeline: OCR → Classification → Field Extraction ----
+            extracted_fields: dict = {}
+            extracted_confidence: dict = {}
+            ocr_text: str = ""
+
             try:
-                text = extract_text(document_id, storage)
-                classification = classify_document(text)
-                
+                # Step 1: OCR / text extraction
+                ocr_text = extract_text(document_id, storage)
+                logger.info("OCR complete for %s: %d chars", document_id, len(ocr_text))
+
+                # Step 2: Classification
+                classification = classify_document(ocr_text)
                 response["category"] = classification.category.value
                 response["confidence"] = classification.confidence
                 response["status"] = "CLASSIFIED"
+                logger.info(
+                    "Classified %s as '%s' (confidence=%.2f)",
+                    document_id,
+                    classification.category.value,
+                    classification.confidence,
+                )
+
+                # Step 3: Structured field extraction (Sprint 2)
+                try:
+                    from services.structured_extraction import (  # noqa: PLC0415
+                        extract_structured_fields,
+                    )
+                    extraction_result = extract_structured_fields(
+                        ocr_text,
+                        classification.category.value,
+                    )
+                    raw_fields = extraction_result.to_flat_dict()
+                    raw_conf = extraction_result.get_field_confidences()
+                    # Only keep fields that were actually present
+                    extracted_fields = {k: v for k, v in raw_fields.items() if v is not None}
+                    extracted_confidence = {k: v for k, v in raw_conf.items() if k in extracted_fields}
+                    logger.info(
+                        "Field extraction complete for %s: %d field(s) found",
+                        document_id,
+                        len(extracted_fields),
+                    )
+                except Exception as ex_err:
+                    logger.warning(
+                        "Structured extraction failed for %s (non-fatal): %s",
+                        document_id,
+                        ex_err,
+                    )
+
             except (ExtractionError, ClassificationError) as e:
                 logger.exception("Failed to classify document %s", document_id)
                 response["category"] = "unknown"
                 response["confidence"] = 0.0
+
             response["file_size"] = size
 
             metadata = {
@@ -132,10 +179,14 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
                 "storage_path": str(document_path.resolve()),
                 "submitter_id": user["sub"],
                 "organization_id": user["organization_id"],
+                "extracted_fields": extracted_fields,
+                "extracted_confidence": extracted_confidence,
+                "ocr_text_length": len(ocr_text),
             }
             staged_metadata = Path(staging) / "metadata.json"
             staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             staged_metadata.replace(metadata_path)
+
     except OSError as exc:
         if published_document:
             try:
@@ -145,6 +196,7 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
                 logger.exception("Could not clean up failed upload %s", document_id)
         logger.exception("Failed to store upload %s", document_id)
         raise UploadError(500, "STORAGE_FAILURE", "The document could not be stored.") from exc
+
     return response
 
 
