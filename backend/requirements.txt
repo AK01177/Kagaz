@@ -15,3 +15,5 @@ typesafe-sdk
 alembic
 pdf2image
 rapidocr_onnxruntime
+Pillow
+numpy
