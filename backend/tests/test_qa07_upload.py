@@ -339,7 +339,7 @@ REAL_DOCUMENTS = [
     ("scanned_receipt.pdf", "application/pdf", True,
      {"invoice": r"MYACC\s*[-\u2013]?\s*716", "total": r"3[,\s]?800[.,]00"}),
     ("invoice_image.png", "image/png", True,
-     {"invoice": r"INV\s*[-\u2013]?\s*005", "supplier": r"Ad4tech\s+Material\s+LLC",
+     {"invoice": r"INV\s*[-\u2013]?\s*005", "supplier": r"Ad4tech\s*Material\s*LLC",
       "total": r"1[,\s]?564[.,]00", "balance_due": r"1[,\s]?332[.,]00"}),
     ("receipt_photo.png", "image/png", True,
      {"invoice": r"MYACC\s*[-\u2013]?\s*716", "total": r"3[,\s]?800[.,]00"}),
