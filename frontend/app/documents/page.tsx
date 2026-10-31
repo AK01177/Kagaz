@@ -1,6 +1,6 @@
 "use client";
 
-import { DragEvent, useRef, useState } from "react";
+import { DragEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Header, Footer } from "../Header";
@@ -39,39 +39,23 @@ const DEFAULT_FILES: FileItem[] = [
   },
 ];
 
-function getInitialFiles(): FileItem[] {
-  if (typeof window === "undefined") return DEFAULT_FILES;
-  try {
-    const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
-    if (keys.length > 0) {
-      const loaded: FileItem[] = [];
-      for (const k of keys) {
-        const item = JSON.parse(sessionStorage.getItem(k) || "{}");
-        if (item && item.document_id && item.filename) {
-          loaded.push({
-            name: item.filename,
-            id: item.document_id,
-            date: "Recently Added",
-            genre: item.category || "Classified File",
-          });
-        }
-      }
-      if (loaded.length > 0) {
-        return [...loaded, ...DEFAULT_FILES.filter((d) => !loaded.some((l) => l.id === d.id))];
-      }
-    }
-  } catch {}
-  return DEFAULT_FILES;
-}
+const ACCEPTED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg"];
+const ACCEPTED_MIME = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "application/octet-stream",
+];
 
 function validateFile(file: File): string | null {
-  if (
-    !file.name.toLowerCase().endsWith(".pdf") ||
-    (file.type && !["application/pdf", "application/octet-stream"].includes(file.type))
-  ) {
-    return "Manuscript specification requires a PDF document (.pdf).";
+  const ext = "." + file.name.split(".").pop()?.toLowerCase();
+  if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+    return "Only PDF, PNG, JPG and JPEG files are supported.";
   }
-  if (file.size === 0) return "The selected file is empty (0 bytes). Choose a readable PDF.";
+  if (file.type && !ACCEPTED_MIME.includes(file.type)) {
+    return "Only PDF, PNG, JPG and JPEG files are supported.";
+  }
+  if (file.size === 0) return "The selected file is empty (0 bytes).";
   if (file.size > MAX_FILE_SIZE) return "File exceeds the archival ceiling of 10 MB.";
   return null;
 }
@@ -103,7 +87,37 @@ export default function DocumentsPage() {
   const [state, setState] = useState<UploadState>("idle");
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string>("");
-  const [files] = useState<FileItem[]>(getInitialFiles);
+  const [files, setFiles] = useState<FileItem[]>(DEFAULT_FILES);
+
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
+      if (keys.length > 0) {
+        const loaded: FileItem[] = [];
+        for (const k of keys) {
+          const item = JSON.parse(sessionStorage.getItem(k) || "{}");
+          if (item && item.document_id && item.filename) {
+            loaded.push({
+              name: item.filename,
+              id: item.document_id,
+              date: "Recently Added",
+              genre: item.category || "Classified File",
+            });
+          }
+        }
+        if (loaded.length > 0) {
+          const merged = [...loaded, ...DEFAULT_FILES.filter((d) => !loaded.some((l) => l.id === d.id))];
+          timeoutId = setTimeout(() => {
+            setFiles(merged);
+          }, 0);
+        }
+      }
+    } catch {}
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, []);
 
   function chooseFile(nextFile?: File) {
     if (!nextFile || state === "uploading") return;
@@ -132,6 +146,36 @@ export default function DocumentsPage() {
     if (inputRef.current) inputRef.current.value = "";
   }
 
+function getAuthHeader(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const token =
+    window.localStorage.getItem("kagaz_token") ??
+    window.sessionStorage.getItem("kagaz_token");
+  if (!token || token === "undefined" || token === "null" || token.trim() === "") {
+    return {};
+  }
+  // Validate standard 3-segment JWT structure and expiration
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    try {
+      window.localStorage.removeItem("kagaz_token");
+      window.sessionStorage.removeItem("kagaz_token");
+    } catch {}
+    return {};
+  }
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (payload.exp && Date.now() >= payload.exp * 1000) {
+      window.localStorage.removeItem("kagaz_token");
+      window.sessionStorage.removeItem("kagaz_token");
+      return {};
+    }
+  } catch {
+    return {};
+  }
+  return { Authorization: `Bearer ${token}` };
+}
+
   async function uploadFile() {
     if (!file) return;
     setState("uploading");
@@ -139,17 +183,27 @@ export default function DocumentsPage() {
 
     const formData = new FormData();
     formData.append("file", file);
-    const token =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem("kagaz_token") ?? window.sessionStorage.getItem("kagaz_token")
-        : null;
+    const authHeaders = getAuthHeader();
 
     try {
-      const response = await fetch(`${API_URL}/api/documents`, {
+      let response = await fetch(`${API_URL}/api/documents`, {
         method: "POST",
         body: formData,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: Object.keys(authHeaders).length > 0 ? authHeaders : undefined,
       });
+
+      // If the request was rejected due to an invalid/expired token (401) or role mismatch (403),
+      // purge the stale token and retry cleanly in local dev mode
+      if ((response.status === 401 || response.status === 403) && Object.keys(authHeaders).length > 0) {
+        try {
+          localStorage.removeItem("kagaz_token");
+          sessionStorage.removeItem("kagaz_token");
+        } catch {}
+        response = await fetch(`${API_URL}/api/documents`, {
+          method: "POST",
+          body: formData,
+        });
+      }
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
@@ -177,25 +231,11 @@ export default function DocumentsPage() {
 
       setState("success");
       router.push(`/documents/${docId}`);
-    } catch {
-      // Local fallback simulation when offline/local mock
-      const docId = `doc_${Math.random().toString(36).substring(2, 9)}`;
-      const { category, confidence } = detectDocumentCategory(file.name);
-      const fallbackRecord = {
-        document_id: docId,
-        filename: file.name,
-        file_size: file.size,
-        file_type: file.type || "application/pdf",
-        status: "CLASSIFIED",
-        uploaded_at: new Date().toISOString(),
-        category,
-        confidence,
-      };
-      try {
-        sessionStorage.setItem(`kagaz_doc_${docId}`, JSON.stringify(fallbackRecord));
-      } catch {}
-      setState("success");
-      router.push(`/documents/${docId}`);
+    } catch (err: unknown) {
+      console.error("Upload error:", err);
+      setState("idle");
+      const msg = err instanceof Error ? err.message : "Upload rejected by archival service.";
+      setError(msg);
     }
   }
 
@@ -211,9 +251,9 @@ export default function DocumentsPage() {
               Bring a document<br />
               into <em>focus.</em>
             </h1>
-            <p>Upload a document to begin indexing, extraction, and verification.</p>
+            <p>Upload a PDF, PNG or JPEG — OCR, classification, and field extraction run automatically.</p>
           </div>
-          <div className="spec">SPEC: PDF ONLY · MAXIMUM 10 MB</div>
+          <div className="spec">SPEC: PDF · PNG · JPG · JPEG · MAX 10 MB</div>
         </div>
 
         {error && (
@@ -244,7 +284,7 @@ export default function DocumentsPage() {
             ref={inputRef}
             className="visually-hidden"
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg"
             onChange={(e) => chooseFile(e.target.files?.[0])}
           />
 
@@ -256,7 +296,7 @@ export default function DocumentsPage() {
                 Ready to archive: <em>{file.name}</em>
               </strong>
               <small style={{ display: "block", marginTop: "4px" }}>
-                {formatFileSize(file.size)} · Conforms to archival PDF specifications
+                {formatFileSize(file.size)} · Will run OCR → Classification → Field Extraction
               </small>
 
               <div style={{ marginTop: "18px", display: "flex", gap: "10px", justifyContent: "center" }}>

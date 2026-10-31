@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Header } from "../Header";
@@ -67,55 +67,64 @@ const DEFAULT_QUEUE: ReviewQueueItem[] = [
   },
 ];
 
-function getInitialQueue(): ReviewQueueItem[] {
-  if (typeof window === "undefined") return DEFAULT_QUEUE;
-  try {
-    const extra: ReviewQueueItem[] = [];
-    for (let i = 0; i < window.sessionStorage.length; i++) {
-      const key = window.sessionStorage.key(i);
-      if (key && key.startsWith("kagaz_doc_")) {
-        const itemStr = window.sessionStorage.getItem(key);
-        if (itemStr) {
-          const parsed = JSON.parse(itemStr) as DocumentRecord;
-          if (parsed && parsed.document_id) {
-            const catInfo = getCategoryInfo(parsed.category, parsed.document_id);
-            const conf = parsed.confidence ? Number((parsed.confidence * 100).toFixed(1)) : 82.5;
-            extra.push({
-              id: parsed.document_id,
-              name: parsed.filename,
-              date: "Recently Added",
-              confidence: conf,
-              type: catInfo.name,
-              categoryVal: parsed.category || "other",
-              extractTitle: parsed.filename.replace(/\.pdf$/i, "").replace(/_/g, " ").toUpperCase(),
-              extractBody: `Archived File: ${parsed.filename}\nType: ${catInfo.name}\nScope: ${parsed.organization_id || "Kagaz Workspace"}`,
-              verified: parsed.is_manually_corrected || parsed.status === "REVIEWER_VERIFIED",
-            });
-          }
-        }
-      }
-    }
-    if (extra.length > 0) {
-      const existingIds = new Set(DEFAULT_QUEUE.map((d) => d.id));
-      return [...extra.filter((d) => !existingIds.has(d.id)), ...DEFAULT_QUEUE];
-    }
-  } catch {}
-  return DEFAULT_QUEUE;
-}
-
 function ReviewQueueInner() {
   const searchParams = useSearchParams();
   const queryId = searchParams?.get("id") || searchParams?.get("document_id");
 
-  const [queue, setQueue] = useState<ReviewQueueItem[]>(getInitialQueue);
-  const [activeIndex, setActiveIndex] = useState<number>(() => {
-    if (queryId) {
-      const q = getInitialQueue();
-      const idx = q.findIndex((item) => item.id === queryId);
-      if (idx !== -1) return idx;
-    }
-    return 0;
-  });
+  const [queue, setQueue] = useState<ReviewQueueItem[]>(DEFAULT_QUEUE);
+  const [activeIndex, setActiveIndex] = useState<number>(0);
+
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const extra: ReviewQueueItem[] = [];
+      for (let i = 0; i < window.sessionStorage.length; i++) {
+        const key = window.sessionStorage.key(i);
+        if (key && key.startsWith("kagaz_doc_")) {
+          const itemStr = window.sessionStorage.getItem(key);
+          if (itemStr) {
+            const parsed = JSON.parse(itemStr) as DocumentRecord;
+            if (parsed && parsed.document_id) {
+              const catInfo = getCategoryInfo(parsed.category, parsed.document_id);
+              const conf = parsed.confidence ? Number((parsed.confidence * 100).toFixed(1)) : 82.5;
+              extra.push({
+                id: parsed.document_id,
+                name: parsed.filename,
+                date: "Recently Added",
+                confidence: conf,
+                type: catInfo.name,
+                categoryVal: parsed.category || "other",
+                extractTitle: parsed.filename.replace(/\.pdf$/i, "").replace(/_/g, " ").toUpperCase(),
+                extractBody: `Archived File: ${parsed.filename}\nType: ${catInfo.name}\nScope: ${parsed.organization_id || "Kagaz Workspace"}`,
+                verified: parsed.is_manually_corrected || parsed.status === "REVIEWER_VERIFIED",
+              });
+            }
+          }
+        }
+      }
+      if (extra.length > 0) {
+        const existingIds = new Set(DEFAULT_QUEUE.map((d) => d.id));
+        const combined = [...extra.filter((d) => !existingIds.has(d.id)), ...DEFAULT_QUEUE];
+        timeoutId = setTimeout(() => {
+          setQueue(combined);
+          if (queryId) {
+            const idx = combined.findIndex((item) => item.id === queryId);
+            if (idx !== -1) setActiveIndex(idx);
+          }
+        }, 0);
+      } else if (queryId) {
+        const idx = DEFAULT_QUEUE.findIndex((item) => item.id === queryId);
+        if (idx !== -1) {
+          timeoutId = setTimeout(() => {
+            setActiveIndex(idx);
+          }, 0);
+        }
+      }
+    } catch {}
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [queryId]);
   const [userSelectedType, setUserSelectedType] = useState<string | null>(null);
   const [notes, setNotes] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
