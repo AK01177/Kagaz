@@ -12,3 +12,5 @@ python-multipart
 PyJWT>=2.10,<3
 typesafe-sdk
 alembic
+pdf2image
+rapidocr_onnxruntime

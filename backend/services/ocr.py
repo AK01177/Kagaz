@@ -38,8 +38,47 @@ try:
 
     _PADDLE_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    _PADDLE_AVAILABLE = False
-    PaddleOCR = None  # type: ignore[assignment,misc]
+    try:
+        from rapidocr_onnxruntime import RapidOCR  # type: ignore[import]
+
+        class _RapidOCRPaddleAdapter:
+            """PaddleOCR-compatible adapter backed by RapidOCR (ONNX runtime)."""
+
+            def __init__(self, **kwargs):
+                self._engine = RapidOCR()
+
+            def ocr(self, img, cls: bool = True):
+                import numpy as np  # type: ignore[import]
+                from PIL.Image import Image as PILImage  # type: ignore[import]
+
+                if isinstance(img, (str, Path)):
+                    input_data = str(img)
+                elif isinstance(img, PILImage):
+                    input_data = np.array(img)
+                elif isinstance(img, np.ndarray):
+                    input_data = img
+                else:
+                    input_data = np.array(img)
+
+                result, _ = self._engine(input_data)
+                if not result:
+                    return None
+
+                # Convert RapidOCR items [[box], text, score] to PaddleOCR format:
+                # [ [ [box], (text, score) ], ... ]
+                paddle_items = []
+                for item in result:
+                    box = item[0]
+                    text = item[1]
+                    score = float(item[2])
+                    paddle_items.append([box, (text, score)])
+                return [paddle_items]
+
+        PaddleOCR = _RapidOCRPaddleAdapter  # type: ignore[assignment,misc]
+        _PADDLE_AVAILABLE = True
+    except ImportError:
+        _PADDLE_AVAILABLE = False
+        PaddleOCR = None  # type: ignore[assignment,misc]
 
 try:
     from pdf2image import convert_from_path  # type: ignore[import]
