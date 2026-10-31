@@ -591,3 +591,157 @@ def test_create_extractions_bulk_rollback_on_any_invalid_record(extraction_db):
 
     # Empty batch returns empty list safely
     assert create_extractions_bulk(extraction_db, document.id, []) == []
+
+
+# QA-02: Isolated backend unit tests
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from pypdf.errors import PdfReadError
+
+from services import extraction, ocr
+from storage.document_storage import DocumentStorage
+
+
+def storage_at(path):
+    return SimpleNamespace(resolve=lambda document_id: Path(path))
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("  One\t  Two  ", "One Two"),
+        ("One\r\n\r\n\r\nTwo", "One\n\nTwo"),
+        ("One\rTwo", "One\nTwo"),
+        ("\n \t\n", ""),
+    ],
+)
+def test_whitespace_normalization(raw, expected):
+    assert extraction._normalize_whitespace(raw) == expected
+
+
+def test_extraction_combines_mocked_pdf_pages(monkeypatch, tmp_path):
+    pages = [
+        SimpleNamespace(extract_text=lambda: "First page"),
+        SimpleNamespace(extract_text=lambda: "Second page"),
+    ]
+    monkeypatch.setattr(extraction, "PdfReader", lambda path: SimpleNamespace(pages=pages))
+
+    text = extraction.extract_text("doc_pages", storage_at(tmp_path / "doc_pages.pdf"))
+
+    assert text == "First page\nSecond page"
+
+
+@pytest.mark.parametrize("extension", [".png", ".jpg", ".jpeg"])
+def test_image_extraction_delegates_to_ocr(monkeypatch, tmp_path, extension):
+    document_path = tmp_path / f"doc_image{extension}"
+    calls = []
+
+    def fake_ocr(path, document_id):
+        calls.append((path, document_id))
+        return "Recognized text"
+
+    monkeypatch.setattr(extraction, "_extract_via_ocr", fake_ocr)
+
+    result = extraction.extract_text("doc_image", storage_at(document_path))
+
+    assert result == "Recognized text"
+    assert calls == [(document_path, "doc_image")]
+
+
+def test_scanned_pdf_falls_back_to_ocr(monkeypatch, tmp_path):
+    pages = [SimpleNamespace(extract_text=lambda: None)]
+    monkeypatch.setattr(extraction, "PdfReader", lambda path: SimpleNamespace(pages=pages))
+    monkeypatch.setattr(extraction, "_extract_via_ocr", lambda path, document_id: "OCR fallback")
+
+    result = extraction.extract_text("doc_scan", storage_at(tmp_path / "doc_scan.pdf"))
+
+    assert result == "OCR fallback"
+
+
+def test_unreadable_pdf_returns_extraction_error(monkeypatch, tmp_path):
+    def fail_pdf_reader(path):
+        raise PdfReadError("invalid cross-reference")
+
+    monkeypatch.setattr(extraction, "PdfReader", fail_pdf_reader)
+
+    with pytest.raises(extraction.ExtractionError, match="Failed to extract text") as exc:
+        extraction.extract_text("doc_invalid", storage_at(tmp_path / "doc_invalid.pdf"))
+
+    assert isinstance(exc.value.__cause__, PdfReadError)
+
+
+def test_ocr_failure_returns_extraction_error(monkeypatch, tmp_path):
+    def fail_ocr(path):
+        raise ocr.OcrExtractionError("OCR engine unavailable")
+
+    monkeypatch.setattr(ocr, "extract_text_from_file", fail_ocr)
+
+    with pytest.raises(extraction.ExtractionError, match="OCR extraction failed") as exc:
+        extraction.extract_text("doc_image", storage_at(tmp_path / "doc_image.png"))
+
+    assert isinstance(exc.value.__cause__, ocr.OcrExtractionError)
+
+
+def test_unknown_extension_is_rejected(tmp_path):
+    path = tmp_path / "doc_unknown.docx"
+    path.write_bytes(b"not supported")
+
+    with pytest.raises(extraction.UnsupportedDocumentTypeError) as exc:
+        extraction.extract_text("doc_unknown", DocumentStorage(tmp_path))
+
+    assert exc.value.extension == ".docx"
+
+from pathlib import Path
+
+import pytest
+
+from storage.document_storage import DocumentNotFoundError, DocumentStorage
+
+
+def test_missing_directory_returns_false_and_raises(tmp_path):
+    storage = DocumentStorage(tmp_path / "not-created")
+
+    assert storage.exists("doc_missing") is False
+    with pytest.raises(DocumentNotFoundError) as exc:
+        storage.resolve("doc_missing")
+    assert exc.value.document_id == "doc_missing"
+
+
+def test_resolve_existing_document(tmp_path):
+    expected = tmp_path / "doc_123.pdf"
+    expected.write_bytes(b"pdf contents")
+    storage = DocumentStorage(tmp_path)
+
+    assert storage.exists("doc_123") is True
+    assert storage.resolve("doc_123") == expected
+
+
+def test_document_ids_do_not_match_other_documents(tmp_path):
+    (tmp_path / "doc_123.pdf").write_bytes(b"pdf contents")
+    storage = DocumentStorage(tmp_path)
+
+    assert storage.exists("doc_12") is False
+    assert storage.exists("doc_1234") is False
+    with pytest.raises(DocumentNotFoundError):
+        storage.resolve("doc_1234")
+
+
+def test_resolve_selects_first_matching_extension_deterministically(tmp_path):
+    (tmp_path / "doc_1.png").write_bytes(b"image")
+    pdf = tmp_path / "doc_1.pdf"
+    pdf.write_bytes(b"document")
+
+    assert DocumentStorage(tmp_path).resolve("doc_1") == pdf
+
+
+def test_storage_uses_configured_directory(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(tmp_path))
+    (tmp_path / "doc_config.jpeg").write_bytes(b"image")
+
+    storage = DocumentStorage()
+
+    assert storage.base_dir == Path(tmp_path)
+    assert storage.resolve("doc_config").suffix == ".jpeg"

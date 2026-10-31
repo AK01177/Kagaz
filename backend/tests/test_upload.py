@@ -226,3 +226,195 @@ def test_correct_classification_not_found(client):
         json={"category": "contract"},
     )
     assert patch_res.status_code == 404
+
+
+# QA-02: Isolated backend unit tests
+
+import io
+import json
+from pathlib import Path
+
+import pytest
+from fastapi import UploadFile
+from reportlab.pdfgen import canvas
+from starlette.datastructures import Headers
+
+from services import upload
+from services.classification import ClassificationError, ClassificationResult, DocumentCategory
+from services.extraction import ExtractionError
+from storage.document_storage import DocumentStorage
+
+
+@pytest.fixture
+def storage(tmp_path):
+    return DocumentStorage(tmp_path)
+
+
+@pytest.fixture
+def user():
+    return {"sub": "submitter_1", "organization_id": "org_1"}
+
+
+@pytest.fixture
+def pdf_bytes():
+    stream = io.BytesIO()
+    doc = canvas.Canvas(stream)
+    doc.drawString(72, 780, "QA-02 unit test")
+    doc.save()
+    return stream.getvalue()
+
+
+def make_upload(filename, content, mime="application/pdf"):
+    return UploadFile(
+        file=io.BytesIO(content),
+        filename=filename,
+        headers=Headers({"content-type": mime}),
+    )
+
+
+def mock_processing(monkeypatch):
+    monkeypatch.setattr(upload, "extract_text", lambda document_id, storage: "Invoice 123")
+    monkeypatch.setattr(
+        upload,
+        "classify_document",
+        lambda text: ClassificationResult(category=DocumentCategory.FINANCIAL, confidence=0.93),
+    )
+    monkeypatch.setattr(
+        upload,
+        "extract_structured_fields",
+        lambda text, doc_type: (_ for _ in ()).throw(upload.StructuredExtractionError("offline")),
+    )
+
+
+def test_service_persists_file_and_metadata(monkeypatch, storage, user, pdf_bytes):
+    mock_processing(monkeypatch)
+
+    result = upload.save_upload(make_upload("invoice.pdf", pdf_bytes), storage, user)
+
+    assert result["status"] == "CLASSIFIED"
+    assert result["category"] == "financial"
+    assert result["confidence"] == 0.93
+    assert result["file_size"] == len(pdf_bytes)
+    assert result["uploaded_at"].endswith("Z")
+    assert (storage.base_dir / f"{result['document_id']}.pdf").read_bytes() == pdf_bytes
+    metadata_path = storage.base_dir / "metadata" / f"{result['document_id']}.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["filename"] == "invoice.pdf"
+    assert metadata["file_type"] == "application/pdf"
+    assert metadata["file_size"] == len(pdf_bytes)
+    assert metadata["submitter_id"] == "submitter_1"
+    assert metadata["organization_id"] == "org_1"
+    assert metadata["storage_path"] == str((storage.base_dir / f"{result['document_id']}.pdf").resolve())
+
+
+def test_service_removes_path_components_from_filename(monkeypatch, storage, user, pdf_bytes):
+    mock_processing(monkeypatch)
+
+    result = upload.save_upload(make_upload(r"C:\user\invoices\invoice.pdf", pdf_bytes), storage, user)
+
+    assert result["filename"] == "invoice.pdf"
+    assert (storage.base_dir / f"{result['document_id']}.pdf").is_file()
+
+
+@pytest.mark.parametrize("filename", [None, "", "   ", "bad\x00name.pdf"])
+def test_service_rejects_invalid_filename(storage, user, filename):
+    with pytest.raises(upload.UploadError) as exc:
+        upload.save_upload(make_upload(filename, b"example"), storage, user)
+
+    assert exc.value.status_code == 400
+    assert exc.value.code == "INVALID_FILE"
+    assert not list(storage.base_dir.rglob("*.json"))
+
+
+@pytest.mark.parametrize("filename,mime", [("doc.txt", "text/plain"), ("doc.pdf", "image/png")])
+def test_service_rejects_unsupported_or_mismatched_type(storage, user, filename, mime):
+    with pytest.raises(upload.UploadError) as exc:
+        upload.save_upload(make_upload(filename, b"invalid", mime), storage, user)
+
+    assert exc.value.status_code == 415
+    assert exc.value.code == "UNSUPPORTED_FILE_TYPE"
+    assert not list(storage.base_dir.rglob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "filename,content,mime",
+    [
+        ("fake.png", b"not a png", "image/png"),
+        ("fake.jpeg", b"not a jpeg", "image/jpeg"),
+        ("fake.pdf", b"not a pdf", "application/pdf"),
+    ],
+)
+def test_service_rejects_invalid_file_content(storage, user, filename, content, mime):
+    with pytest.raises(upload.UploadError) as exc:
+        upload.save_upload(make_upload(filename, content, mime), storage, user)
+
+    assert exc.value.status_code == 400
+    assert exc.value.code == "INVALID_FILE"
+    assert not list(storage.base_dir.glob("doc_*"))
+
+
+def test_service_rejects_upload_beyond_limit(monkeypatch, storage, user):
+    monkeypatch.setattr(upload, "MAX_UPLOAD_BYTES", 10)
+
+    with pytest.raises(upload.UploadError) as exc:
+        upload.save_upload(make_upload("invoice.pdf", b"x" * 11), storage, user)
+
+    assert exc.value.status_code == 413
+    assert exc.value.code == "FILE_TOO_LARGE"
+    assert not list(storage.base_dir.glob("doc_*"))
+
+
+def test_service_keeps_upload_when_classification_fails(monkeypatch, storage, user, pdf_bytes):
+    monkeypatch.setattr(upload, "extract_text", lambda document_id, storage: "Invoice text")
+
+    def fail_classification(text):
+        raise ClassificationError("provider unavailable")
+
+    monkeypatch.setattr(upload, "classify_document", fail_classification)
+
+    result = upload.save_upload(make_upload("invoice.pdf", pdf_bytes), storage, user)
+
+    assert result["status"] == "UPLOADED"
+    assert result["category"] == "unknown"
+    assert result["confidence"] == 0.0
+    assert (storage.base_dir / f"{result['document_id']}.pdf").is_file()
+    metadata = json.loads((storage.base_dir / "metadata" / f"{result['document_id']}.json").read_text())
+    assert metadata["status"] == "UPLOADED"
+    assert metadata["category"] == "unknown"
+
+
+def test_service_skips_classification_when_extraction_fails(monkeypatch, storage, user, pdf_bytes):
+    def fail_extraction(document_id, storage):
+        raise ExtractionError("cannot read document")
+
+    def unexpected_classification(text):
+        pytest.fail("classification must not run after extraction fails")
+
+    monkeypatch.setattr(upload, "extract_text", fail_extraction)
+    monkeypatch.setattr(upload, "classify_document", unexpected_classification)
+
+    result = upload.save_upload(make_upload("invoice.pdf", pdf_bytes), storage, user)
+
+    assert result["status"] == "UPLOADED"
+    assert result["category"] == "unknown"
+    assert result["confidence"] == 0.0
+
+
+def test_service_rolls_back_document_on_metadata_write_failure(monkeypatch, storage, user, pdf_bytes):
+    mock_processing(monkeypatch)
+    original_replace = Path.replace
+
+    def replace_with_metadata_failure(source, target):
+        if source.name == "metadata.json":
+            raise OSError("simulated metadata storage failure")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", replace_with_metadata_failure)
+
+    with pytest.raises(upload.UploadError) as exc:
+        upload.save_upload(make_upload("invoice.pdf", pdf_bytes), storage, user)
+
+    assert exc.value.status_code == 500
+    assert exc.value.code == "STORAGE_FAILURE"
+    assert not list(storage.base_dir.glob("doc_*"))
+    assert not list((storage.base_dir / "metadata").glob("*.json"))

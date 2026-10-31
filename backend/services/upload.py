@@ -13,6 +13,11 @@ from storage.document_storage import DocumentStorage
 
 from services.extraction import extract_text, ExtractionError
 from services.classification import classify_document, ClassificationError
+from services.structured_extraction import (
+    StructuredExtractionError,
+    UnsupportedDocumentTypeError,
+    extract_structured_fields,
+)
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
@@ -42,7 +47,7 @@ class UploadError(Exception):
         self.code = code
 
 
-def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
+def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any = None) -> dict:
     """Validate and persist a PDF or image file, extract text, classify and field-extract it.
 
     BE-07: Accepts PDF, PNG, JPG and JPEG.  Validates by extension and,
@@ -118,9 +123,8 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
             staged_document.replace(document_path)
             published_document = True
 
-            # ---- Pipeline: OCR → Classification → Field Extraction ----
-            extracted_fields: dict = {}
-            extracted_confidence: dict = {}
+            extracted_fields = None
+            extracted_confidences = None
             ocr_text: str = ""
 
             try:
@@ -142,29 +146,36 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
 
                 # Step 3: Structured field extraction (Sprint 2)
                 try:
-                    from services.structured_extraction import (  # noqa: PLC0415
-                        extract_structured_fields,
-                    )
-                    extraction_result = extract_structured_fields(
-                        ocr_text,
-                        classification.category.value,
-                    )
-                    raw_fields = extraction_result.to_flat_dict()
-                    raw_conf = extraction_result.get_field_confidences()
-                    # Only keep fields that were actually present
-                    extracted_fields = {k: v for k, v in raw_fields.items() if v is not None}
-                    extracted_confidence = {k: v for k, v in raw_conf.items() if k in extracted_fields}
-                    logger.info(
-                        "Field extraction complete for %s: %d field(s) found",
-                        document_id,
-                        len(extracted_fields),
-                    )
+                    extraction = extract_structured_fields(ocr_text, classification.category.value)
+                    raw_fields = extraction.to_flat_dict()
+                    raw_conf = extraction.get_field_confidences()
+                    non_none_fields = {k: v for k, v in raw_fields.items() if v is not None}
+                    if non_none_fields:
+                        extracted_fields = non_none_fields
+                        extracted_confidences = {k: v for k, v in raw_conf.items() if k in non_none_fields}
+                        response["status"] = "EXTRACTED"
+                        logger.info(
+                            "Field extraction complete for %s: %d field(s) found",
+                            document_id,
+                            len(extracted_fields),
+                        )
+                    else:
+                        extracted_fields = None
+                        extracted_confidences = None
+
+                    if db is not None:
+                        try:
+                            from services.extraction_persistence import persist_extraction_result
+                            persist_extraction_result(db, document_id, extraction)
+                        except Exception as p_err:
+                            logger.exception("Failed to persist extraction to db for %s: %s", document_id, p_err)
+                            response["status"] = "CLASSIFIED"
+                            extracted_fields = None
+                            extracted_confidences = None
+                except (StructuredExtractionError, UnsupportedDocumentTypeError) as exc:
+                    logger.info("Structured extraction skipped or failed for document %s: %s", document_id, exc)
                 except Exception as ex_err:
-                    logger.warning(
-                        "Structured extraction failed for %s (non-fatal): %s",
-                        document_id,
-                        ex_err,
-                    )
+                    logger.warning("Structured extraction failed for %s (non-fatal): %s", document_id, ex_err)
 
             except (ExtractionError, ClassificationError) as e:
                 logger.exception("Failed to classify document %s", document_id)
@@ -179,10 +190,12 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict) -> dict:
                 "storage_path": str(document_path.resolve()),
                 "submitter_id": user["sub"],
                 "organization_id": user["organization_id"],
-                "extracted_fields": extracted_fields,
-                "extracted_confidence": extracted_confidence,
                 "ocr_text_length": len(ocr_text),
             }
+            if extracted_fields is not None:
+                metadata["extracted_fields"] = extracted_fields
+                metadata["extracted_confidence"] = extracted_confidences
+                metadata["status"] = "EXTRACTED"
             staged_metadata = Path(staging) / "metadata.json"
             staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             staged_metadata.replace(metadata_path)
