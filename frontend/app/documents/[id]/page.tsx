@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Header, Footer } from "../../Header";
@@ -438,7 +438,7 @@ export default function DocumentDetailsPage(props: {
   const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [notFound, setNotFound] = useState(false);
 
-  async function loadDocument() {
+  const loadDocument = useCallback(async () => {
     if (isDemo || !documentId) {
       return;
     }
@@ -484,7 +484,7 @@ export default function DocumentDetailsPage(props: {
     } finally {
       setLoading(false);
     }
-  }
+  }, [documentId, isDemo]);
 
   // Load document from backend API or session cache
   useEffect(() => {
@@ -492,7 +492,7 @@ export default function DocumentDetailsPage(props: {
       loadDocument();
     }, 0);
     return () => clearTimeout(timeoutId);
-  }, [documentId, isDemo]);
+  }, [loadDocument]);
 
   const copyId = () => {
     if (navigator?.clipboard) {
