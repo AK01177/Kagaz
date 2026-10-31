@@ -1,0 +1,4 @@
+INVOICE
+Invoice Number: INV-007
+Supplier: Test Company
+Total: 1250
