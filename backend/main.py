@@ -7,6 +7,7 @@ from starlette.exceptions import HTTPException
 
 from api.health import router as health_router
 from api.documents import router as documents_router
+from api.auth import router as auth_router
 
 load_dotenv()
 
@@ -28,6 +29,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(documents_router)
+app.include_router(auth_router)
 
 
 @app.exception_handler(HTTPException)

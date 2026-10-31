@@ -206,6 +206,86 @@ async def get_extraction_results(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/documents/{document_id}/extract — re-run structured extraction
+# ---------------------------------------------------------------------------
+
+@router.post("/{document_id}/extract")
+async def run_extraction(
+    document_id: str,
+    user: Annotated[dict, Depends(require_reviewer)],
+):
+    """Re-run structured field extraction for an already-classified document.
+
+    Reads the stored document, re-runs OCR + structured extraction, and
+    updates the metadata JSON with fresh fields and confidence scores.
+    """
+    storage = DocumentStorage()
+    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+    if not metadata_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    try:
+        text = await run_in_threadpool(extract_text, document_id, storage)
+    except ExtractionError as exc:
+        raise HTTPException(status_code=422, detail=f"Text extraction failed: {exc}")
+
+    document_category = metadata.get("category")
+    if not document_category or document_category == "unknown":
+        try:
+            classification = await run_in_threadpool(classify_document, text)
+            document_category = classification.category.value
+            metadata["category"] = document_category
+            metadata["confidence"] = classification.confidence
+            metadata["status"] = "CLASSIFIED"
+        except Exception:
+            raise HTTPException(
+                status_code=422,
+                detail="Document must be classified before extraction can run.",
+            )
+
+    try:
+        from services.structured_extraction import (  # noqa: PLC0415
+            extract_structured_fields,
+            StructuredExtractionError,
+        )
+        extraction_result = await run_in_threadpool(
+            extract_structured_fields, text, document_category
+        )
+        raw_fields = extraction_result.to_flat_dict()
+        raw_conf = extraction_result.get_field_confidences()
+        extracted_fields = {k: v for k, v in raw_fields.items() if v is not None}
+        extracted_confidence = {k: v for k, v in raw_conf.items() if k in extracted_fields}
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Structured extraction failed: {exc}")
+
+    metadata["extracted_fields"] = extracted_fields
+    metadata["extracted_confidence"] = extracted_confidence
+    metadata["status"] = "EXTRACTED"
+    metadata["ocr_text_length"] = len(text)
+
+    try:
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not update metadata")
+
+    return {
+        "document_id": document_id,
+        "document_type": document_category,
+        "fields": extracted_fields,
+        "confidence": extracted_confidence,
+        "status": "EXTRACTED",
+        "ocr_text_length": len(text),
+    }
+
+
+# ---------------------------------------------------------------------------
 # POST /api/documents/{document_id}/classify — re-run classification
 # ---------------------------------------------------------------------------
 

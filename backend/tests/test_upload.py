@@ -279,6 +279,11 @@ def mock_processing(monkeypatch):
         "classify_document",
         lambda text: ClassificationResult(category=DocumentCategory.FINANCIAL, confidence=0.93),
     )
+    monkeypatch.setattr(
+        upload,
+        "extract_structured_fields",
+        lambda text, doc_type: (_ for _ in ()).throw(upload.StructuredExtractionError("offline")),
+    )
 
 
 def test_service_persists_file_and_metadata(monkeypatch, storage, user, pdf_bytes):
