@@ -49,6 +49,7 @@ export const icons: Record<IconName, string> = {
 
 export function Icon({ name, size = 15 }: { name: IconName; size?: number }) {
   return (
+    /* eslint-disable-next-line @next/next/no-img-element */
     <img
       className="icon"
       src={`/assets/${icons[name] || "9255a.svg"}`}
@@ -110,42 +111,45 @@ export function Sidebar() {
   const [reviewCount, setReviewCount] = useState(2);
 
   useEffect(() => {
-    try {
-      // Dynamic user detection from localStorage / sessionStorage / JWT
-      const email =
-        localStorage.getItem("kagaz_user_email") ||
-        sessionStorage.getItem("kagaz_user_email");
-      const role =
-        localStorage.getItem("kagaz_user_role") ||
-        sessionStorage.getItem("kagaz_user_role");
-      const name =
-        localStorage.getItem("kagaz_user_name") ||
-        sessionStorage.getItem("kagaz_user_name");
+    const timer = setTimeout(() => {
+      try {
+        // Dynamic user detection from localStorage / sessionStorage / JWT
+        const email =
+          localStorage.getItem("kagaz_user_email") ||
+          sessionStorage.getItem("kagaz_user_email");
+        const role =
+          localStorage.getItem("kagaz_user_role") ||
+          sessionStorage.getItem("kagaz_user_role");
+        const name =
+          localStorage.getItem("kagaz_user_name") ||
+          sessionStorage.getItem("kagaz_user_name");
 
-      if (name) {
-        setUserName(name);
-      } else if (email) {
-        setUserName(email.split("@")[0].replace(".", " ").replace(/\b\w/g, (c) => c.toUpperCase()));
-      }
-
-      if (role) {
-        setUserRole(role.charAt(0).toUpperCase() + role.slice(1).toLowerCase());
-      }
-
-      // Dynamic count of documents in session storage
-      const storedDocKeys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
-      setIntakeCount(3 + storedDocKeys.length);
-      
-      const unverifiedCount = storedDocKeys.filter((k) => {
-        try {
-          const item = JSON.parse(sessionStorage.getItem(k) || "{}");
-          return item.status !== "REVIEWER_VERIFIED" && item.confidence && item.confidence < 0.8;
-        } catch {
-          return false;
+        if (name) {
+          setUserName(name);
+        } else if (email) {
+          setUserName(email.split("@")[0].replace(".", " ").replace(/\b\w/g, (c) => c.toUpperCase()));
         }
-      }).length;
-      setReviewCount(4 + unverifiedCount);
-    } catch {}
+
+        if (role) {
+          setUserRole(role.charAt(0).toUpperCase() + role.slice(1).toLowerCase());
+        }
+
+        // Dynamic count of documents in session storage
+        const storedDocKeys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
+        setIntakeCount(3 + storedDocKeys.length);
+        
+        const unverifiedCount = storedDocKeys.filter((k) => {
+          try {
+            const item = JSON.parse(sessionStorage.getItem(k) || "{}");
+            return item.status !== "REVIEWER_VERIFIED" && item.confidence && item.confidence < 0.8;
+          } catch {
+            return false;
+          }
+        }).length;
+        setReviewCount(4 + unverifiedCount);
+      } catch {}
+    }, 0);
+    return () => clearTimeout(timer);
   }, [pathname]);
 
   const isIntake = pathname === "/documents" || pathname.startsWith("/documents/");

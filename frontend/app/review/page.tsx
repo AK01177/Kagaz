@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AppShell, Button, Badge, Icon, IconName } from "../components/AppShell";
 
@@ -263,36 +263,39 @@ export default function ReviewPage() {
 
   // Load newly uploaded files from sessionStorage that require review
   useEffect(() => {
-    try {
-      const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
-      const dynamicItems: QueueItem[] = [];
-      for (const k of keys) {
-        const item = JSON.parse(sessionStorage.getItem(k) || "{}");
-        if (item && item.document_id && item.filename && !DEFAULT_QUEUE_DOCS.some((d) => d.id === item.document_id)) {
-          const conf = item.confidence ? Number((item.confidence * 100).toFixed(1)) : 72.0;
-          const isVerified = item.status === "REVIEWER_VERIFIED" || item.is_manually_corrected;
-          dynamicItems.push({
-            id: item.document_id,
-            name: item.filename,
-            time: "Recently Added",
-            score: isVerified ? "✓ 100%" : `${conf}%`,
-            state: isVerified ? "Certified" : conf < 75 ? "Needs Human Review" : "Standard",
-            icon: item.category?.toLowerCase().includes("invoice") ? "file" : "receipt",
-            docType: item.category?.toLowerCase().includes("invoice") ? "invoice" : "receipt",
-            verified: isVerified,
-            fields: [
-              { field: "File name", val: item.filename, conf: "100%" },
-              { field: "Document type", val: item.category || "Classified File", conf: `${conf}%` },
-              { field: "Scope anchor", val: item.organization_id || "Acme Global Enterprise", conf: "99%" },
-              { field: "Validation status", val: isVerified ? "Certified" : "Awaiting Human Sign-off", conf: isVerified ? "100%" : "68%" },
-            ],
-          });
+    const timer = setTimeout(() => {
+      try {
+        const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
+        const dynamicItems: QueueItem[] = [];
+        for (const k of keys) {
+          const item = JSON.parse(sessionStorage.getItem(k) || "{}");
+          if (item && item.document_id && item.filename && !DEFAULT_QUEUE_DOCS.some((d) => d.id === item.document_id)) {
+            const conf = item.confidence ? Number((item.confidence * 100).toFixed(1)) : 72.0;
+            const isVerified = item.status === "REVIEWER_VERIFIED" || item.is_manually_corrected;
+            dynamicItems.push({
+              id: item.document_id,
+              name: item.filename,
+              time: "Recently Added",
+              score: isVerified ? "✓ 100%" : `${conf}%`,
+              state: isVerified ? "Certified" : conf < 75 ? "Needs Human Review" : "Standard",
+              icon: item.category?.toLowerCase().includes("invoice") ? "file" : "receipt",
+              docType: item.category?.toLowerCase().includes("invoice") ? "invoice" : "receipt",
+              verified: isVerified,
+              fields: [
+                { field: "File name", val: item.filename, conf: "100%" },
+                { field: "Document type", val: item.category || "Classified File", conf: `${conf}%` },
+                { field: "Scope anchor", val: item.organization_id || "Acme Global Enterprise", conf: "99%" },
+                { field: "Validation status", val: isVerified ? "Certified" : "Awaiting Human Sign-off", conf: isVerified ? "100%" : "68%" },
+              ],
+            });
+          }
         }
-      }
-      if (dynamicItems.length > 0) {
-        setQueue([...dynamicItems, ...DEFAULT_QUEUE_DOCS]);
-      }
-    } catch {}
+        if (dynamicItems.length > 0) {
+          setQueue([...dynamicItems, ...DEFAULT_QUEUE_DOCS]);
+        }
+      } catch {}
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const activeDoc = queue[active] || queue[0];
@@ -308,7 +311,7 @@ export default function ReviewPage() {
     );
   }
 
-  function handleConfirmNext() {
+  const handleConfirmNext = useCallback(() => {
     setSavedNotice(true);
 
     // Call backend API or persist to sessionStorage if real document
@@ -352,7 +355,7 @@ export default function ReviewPage() {
         setShowEmpty(true);
       }
     }, 600);
-  }
+  }, [active, queue, activeDoc]);
 
   // Keyboard shortcut listener (Cmd+Enter / Ctrl+Enter)
   useEffect(() => {
@@ -364,7 +367,7 @@ export default function ReviewPage() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, queue]);
+  }, [handleConfirmNext]);
 
   const filteredQueue = queue.filter((doc) => {
     if (search && !doc.name.toLowerCase().includes(search.toLowerCase())) return false;

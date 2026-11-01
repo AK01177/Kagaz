@@ -1,13 +1,11 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
 import {
   DocumentRecord,
   VALID_DOCUMENT_TYPES,
-  getCategoryInfo,
   formatFileSize,
   formatDate,
 } from "@/app/classification";
@@ -46,7 +44,7 @@ function DynamicDocumentStage({
 }: {
   docType: string;
   filename: string;
-  fields: Record<string, any>;
+  fields: Record<string, string | number | string[]>;
 }) {
   const typeLower = (docType || "").toLowerCase();
 
@@ -107,9 +105,9 @@ function DynamicDocumentStage({
 
   // 2. Receipt / Travel Expense Renderer
   if (typeLower.includes("receipt") || typeLower.includes("expense")) {
-    const merchant = fields["supplier_name"] || fields["merchant"] || "Skyline Business Hotel";
+    const merchant = String(fields["supplier_name"] || fields["merchant"] || "Skyline Business Hotel");
     const total = fields["total_amount"] || fields["total"] || "$286.50";
-    const date = fields["invoice_date"] || fields["date"] || "2024-08-28";
+    const date = String(fields["invoice_date"] || fields["date"] || "2024-08-28");
 
     return (
       <div className="receipt-paper" style={{ transform: "none", margin: "auto" }}>
@@ -132,9 +130,9 @@ function DynamicDocumentStage({
   }
 
   // 3. Invoice Renderer (Default Commercial Invoice)
-  const supplier = fields["supplier_name"] || fields["vendor"] || "Ad4tech Material LLC";
-  const invoiceNo = fields["invoice_number"] || fields["invoice_no"] || "INV-2024-9821";
-  const invoiceDate = fields["invoice_date"] || fields["date"] || "2024-09-24";
+  const supplier = String(fields["supplier_name"] || fields["vendor"] || "Ad4tech Material LLC");
+  const invoiceNo = String(fields["invoice_number"] || fields["invoice_no"] || "INV-2024-9821");
+  const invoiceDate = String(fields["invoice_date"] || fields["date"] || "2024-09-24");
   const total = fields["total_amount"] || fields["total"] || "$1,564.00";
 
   return (
@@ -331,37 +329,45 @@ export default function DocumentDetailsPage(props: {
     }
   }
 
-  async function loadDocument() {
-    // 1. Check session storage cache first
-    try {
-      const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        setDocument(parsed);
-        if (parsed.status === "REVIEWER_VERIFIED" || parsed.is_manually_corrected) {
-          setCertified(true);
-        }
-      }
-    } catch {}
-
-    // 2. Fetch from backend API
-    try {
-      const res = await fetch(`${API_URL}/api/documents/${documentId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setDocument(data);
-        if (data.status === "REVIEWER_VERIFIED") setCertified(true);
-      }
-      const extRes = await fetch(`${API_URL}/api/documents/${documentId}/extract`);
-      if (extRes.ok) {
-        const extData = await extRes.json();
-        setExtraction(extData);
-      }
-    } catch {}
-  }
-
   useEffect(() => {
-    loadDocument();
+    let ignore = false;
+    async function load() {
+      // 1. Check session storage cache first
+      try {
+        const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
+        if (cached && !ignore) {
+          const parsed = JSON.parse(cached);
+          setDocument(parsed);
+          if (parsed.status === "REVIEWER_VERIFIED" || parsed.is_manually_corrected) {
+            setCertified(true);
+          }
+        }
+      } catch {}
+
+      // 2. Fetch from backend API
+      try {
+        const res = await fetch(`${API_URL}/api/documents/${documentId}`);
+        if (res.ok && !ignore) {
+          const data = await res.json();
+          setDocument(data);
+          if (data.status === "REVIEWER_VERIFIED") setCertified(true);
+        }
+        const extRes = await fetch(`${API_URL}/api/documents/${documentId}/extract`);
+        if (extRes.ok && !ignore) {
+          const extData = await extRes.json();
+          setExtraction(extData);
+        }
+      } catch {}
+    }
+
+    const timer = setTimeout(() => {
+      load();
+    }, 0);
+
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
   }, [documentId]);
 
   async function rerunExtraction() {
@@ -382,8 +388,6 @@ export default function DocumentDetailsPage(props: {
     } catch {}
     setRerunning(false);
   }
-
-  const isRealDocument = !isDemo;
 
   const fieldList = extraction && Object.keys(extraction.fields || {}).length > 0
     ? Object.entries(extraction.fields).map(([k, v]) => ({
@@ -604,6 +608,7 @@ export default function DocumentDetailsPage(props: {
                 />
               ) : (document?.filename || "").match(/\.(png|jpg|jpeg|webp)$/i) ? (
                 <div style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%", minHeight: "680px", padding: "16px", background: "#fbfbf9" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={`/api/documents/${documentId}/file`}
                     alt={document?.filename || "Source Document"}

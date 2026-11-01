@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
 
 interface UserRecord {
@@ -361,7 +360,7 @@ export default function AdminUsersPage() {
                 </label>
                 <select
                   value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as any)}
+                  onChange={(e) => setNewRole(e.target.value as "ORG_ADMIN" | "REVIEWER" | "SUBMITTER")}
                   style={{
                     width: "100%",
                     height: "36px",

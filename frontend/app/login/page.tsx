@@ -25,27 +25,30 @@ export default function LoginPage() {
   const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   useEffect(() => {
-    try {
-      const storedEmail =
-        localStorage.getItem("kagaz_user_email") ||
-        sessionStorage.getItem("kagaz_user_email");
-      const storedRole =
-        localStorage.getItem("kagaz_user_role") ||
-        sessionStorage.getItem("kagaz_user_role") || "REVIEWER";
-      const storedName =
-        localStorage.getItem("kagaz_user_name") ||
-        sessionStorage.getItem("kagaz_user_name") || "Soham Doshi";
+    const timer = setTimeout(() => {
+      try {
+        const storedEmail =
+          localStorage.getItem("kagaz_user_email") ||
+          sessionStorage.getItem("kagaz_user_email");
+        const storedRole =
+          localStorage.getItem("kagaz_user_role") ||
+          sessionStorage.getItem("kagaz_user_role") || "REVIEWER";
+        const storedName =
+          localStorage.getItem("kagaz_user_name") ||
+          sessionStorage.getItem("kagaz_user_name") || "Soham Doshi";
 
-      if (storedEmail) {
-        setActiveUser({
-          user_id: `usr_${storedEmail.split("@")[0]}`,
-          name: storedName,
-          email: storedEmail,
-          role: storedRole,
-          organization_id: "org_kagaz_primary",
-        });
-      }
-    } catch {}
+        if (storedEmail) {
+          setActiveUser({
+            user_id: `usr_${storedEmail.split("@")[0]}`,
+            name: storedName,
+            email: storedEmail,
+            role: storedRole,
+            organization_id: "org_kagaz_primary",
+          });
+        }
+      } catch {}
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   async function handleLogin(e?: React.FormEvent, customEmail?: string, customRole?: string) {
@@ -91,7 +94,10 @@ export default function LoginPage() {
         type: "success",
         message: `Authenticated as ${user.name} (${user.role}). JWT token anchored.`,
       });
-    } catch (err: unknown) {
+      setTimeout(() => {
+        router.push("/documents");
+      }, 800);
+    } catch {
       // Local fallback token generation if backend is temporarily unreachable
       const mockToken = `kgz_jwt_${btoa(JSON.stringify({ sub: `usr_${loginEmail.split("@")[0]}`, email: loginEmail, role: loginRole, active: true, iat: Date.now() }))}`;
       localStorage.setItem("kagaz_token", mockToken);

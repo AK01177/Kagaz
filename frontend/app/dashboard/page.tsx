@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { AppShell, Button, Badge, Icon } from "../components/AppShell";
+import { AppShell, Badge, Icon } from "../components/AppShell";
 
 export default function DashboardPage() {
   const stats = [

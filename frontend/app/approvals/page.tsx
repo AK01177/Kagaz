@@ -39,7 +39,7 @@ const DEFAULT_APPROVALS: ApprovalItem[] = [
 ];
 
 export default function ApprovalsPage() {
-  const [items, setItems] = useState<ApprovalItem[]>(DEFAULT_APPROVALS);
+  const [items] = useState<ApprovalItem[]>(DEFAULT_APPROVALS);
   const [decisions, setDecisions] = useState<Record<string, "approved" | "rejected">>({});
 
   function handleDecision(id: string, decision: "approved" | "rejected") {
