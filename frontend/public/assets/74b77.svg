@@ -1,0 +1,7 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Stage marker">
+<rect x="0.5" y="0.5" width="27" height="27" rx="13.5" fill="#EEEDF5"/>
+<rect x="0.5" y="0.5" width="27" height="27" rx="13.5" stroke="#5E5A8A"/>
+<circle id="Active indicator" cx="14" cy="14" r="4" fill="#5E5A8A"/>
+</g>
+</svg>

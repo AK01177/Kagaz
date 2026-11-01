@@ -11,6 +11,7 @@ export interface DocumentRecord {
   organization_id?: string;
   is_manually_corrected?: boolean;
   last_corrected_at?: string;
+  ocr_text_length?: number;
   classification_history?: Array<{
     previous_category?: string | null;
     previous_confidence?: number | null;

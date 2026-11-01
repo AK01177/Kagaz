@@ -15,7 +15,7 @@ import json
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -29,7 +29,7 @@ from services.structured_extraction import (
     extract_structured_fields,
 )
 from services.upload import UploadError, save_upload
-from storage.document_storage import DocumentStorage
+from storage.document_storage import DocumentNotFoundError, DocumentStorage
 
 
 router = APIRouter(prefix="/api/documents", tags=["documents"], route_class=UploadLimitRoute)
@@ -66,6 +66,31 @@ async def upload_document(
 # ---------------------------------------------------------------------------
 # GET /api/documents/{document_id} — fetch document metadata
 # ---------------------------------------------------------------------------
+
+
+@router.get("/{document_id}/file")
+async def get_document_file(document_id: str):
+    storage = DocumentStorage()
+    try:
+        file_path = storage.resolve(document_id)
+    except DocumentNotFoundError:
+        raise HTTPException(status_code=404, detail="Document file not found")
+
+    ext = file_path.suffix.lower()
+    media_types = {
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=file_path.name,
+        headers={"Content-Disposition": f'inline; filename="{file_path.name}"'},
+    )
+
 
 @router.get("/{document_id}")
 async def get_document(document_id: str):

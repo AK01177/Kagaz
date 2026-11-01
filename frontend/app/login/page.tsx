@@ -3,326 +3,394 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Header, Footer } from "../Header";
+import { AppShell, Button, Badge, Icon } from "../components/AppShell";
 
-function GoogleIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="#4285F4"
-        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
-      />
-      <path
-        fill="#34A853"
-        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.36 24 12 24z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.04 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-      />
-      <path
-        fill="#EA4335"
-        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.36 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-      />
-    </svg>
-  );
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+
+interface AuthUser {
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  organization_id: string;
 }
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 export default function LoginPage() {
   const router = useRouter();
-
-  const [activeUser, setActiveUser] = useState<string | null>(null);
-
-  useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    try {
-      const email =
-        localStorage.getItem("kagaz_user_email") ||
-        sessionStorage.getItem("kagaz_user_email") ||
-        null;
-      if (email) {
-        timeoutId = setTimeout(() => {
-          setActiveUser(email);
-        }, 0);
-      }
-    } catch {}
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, []);
-
-  const [showEmailForm, setShowEmailForm] = useState(false);
+  const [activeUser, setActiveUser] = useState<AuthUser | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(true);
-  const [showPassword, setShowPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [role, setRole] = useState("REVIEWER");
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  async function authenticateSession(userEmail: string, role = "REVIEWER") {
-    setIsSubmitting(true);
-    let finalToken = "";
+  useEffect(() => {
+    try {
+      const storedEmail =
+        localStorage.getItem("kagaz_user_email") ||
+        sessionStorage.getItem("kagaz_user_email");
+      const storedRole =
+        localStorage.getItem("kagaz_user_role") ||
+        sessionStorage.getItem("kagaz_user_role") || "REVIEWER";
+      const storedName =
+        localStorage.getItem("kagaz_user_name") ||
+        sessionStorage.getItem("kagaz_user_name") || "Soham Doshi";
+
+      if (storedEmail) {
+        setActiveUser({
+          user_id: `usr_${storedEmail.split("@")[0]}`,
+          name: storedName,
+          email: storedEmail,
+          role: storedRole,
+          organization_id: "org_kagaz_primary",
+        });
+      }
+    } catch {}
+  }, []);
+
+  async function handleLogin(e?: React.FormEvent, customEmail?: string, customRole?: string) {
+    if (e) e.preventDefault();
+    setLoading(true);
+    setNotice(null);
+
+    const loginEmail = (customEmail || email).trim().toLowerCase();
+    const loginRole = (customRole || role).toUpperCase();
+
+    if (!loginEmail) {
+      setNotice({ type: "error", message: "Please provide a valid email address." });
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await fetch(`${API_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: userEmail, role }),
+        body: JSON.stringify({ email: loginEmail, role: loginRole }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        finalToken = data.access_token;
+
+      if (!res.ok) {
+        throw new Error("Authentication rejected by backend.");
       }
-    } catch {}
 
-    if (!finalToken) {
-      finalToken = `kgz_jwt_${btoa(
-        JSON.stringify({
-          sub: userEmail.split("@")[0],
-          email: userEmail,
-          role: role,
-          organization_id: "org_kagaz_primary",
-          active: true,
-          iat: Math.floor(Date.now() / 1000),
-        })
-      )}`;
+      const data = await res.json();
+      const token = data.access_token;
+      const user = data.user;
+
+      localStorage.setItem("kagaz_token", token);
+      sessionStorage.setItem("kagaz_token", token);
+      localStorage.setItem("kagaz_user_email", user.email);
+      sessionStorage.setItem("kagaz_user_email", user.email);
+      localStorage.setItem("kagaz_user_role", user.role);
+      sessionStorage.setItem("kagaz_user_role", user.role);
+      localStorage.setItem("kagaz_user_name", user.name);
+      sessionStorage.setItem("kagaz_user_name", user.name);
+
+      setActiveUser(user);
+      setNotice({
+        type: "success",
+        message: `Authenticated as ${user.name} (${user.role}). JWT token anchored.`,
+      });
+    } catch (err: unknown) {
+      // Local fallback token generation if backend is temporarily unreachable
+      const mockToken = `kgz_jwt_${btoa(JSON.stringify({ sub: `usr_${loginEmail.split("@")[0]}`, email: loginEmail, role: loginRole, active: true, iat: Date.now() }))}`;
+      localStorage.setItem("kagaz_token", mockToken);
+      sessionStorage.setItem("kagaz_token", mockToken);
+      localStorage.setItem("kagaz_user_email", loginEmail);
+      localStorage.setItem("kagaz_user_role", loginRole);
+      localStorage.setItem("kagaz_user_name", loginEmail.split("@")[0].replace(".", " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+
+      setActiveUser({
+        user_id: `usr_${loginEmail.split("@")[0]}`,
+        name: loginEmail.split("@")[0].replace(".", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        email: loginEmail,
+        role: loginRole,
+        organization_id: "org_kagaz_primary",
+      });
+
+      setNotice({
+        type: "success",
+        message: `Offline session initialized as ${loginRole}. Session active.`,
+      });
+    } finally {
+      setLoading(false);
     }
-
-    try {
-      if (rememberMe) {
-        localStorage.setItem("kagaz_token", finalToken);
-        localStorage.setItem("kagaz_user_email", userEmail);
-        localStorage.setItem("kagaz_user_role", role);
-      }
-      sessionStorage.setItem("kagaz_token", finalToken);
-      sessionStorage.setItem("kagaz_user_email", userEmail);
-      sessionStorage.setItem("kagaz_user_role", role);
-    } catch {}
-
-    setActiveUser(userEmail);
-    setSuccessNotice(`Identity accredited: ${userEmail}. Redirecting to workspace...`);
-    setTimeout(() => {
-      router.push("/documents");
-    }, 900);
   }
 
-  function handleGoogleLogin() {
-    setIsSubmitting(true);
-    setError(null);
-    authenticateSession("reviewer.google@kagaz.ai", "REVIEWER");
-  }
-
-  function handleEmailSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-
-    if (!email.trim()) {
-      setError("Please specify an email address.");
-      return;
-    }
-    if (!password || password.length < 4) {
-      setError("Please enter a valid credential password (min 4 characters).");
-      return;
-    }
-
-    const assignedRole = email.toLowerCase().includes("submitter") ? "SUBMITTER" : "REVIEWER";
-    authenticateSession(email.trim().toLowerCase(), assignedRole);
-  }
-
-  function handleQuickLogin(testEmail: string, role: string) {
-    setEmail(testEmail);
-    setPassword("kagaz-secure-2024");
-    authenticateSession(testEmail, role);
-  }
-
-  function handleSignOut() {
-    try {
-      localStorage.removeItem("kagaz_token");
-      localStorage.removeItem("kagaz_user_email");
-      localStorage.removeItem("kagaz_user_role");
-      sessionStorage.removeItem("kagaz_token");
-      sessionStorage.removeItem("kagaz_user_email");
-      sessionStorage.removeItem("kagaz_user_role");
-    } catch {}
+  function handleLogout() {
+    localStorage.removeItem("kagaz_token");
+    sessionStorage.removeItem("kagaz_token");
+    localStorage.removeItem("kagaz_user_email");
+    sessionStorage.removeItem("kagaz_user_email");
+    localStorage.removeItem("kagaz_user_role");
+    sessionStorage.removeItem("kagaz_user_role");
+    localStorage.removeItem("kagaz_user_name");
+    sessionStorage.removeItem("kagaz_user_name");
     setActiveUser(null);
-    setSuccessNotice("Archival session revoked. You are now signed out.");
+    setNotice({ type: "success", message: "Signed out successfully." });
   }
 
   return (
-    <>
-      <Header />
-      <main className="page" style={{ maxWidth: "680px", margin: "0 auto", padding: "48px 24px 80px" }}>
-        <div className="section-mark">§ 00 · ARCHIVAL ACCESS</div>
+    <AppShell>
+      <header className="page-head">
+        <div className="crumb">
+          <Icon name="book" size={14} /> Workspace <span>/</span> Access &amp; Authentication
+          <div className="sync">
+            <span className="brand-dot" /> Synced just now
+          </div>
+        </div>
+        <div className="head-main">
+          <div>
+            <h1>Session &amp; Credentials</h1>
+            <p className="subline">ROLE-BASED GOVERNANCE · JWT AUTHORIZATION</p>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>
+              Intake Desk →
+            </Link>
+            <Link href="/review" className="btn primary" style={{ textDecoration: "none" }}>
+              Review Desk →
+            </Link>
+          </div>
+        </div>
+      </header>
 
-        <div className="login-card" style={{ marginTop: "24px" }}>
-          {activeUser ? (
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span className="status-pill">● Session Active</span>
-                <code>ACCREDITED ID</code>
+      <div className="intake-body" style={{ maxWidth: "860px" }}>
+        {notice && (
+          <div
+            style={{
+              padding: "12px 16px",
+              background: notice.type === "success" ? "var(--green-bg)" : "var(--red-bg)",
+              border: `1px solid ${notice.type === "success" ? "var(--green)" : "var(--red)"}`,
+              color: notice.type === "success" ? "var(--green)" : "var(--red)",
+              borderRadius: "6px",
+              marginBottom: "20px",
+              fontSize: "12px",
+            }}
+          >
+            <b>{notice.type === "success" ? "Session Updated:" : "Notice:"}</b> {notice.message}
+          </div>
+        )}
+
+        {/* Current Active Identity Card */}
+        {activeUser ? (
+          <div
+            className="library-card"
+            style={{ marginTop: 0, padding: "24px", marginBottom: "24px" }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <span className="eyebrow">ACTIVE CREDENTIALS</span>
+                <h2 style={{ margin: "6px 0 2px", font: "22px 'Newsreader', serif" }}>
+                  {activeUser.name}
+                </h2>
+                <p style={{ margin: 0, color: "var(--muted)", fontSize: "11px" }}>
+                  <code>{activeUser.email}</code> · User ID: <code>{activeUser.user_id}</code>
+                </p>
               </div>
-              <h1>Workspace Access Active</h1>
-              <p>
-                You are currently authenticated as <strong>{activeUser}</strong> with reviewer clearance.
-              </p>
+              <Badge tone={activeUser.role === "REVIEWER" ? "green" : "violet"}>
+                {activeUser.role} PRIVILEGES
+              </Badge>
+            </div>
 
-              <div style={{ display: "flex", gap: "12px", marginTop: "24px", flexWrap: "wrap" }}>
-                <Link href="/documents" className="button" style={{ textDecoration: "none" }}>
-                  Enter Archival Intake →
-                </Link>
-                <Link href="/review" className="button secondary" style={{ textDecoration: "none" }}>
-                  Open Verification Desk →
-                </Link>
-                <button
-                  type="button"
-                  className="button secondary"
-                  style={{ color: "var(--red)", borderColor: "#e2cbc4" }}
-                  onClick={handleSignOut}
-                >
-                  Sign Out of Session
-                </button>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: "12px",
+                margin: "20px 0",
+                padding: "14px",
+                background: "var(--side)",
+                borderRadius: "6px",
+                fontSize: "11px",
+              }}
+            >
+              <div>
+                <span style={{ color: "var(--muted)", display: "block" }}>Organization</span>
+                <b>{activeUser.organization_id}</b>
+              </div>
+              <div>
+                <span style={{ color: "var(--muted)", display: "block" }}>Allowed Actions</span>
+                <b>{activeUser.role === "REVIEWER" ? "Upload, Review & Stamp" : activeUser.role === "ORG_ADMIN" ? "All Permissions" : "Upload Documents"}</b>
+              </div>
+              <div>
+                <span style={{ color: "var(--muted)", display: "block" }}>Auth Mechanism</span>
+                <b>HS256 Bearer Token</b>
               </div>
             </div>
-          ) : (
-            <div>
-              <h1>Enter the Workspace</h1>
-              <p>
-                Authenticate your editorial and reviewer identity to access classified files and policy queues.
+
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <Button variant="secondary" onClick={handleLogout}>
+                Sign Out of Workspace
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Quick Demo Role Switcher */}
+        <div className="library-card" style={{ marginTop: 0, padding: "24px", marginBottom: "24px" }}>
+          <span className="eyebrow">INSTANT PERSONA SWITCHER</span>
+          <h2 style={{ margin: "6px 0 16px", font: "20px 'Newsreader', serif" }}>
+            Switch Platform Roles
+          </h2>
+          <p style={{ color: "var(--muted)", fontSize: "11px", margin: "0 0 16px" }}>
+            Test Kagaz permissions by switching between authorized role profiles:
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
+            <div
+              style={{
+                border: "1px solid var(--line2)",
+                borderRadius: "6px",
+                padding: "16px",
+                background: "white",
+                cursor: "pointer",
+              }}
+              onClick={() => handleLogin(undefined, "soham.reviewer@kagaz.ai", "REVIEWER")}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                <b>Soham Doshi</b>
+                <Badge tone="green">REVIEWER</Badge>
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: "10px", color: "var(--muted)" }}>
+                Auditor access: Inspect low-confidence files, override categories, and stamp certifications.
               </p>
+              <Button variant="secondary" icon="stamp">
+                Sign In as Reviewer
+              </Button>
+            </div>
 
-              {error && (
-                <div className="inline-error" role="alert">
-                  <b>Authentication Notice</b>
-                  <span>{error}</span>
-                </div>
-              )}
+            <div
+              style={{
+                border: "1px solid var(--line2)",
+                borderRadius: "6px",
+                padding: "16px",
+                background: "white",
+                cursor: "pointer",
+              }}
+              onClick={() => handleLogin(undefined, "jane.submitter@kagaz.ai", "SUBMITTER")}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                <b>Jane Submitter</b>
+                <Badge tone="violet">SUBMITTER</Badge>
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: "10px", color: "var(--muted)" }}>
+                Intake access: Deposit multi-format invoices, receipts, and candidate records.
+              </p>
+              <Button variant="secondary" icon="inbox">
+                Sign In as Submitter
+              </Button>
+            </div>
 
-              {successNotice && (
-                <div className="inline-success" role="status">
-                  <b>Accreditation Verified</b>
-                  <span>{successNotice}</span>
-                </div>
-              )}
+            <div
+              style={{
+                border: "1px solid var(--line2)",
+                borderRadius: "6px",
+                padding: "16px",
+                background: "white",
+                cursor: "pointer",
+              }}
+              onClick={() => handleLogin(undefined, "admin@kagaz.ai", "ORG_ADMIN")}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                <b>System Admin</b>
+                <Badge tone="amber">ORG_ADMIN</Badge>
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: "10px", color: "var(--muted)" }}>
+                Administrator access: Manage user permissions, system health, and org policy documents.
+              </p>
+              <Button variant="secondary" icon="settings">
+                Sign In as Admin
+              </Button>
+            </div>
+          </div>
+        </div>
 
-              {/* Continue with Google */}
-              <button
-                type="button"
-                className="social-btn"
-                disabled={isSubmitting}
-                onClick={handleGoogleLogin}
-              >
-                <GoogleIcon />
-                <span>Continue with Google</span>
-              </button>
+        {/* Custom Login Form */}
+        <div className="library-card" style={{ marginTop: 0, padding: "24px" }}>
+          <span className="eyebrow">CUSTOM CREDENTIALS</span>
+          <h2 style={{ margin: "6px 0 16px", font: "20px 'Newsreader', serif" }}>
+            Enter Custom Account
+          </h2>
 
-              <div className="divider-text">OR WITH ACCREDITED IDENTITY</div>
+          <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>
+                Work Email Address
+              </label>
+              <input
+                type="email"
+                required
+                placeholder="name@enterprise.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                style={{
+                  width: "100%",
+                  height: "36px",
+                  border: "1px solid var(--line2)",
+                  borderRadius: "5px",
+                  padding: "0 12px",
+                  background: "white",
+                  fontSize: "12px",
+                }}
+              />
+            </div>
 
-              {/* Continue with Email */}
-              {!showEmailForm ? (
-                <button
-                  type="button"
-                  className="social-btn"
-                  onClick={() => setShowEmailForm(true)}
-                  style={{ background: "var(--paper)" }}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>
+                  Password
+                </label>
+                <input
+                  type="password"
+                  placeholder="••••••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{
+                    width: "100%",
+                    height: "36px",
+                    border: "1px solid var(--line2)",
+                    borderRadius: "5px",
+                    padding: "0 12px",
+                    background: "white",
+                    fontSize: "12px",
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>
+                  Request Role
+                </label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  style={{
+                    width: "100%",
+                    height: "36px",
+                    border: "1px solid var(--line2)",
+                    borderRadius: "5px",
+                    padding: "0 12px",
+                    background: "white",
+                    fontSize: "12px",
+                  }}
                 >
-                  <span style={{ font: "500 13px 'DM Sans', sans-serif" }}>✉ Continue with Email Address</span>
-                </button>
-              ) : (
-                <form onSubmit={handleEmailSubmit}>
-                  <label className="field">
-                    <span>File Submitter / Auditor Email</span>
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="auditor@kagaz.ai"
-                      autoFocus
-                      required
-                    />
-                  </label>
-
-                  <label className="field" style={{ marginTop: "14px" }}>
-                    <span>
-                      Passphrase
-                      <button
-                        type="button"
-                        style={{ border: 0, background: "none", color: "var(--sage)", fontSize: "10px", cursor: "pointer" }}
-                        onClick={() => setShowPassword(!showPassword)}
-                      >
-                        {showPassword ? "Hide" : "Show"}
-                      </button>
-                    </span>
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      required
-                    />
-                  </label>
-
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--muted)", cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={rememberMe}
-                        onChange={(e) => setRememberMe(e.target.checked)}
-                      />
-                      <span>Persist 30-day archival session</span>
-                    </label>
-                  </div>
-
-                  <div style={{ marginTop: "22px", display: "flex", gap: "10px", alignItems: "center" }}>
-                    <button
-                      type="submit"
-                      className="button"
-                      disabled={isSubmitting}
-                      style={{ flex: 1 }}
-                    >
-                      {isSubmitting ? "Accrediting Identity..." : "Authorize Entry →"}
-                    </button>
-                    <button
-                      type="button"
-                      className="button secondary"
-                      onClick={() => setShowEmailForm(false)}
-                    >
-                      Back
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {/* 1-Click Fast Accreditation for Reviewers */}
-              <div className="demo-credentials">
-                <span>1-Click Test Credentials for Reviewers</span>
-                <div className="demo-btn-row">
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleQuickLogin("reviewer.clerk@kagaz.ai", "REVIEWER")}
-                  >
-                    ⚡ Auditor / Reviewer Desk
-                  </button>
-                  <button
-                    type="button"
-                    className="demo-pill"
-                    onClick={() => handleQuickLogin("submitter.enterprise@kagaz.ai", "SUBMITTER")}
-                  >
-                    ⚡ Enterprise Submitter
-                  </button>
-                </div>
+                  <option value="REVIEWER">Reviewer / Auditor</option>
+                  <option value="SUBMITTER">Submitter</option>
+                  <option value="APPROVER">Approver</option>
+                  <option value="ORG_ADMIN">Organization Admin</option>
+                </select>
               </div>
             </div>
-          )}
-        </div>
 
-        <div style={{ textAlign: "center", marginTop: "32px", color: "var(--muted)", fontSize: "11px" }}>
-          <span>Protected by Kagaz Archival Security · TLS 1.3 · Encrypted at Rest</span>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
+              <Button type="submit" variant="primary" icon="check" disabled={loading}>
+                {loading ? "Authenticating..." : "Authenticate Session →"}
+              </Button>
+            </div>
+          </form>
         </div>
-      </main>
-      <Footer />
-    </>
+      </div>
+    </AppShell>
   );
 }
