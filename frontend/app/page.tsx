@@ -18,7 +18,7 @@ export default function HomePage() {
                 Kagaz transforms incoming documents into classified, policy-cleared, and permanently audited records through neural layout intelligence and accredited human judgment.
               </p>
             </div>
-            <div className="spec">SPEC: MULTI-PAGE PDF · TAXONOMY V2.4 · 10 MB CEILING</div>
+            <div className="spec">SPEC: PDF · PNG · JPG · JPEG · TAXONOMY V2.4 · 10 MB CEILING</div>
           </div>
 
           <div className="cta-row" style={{ marginTop: "12px" }}>
