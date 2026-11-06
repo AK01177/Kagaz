@@ -19,6 +19,26 @@ from app.schemas.extraction import (
     get_supported_extraction_types,
     get_field_definitions,
 )
+from app.schemas.organization import (
+    OrganizationBase,
+    OrganizationCreate,
+    OrganizationUpdate,
+    OrganizationResponse,
+)
+from app.schemas.user import (
+    UserBase,
+    UserCreate,
+    UserUpdate,
+    UserResponse,
+    UserProviderMappingCreate,
+    UserProviderMappingResponse,
+)
+from app.schemas.membership import (
+    MembershipBase,
+    MembershipCreate,
+    MembershipUpdate,
+    MembershipResponse,
+)
 
 __all__ = [
     "DocumentMetadataCreate",
@@ -37,4 +57,18 @@ __all__ = [
     "get_extraction_schema",
     "get_supported_extraction_types",
     "get_field_definitions",
+    "OrganizationBase",
+    "OrganizationCreate",
+    "OrganizationUpdate",
+    "OrganizationResponse",
+    "UserBase",
+    "UserCreate",
+    "UserUpdate",
+    "UserResponse",
+    "UserProviderMappingCreate",
+    "UserProviderMappingResponse",
+    "MembershipBase",
+    "MembershipCreate",
+    "MembershipUpdate",
+    "MembershipResponse",
 ]
