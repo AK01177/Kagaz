@@ -100,7 +100,18 @@ async def get_document(
     document_id: str,
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
-    # Try fetching from PostgreSQL first (DB-03)
+    storage = DocumentStorage()
+    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+
+    # Return persisted metadata JSON if available (matches QA-03 specification)
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    # DB fallback if metadata JSON file is absent
     if db is not None:
         try:
             from app.models.document import Document
@@ -129,15 +140,7 @@ async def get_document(
         except Exception as e:
             logger.debug("DB document lookup fallback for %s: %s", document_id, e)
 
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if not metadata_path.exists():
-        raise HTTPException(status_code=404, detail="Document not found")
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not read metadata")
+    raise HTTPException(status_code=404, detail="Document not found")
 
 
 # ---------------------------------------------------------------------------
@@ -239,40 +242,42 @@ async def get_extraction_results(
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     """Return stored structured extraction fields for a document."""
-    # Try fetching from PostgreSQL first (DB-03)
+    storage = DocumentStorage()
+    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+    metadata = {}
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    # If neither metadata JSON nor DB has the document, return 404
+    fields: dict = metadata.get("extracted_fields", {})
+    confidence: dict = metadata.get("extracted_confidence", {})
+    doc_type = metadata.get("category")
+
+    # DB-03: Check database for stored extractions if not found in JSON
     if db is not None:
         try:
             from app.crud.extraction import get_document_extractions_summary
             summary = get_document_extractions_summary(db, document_id)
             if summary is not None:
-                return {
-                    "document_id": summary.document_id,
-                    "document_type": summary.document_type,
-                    "fields": summary.fields,
-                    "confidence": summary.confidence,
-                    "status": "EXTRACTED" if summary.fields else "CLASSIFIED",
-                }
+                doc_type = summary.document_type or doc_type
+                if summary.fields:
+                    fields = summary.fields
+                    confidence = summary.confidence
         except Exception as e:
             logger.debug("DB extraction lookup fallback for %s: %s", document_id, e)
 
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if not metadata_path.exists():
+    if not metadata and not doc_type:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not read metadata")
-
-    fields: dict = metadata.get("extracted_fields", {})
-    confidence: dict = metadata.get("extracted_confidence", {})
     extraction_status = "EXTRACTED" if fields else metadata.get("status", "UPLOADED")
 
     return {
         "document_id": document_id,
-        "document_type": metadata.get("category"),
+        "document_type": doc_type,
         "fields": fields,
         "confidence": confidence,
         "status": extraction_status,
