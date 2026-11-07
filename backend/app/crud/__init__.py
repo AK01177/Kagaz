@@ -29,6 +29,14 @@ from app.crud.membership import (
     get_user_memberships,
     get_organization_memberships,
 )
+from app.crud.policy import (
+    create_policy,
+    get_policy,
+    list_policies,
+    update_policy,
+    deactivate_policy,
+    list_policy_versions,
+)
 
 __all__ = [
     "create_document_metadata",
@@ -51,4 +59,10 @@ __all__ = [
     "get_membership",
     "get_user_memberships",
     "get_organization_memberships",
+    "create_policy",
+    "get_policy",
+    "list_policies",
+    "update_policy",
+    "deactivate_policy",
+    "list_policy_versions",
 ]

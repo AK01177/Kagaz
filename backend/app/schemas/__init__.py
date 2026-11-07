@@ -39,6 +39,13 @@ from app.schemas.membership import (
     MembershipUpdate,
     MembershipResponse,
 )
+from app.schemas.policy import (
+    PolicyBase,
+    PolicyCreate,
+    PolicyUpdate,
+    PolicyResponse,
+    PolicyVersionResponse,
+)
 
 __all__ = [
     "DocumentMetadataCreate",
@@ -71,4 +78,9 @@ __all__ = [
     "MembershipCreate",
     "MembershipUpdate",
     "MembershipResponse",
+    "PolicyBase",
+    "PolicyCreate",
+    "PolicyUpdate",
+    "PolicyResponse",
+    "PolicyVersionResponse",
 ]
