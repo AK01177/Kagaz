@@ -15,15 +15,28 @@ if str(backend_dir) not in sys.path:
 load_dotenv()
 
 
-from app.db.base import Base
-from app.models.document import Document
-from app.models.extraction import Extraction
-from app.models.policy import Policy, PolicyChunk, PolicyVersion
+try:
+    from app.db.base import Base
+    from app.models.document import Document
+    from app.models.extraction import Extraction
+    from app.models.policy import Policy, PolicyChunk, PolicyVersion
+    from app.models.membership import Membership, MembershipRole
+    from app.models.organization import Organization
+    from app.models.user import User, UserProviderMapping
+except ImportError:
+    from backend.app.db.base import Base
+    from backend.app.models.document import Document
+    from backend.app.models.extraction import Extraction
+    from backend.app.models.policy import Policy, PolicyChunk, PolicyVersion
+    from backend.app.models.membership import Membership, MembershipRole
+    from backend.app.models.organization import Organization
+    from backend.app.models.user import User, UserProviderMapping
 
 config = context.config
 
 database_url = os.getenv("DATABASE_URL")
-if database_url:
+configured_url = config.get_main_option("sqlalchemy.url")
+if database_url and not configured_url.startswith("sqlite"):
     config.set_main_option(
         "sqlalchemy.url",
         database_url.replace("%", "%%"),

@@ -14,7 +14,7 @@ from services.policy_retrieval import (
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/policies", tags=["policies"])
+router = APIRouter(prefix="/api/policies", tags=["policies"])
 
 
 @router.post("/retrieve", response_model=PolicyRetrievalResponse)
@@ -26,19 +26,20 @@ def retrieve(
     try:
         embedding = create_query_embedding(request.query)
     except EmbeddingServiceError as exc:
+        logger.warning("Policy embedding unavailable: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail={"code": "EMBEDDING_UNAVAILABLE", "message": str(exc)},
+            detail={"code": "EMBEDDING_UNAVAILABLE", "message": "Embedding service is unavailable."},
         ) from exc
 
     result = retrieve_policy_evidence(
         db,
         identity["organization_id"],
         identity["role"],
-        request.query,
         embedding,
         request.domain,
         request.document_type,
+        request.policy_version,
         request.limit,
     )
     logger.info(

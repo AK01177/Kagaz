@@ -97,6 +97,10 @@ def upgrade() -> None:
             unique=True,
             postgresql_where=sa.text("status = 'ACTIVE'"),
         )
+        op.execute(
+            "CREATE INDEX ix_policy_chunks_embedding "
+            "ON policy_chunks USING hnsw (embedding vector_cosine_ops)"
+        )
 
     op.create_table(
         "policy_chunks",
@@ -141,6 +145,7 @@ def downgrade() -> None:
     op.drop_index("ix_policy_versions_policy_id", table_name="policy_versions")
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
+        op.execute("DROP INDEX IF EXISTS ix_policy_chunks_embedding")
         op.drop_index("uq_policy_versions_one_active", table_name="policy_versions")
     op.drop_table("policy_versions")
     op.drop_index("ix_policies_organization_domain", table_name="policies")

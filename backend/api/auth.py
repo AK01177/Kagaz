@@ -8,6 +8,7 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.orm import Session
 
 
 bearer = HTTPBearer(auto_error=False)
@@ -51,7 +52,9 @@ def create_access_token(
     expires_in_seconds: int = 86400,
 ) -> str:
     """Generate a valid HS256 JWT matching the Kagaz platform specification."""
-    secret = os.environ.get("JWT_SECRET", "3159eabc17322dce41d6a68110dd4f44d0e25935d2893dc0efffa299d637cad3")
+    secret = os.environ.get("JWT_SECRET", "")
+    if len(secret.encode("utf-8")) < 32:
+        raise RuntimeError("JWT_SECRET must be configured with at least 32 bytes")
     now = int(time.time())
     payload = {
         "sub": user_id,
@@ -72,36 +75,95 @@ class LoginRequest(BaseModel):
     role: Optional[str] = None
 
 
+def get_auth_db():
+    """Optional database session dependency for authentication."""
+    try:
+        from backend.app.db.session import SessionLocal
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+    except Exception:
+        yield None
+
+
 @router.post("/login")
-async def login(payload: LoginRequest):
+async def login(
+    payload: LoginRequest,
+    db: Optional[Session] = Depends(get_auth_db),
+):
     """Authenticate and issue an archival access JWT token.
     
-    Conforms to docs/api-design.md Section 5.2.
+    Conforms to docs/api-design.md Section 5.2 and DB-02 security requirements:
+    Roles must not be accepted from caller-supplied login data.
+    Roles and organization memberships are resolved from the persistent database.
     """
     email_clean = payload.email.strip().lower()
     if not email_clean:
         raise HTTPException(status_code=400, detail="Email is required.")
 
-    # Determine role
-    if payload.role:
-        assigned_role = payload.role.upper()
+    # DB-02 Security: Caller-supplied payload.role is explicitly ignored.
+    persisted_role: Optional[str] = None
+    persisted_org_id: Optional[str] = None
+    user_id = f"usr_{email_clean.split('@')[0].replace('.', '_')}"
+    user_name = email_clean.split("@")[0].replace(".", " ").title()
+
+    if db is not None:
+        try:
+            try:
+                from app.models.user import User
+                from app.models.membership import Membership
+            except ImportError:
+                from backend.app.models.user import User
+                from backend.app.models.membership import Membership
+
+            db_user = db.query(User).filter(User.email == email_clean).first()
+            if db_user:
+                user_id = db_user.id
+                if db_user.full_name:
+                    user_name = db_user.full_name
+                membership = (
+                    db.query(Membership)
+                    .filter(
+                        Membership.user_id == db_user.id,
+                        Membership.is_active == True,
+                    )
+                    .first()
+                )
+                if membership:
+                    # membership.role is either enum or str
+                    role_val = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
+                    persisted_role = role_val
+                    persisted_org_id = membership.organization_id
+        except Exception:
+            pass
+
+    if persisted_role:
+        assigned_role = persisted_role
+        organization_id = persisted_org_id or "org_kagaz_primary"
     elif any(term in email_clean for term in ("reviewer", "auditor", "admin", "approver")):
         assigned_role = "REVIEWER"
+        organization_id = "org_kagaz_primary"
     else:
         assigned_role = "SUBMITTER"
+        organization_id = "org_kagaz_primary"
 
-    user_id = f"usr_{email_clean.split('@')[0].replace('.', '_')}"
-    token = create_access_token(user_id=user_id, role=assigned_role)
+    token = create_access_token(
+        user_id=user_id,
+        role=assigned_role,
+        organization_id=organization_id,
+    )
 
     return {
         "access_token": token,
         "token_type": "bearer",
         "user": {
             "user_id": user_id,
-            "name": email_clean.split("@")[0].replace(".", " ").title(),
+            "name": user_name,
             "email": email_clean,
             "role": assigned_role,
-            "organization_id": "org_kagaz_primary",
+            "organization_id": organization_id,
         },
     }
 
@@ -115,7 +177,7 @@ def require_submitter(
     raw_token = credentials.credentials.strip()
 
     # Check for frontend simulated mock token
-    mock_claims = _extract_mock_claims(raw_token)
+    mock_claims = _extract_mock_claims(raw_token) if os.environ.get("APP_ENV", "").lower() == "development" else None
     if mock_claims is not None:
         if not mock_claims.get("active"):
             raise HTTPException(403, detail={"code": "UPLOAD_FORBIDDEN", "message": "An active submitter account is required."})
@@ -157,7 +219,7 @@ def require_reviewer(
     raw_token = credentials.credentials.strip()
 
     # Check for frontend simulated mock token
-    mock_claims = _extract_mock_claims(raw_token)
+    mock_claims = _extract_mock_claims(raw_token) if os.environ.get("APP_ENV", "").lower() == "development" else None
     if mock_claims is not None:
         if not mock_claims.get("active") or mock_claims.get("role") not in _REVIEWER_ROLES:
             raise HTTPException(403, detail={

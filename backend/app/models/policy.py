@@ -16,7 +16,6 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -78,12 +77,6 @@ class PolicyVersion(Base):
     __table_args__ = (
         UniqueConstraint("policy_id", "version", name="uq_policy_versions_policy_version"),
         Index("ix_policy_versions_policy_status", "policy_id", "status"),
-        Index(
-            "uq_policy_versions_one_active",
-            "policy_id",
-            unique=True,
-            postgresql_where=text("status = 'ACTIVE'"),
-        ),
     )
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

@@ -7,6 +7,7 @@ class PolicyRetrievalRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000)
     domain: str | None = Field(default=None, max_length=100)
     document_type: str | None = Field(default=None, max_length=100)
+    policy_version: str | None = Field(default=None, max_length=50)
     limit: int = Field(default=5, ge=1, le=20)
 
     @validator("query")
