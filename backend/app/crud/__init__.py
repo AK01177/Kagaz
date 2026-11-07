@@ -1,15 +1,22 @@
 """CRUD modules for Kagaz backend."""
 from app.crud.document import (
+    create_document,
     create_document_metadata,
+    delete_document,
+    get_document_by_id,
     get_document_metadata,
+    list_documents_by_organization,
     update_document_status,
 )
 from app.crud.extraction import (
     create_extraction,
+    create_extraction_run,
     create_extractions_bulk,
-    get_extractions_by_document,
-    get_document_extractions_summary,
     delete_extractions_by_document,
+    get_document_extractions_summary,
+    get_extractions_by_document,
+    get_extraction_runs_by_document,
+    get_latest_extraction_run,
 )
 from app.crud.organization import (
     create_organization,
@@ -31,12 +38,19 @@ from app.crud.membership import (
 )
 
 __all__ = [
+    "create_document",
     "create_document_metadata",
     "get_document_metadata",
+    "get_document_by_id",
+    "list_documents_by_organization",
+    "delete_document",
     "update_document_status",
     "create_extraction",
+    "create_extraction_run",
     "create_extractions_bulk",
     "get_extractions_by_document",
+    "get_extraction_runs_by_document",
+    "get_latest_extraction_run",
     "get_document_extractions_summary",
     "delete_extractions_by_document",
     "create_organization",

@@ -2,18 +2,23 @@
 
 ## 1. Overview
 
-Kagaz uses **PostgreSQL** for relational persistence of multi-tenant document metadata and extracted structured fields, managed through **SQLAlchemy** (ORM) and **Alembic** (schema migrations). Unit tests run against an in-memory **SQLite** database with foreign key enforcement enabled (`PRAGMA foreign_keys=ON`).
+Kagaz uses **PostgreSQL** as the authoritative source of truth for multi-tenant document metadata, processing status, and extracted structured fields, managed through **SQLAlchemy** (ORM) and **Alembic** (schema migrations). File binaries remain stored in object storage (local filesystem directory or S3 in cloud deployments).
+
+Unit and integration tests run against an in-memory **SQLite** database with foreign key enforcement enabled (`PRAGMA foreign_keys=ON`) and connection pooling configured for thread safety (`StaticPool`).
 
 ### Database Responsibilities
 
 | Table | Model | Responsibility | Tenant Isolation |
 |---|---|---|---|
-| `documents` | `Document` (`app/models/document.py`) | Tracks document identity, tenant ownership, upload details, file size, storage path, status lifecycle, and classification results | Scoped by `organization_id` (indexed) |
-| `extractions` | `Extraction` (`app/models/extraction.py`) | Stores granular structured key-value extractions per document with confidence scores | References `documents.id` via foreign key with `ON DELETE CASCADE` |
+| `documents` | `Document` (`app/models/document.py`) | Tracks document identity, tenant ownership, upload details, file size, storage object key, status lifecycle (`UPLOADED` -> `PROCESSING` -> `CLASSIFIED` -> `EXTRACTED` / `FAILED`), classification results, and timestamps (`upload_timestamp`, `updated_at`, `processed_at`) | Scoped by `organization_id` (indexed) |
+| `extraction_runs` | `ExtractionRun` (`app/models/extraction.py`) | Tracks discrete extraction attempts per document, extraction status (`PENDING`, `PROCESSING`, `SUCCESS`, `FAILED`), model version, error messages, and execution timestamps | Linked to `documents.id` via foreign key with `ON DELETE CASCADE` |
+| `extractions` | `Extraction` (`app/models/extraction.py`) | Stores granular structured key-value extractions per document with confidence scores and link to specific extraction run | References `documents.id` and `extraction_runs.id` via foreign key with `ON DELETE CASCADE` |
+| `organizations` | `Organization` (`app/models/organization.py`) | Multi-tenant organization boundaries (DB-02) | Primary tenant entity |
+| `users` | `User` (`app/models/user.py`) | System users and submitters (DB-02) | Belongs to organizations via memberships |
 
 ---
 
-## 2. Table Schemas & Constraints
+## 2. Table Schemas & Constraints (DB-01, DB-02, DB-03)
 
 ### `documents` Table
 - `id`: `VARCHAR(36)` (UUID string), Primary Key.
@@ -22,20 +27,43 @@ Kagaz uses **PostgreSQL** for relational persistence of multi-tenant document me
 - `filename`: `VARCHAR`, Not Null.
 - `file_type`: `VARCHAR`, Not Null (e.g. `application/pdf`).
 - `file_size`: `INTEGER`, Not Null (bytes).
-- `storage_path`: `VARCHAR`, Not Null (e.g. `uploads/doc.pdf`).
-- `status`: `documentstatus` Enum (`UPLOADED`, `PROCESSING`, `CLASSIFIED`, `FAILED`), Not Null, Indexed.
+- `storage_path`: `VARCHAR`, Not Null (object storage key, e.g. `doc_<uuid>.pdf`).
+- `status`: `documentstatus` Enum (`UPLOADED`, `PROCESSING`, `CLASSIFIED`, `EXTRACTED`, `FAILED`), Not Null, Indexed.
 - `upload_timestamp`: `TIMESTAMP WITH TIME ZONE`, Not Null.
-- `classification`: `VARCHAR`, Nullable (e.g. `invoice`, `transcript`).
+- `updated_at`: `TIMESTAMP WITH TIME ZONE`, Not Null (auto-updated on record changes).
+- `processed_at`: `TIMESTAMP WITH TIME ZONE`, Nullable (set when classification/extraction completes).
+- `classification`: `VARCHAR`, Nullable (e.g. `invoice`, `receipt`, `bill_of_lading`).
 - `classification_confidence`: `FLOAT`, Nullable, Check Constraint: `classification_confidence IS NULL OR (classification_confidence >= 0.0 AND classification_confidence <= 1.0)`.
+
+### `extraction_runs` Table (DB-03)
+- `id`: `VARCHAR(36)` (UUID string), Primary Key.
+- `document_id`: `VARCHAR(36)`, Foreign Key to `documents.id` with `ON DELETE CASCADE`, Not Null, Indexed.
+- `status`: `extractionstatus` Enum (`PENDING`, `PROCESSING`, `SUCCESS`, `FAILED`), Not Null, default `SUCCESS`.
+- `model_version`: `VARCHAR`, Nullable.
+- `error_message`: `TEXT`, Nullable (stores error details on failed extraction attempts).
+- `created_at`: `TIMESTAMP WITH TIME ZONE`, Not Null.
+- `completed_at`: `TIMESTAMP WITH TIME ZONE`, Nullable.
 
 ### `extractions` Table
 - `id`: `VARCHAR(36)` (UUID string), Primary Key.
 - `document_id`: `VARCHAR(36)`, Foreign Key to `documents.id` with `ON DELETE CASCADE`, Not Null, Indexed.
+- `extraction_run_id`: `VARCHAR(36)`, Foreign Key to `extraction_runs.id` with `ON DELETE CASCADE`, Nullable, Indexed.
 - `field_name`: `VARCHAR`, Not Null.
 - `value`: `TEXT`, Not Null.
 - `confidence`: `FLOAT`, Not Null.
 - `created_at`: `TIMESTAMP WITH TIME ZONE`, Not Null.
-- `updated_at`: `TIMESTAMP WITH TIME ZONE`, Not Null (auto-updated on record changes).
+- `updated_at`: `TIMESTAMP WITH TIME ZONE`, Not Null.
+
+### Relational Hierarchy: Document → Extraction Run → Extracted Fields
+```text
+Document (1)
+   │
+   ├── (1..N) ExtractionRun (tracks run status, model version, timestamp, error if failed)
+   │               │
+   │               └── (0..N) Extraction (links to run via extraction_run_id)
+   │
+   └── (0..N) Extraction (scoped to document, unique per field_name)
+```
 
 ### Extraction Constraints
 1. **Confidence Range**:
@@ -43,21 +71,20 @@ Kagaz uses **PostgreSQL** for relational persistence of multi-tenant document me
    - Pydantic schema validation: `Field(ge=0.0, le=1.0)`.
 2. **One-Record-Per-Field Unique Constraint**:
    - Constraint: `uq_extractions_document_field` on `(document_id, field_name)`.
-   - **Policy & Rationale**: Each document stores exactly one extraction record per field name. This aligns with the planned API summary shape in `docs/api-design.md` (`GET /api/documents/{id}/extract`), which represents extracted fields and confidence as dictionary mappings (`{field_name: value}` and `{field_name: confidence}`). Disallowing duplicate field names at the database level eliminates silent overwrites, guarantees dictionary conversion determinism, and maintains clean auditability.
-   - Different documents can independently use the same field names.
+   - Each document stores authoritative extraction records per field name. When re-extracting with `ExtractionRun`, new runs capture run history while the latest authoritative field values are upserted into `extractions`.
 3. **Foreign Key Lifecycle**:
-   - `extractions.document_id` references `documents.id` with `ON DELETE CASCADE`.
-   - When a document is deleted, all linked extraction records are automatically removed.
+   - Deleting a `Document` cascades delete to all associated `extraction_runs` and `extractions`.
+   - Deleting an `ExtractionRun` cascades delete to run-linked records.
 
 ---
 
 ## 3. Technology Stack & Dependencies
 
-- **Database Engine**: PostgreSQL 14+ (production/local)
+- **Database Engine**: PostgreSQL 14+ (production/staging)
 - **Driver**: `psycopg2-binary` (declared in `backend/requirements.txt`)
 - **ORM**: `SQLAlchemy >= 2.0`
 - **Migration Tool**: `Alembic >= 1.13`
-- **Testing**: `pytest` with SQLite in-memory engine (`sqlite:///:memory:`)
+- **Testing**: `pytest` with SQLite in-memory engine (`sqlite:///:memory:` with `StaticPool`)
 - **Configuration**: `python-dotenv`
 
 ---
@@ -132,7 +159,17 @@ Migrations are stored in `backend/migrations/versions/`.
 06961ad088b5: create documents table (status enum, check constraints, organization index)
   │
   ▼
-49eecc4be46a: create extractions table (foreign key to documents.id, confidence check constraint, uq_extractions_document_field) [head]
+49eecc4be46a: create extractions table (foreign key to documents.id, confidence check constraint, uq_extractions_document_field)
+  │
+  ▼
+b83f09a12c44: add organization and user models (DB-02)
+  │
+  ▼
+c74d89e21f10: integrate document extraction persistence (DB-03)
+               - add extraction_runs table
+               - add EXTRACTED to documentstatus enum
+               - add updated_at and processed_at to documents
+               - add extraction_run_id FK to extractions table [head]
 ```
 
 ### Applying Migrations
@@ -150,10 +187,10 @@ alembic upgrade head
 
 ### Rolling Back Migrations
 
-Roll back the last migration:
+Roll back the DB-03 migration:
 ```bash
 cd backend
-alembic downgrade -1
+alembic downgrade b83f09a12c44
 ```
 
 Roll back all migrations to base:
@@ -187,61 +224,66 @@ alembic upgrade head --sql
 Generate downgrade SQL:
 ```bash
 cd backend
-alembic downgrade 49eecc4be46a:base --sql
+alembic downgrade c74d89e21f10:b83f09a12c44 --sql
 ```
 
 ---
 
-## 7. Running Tests
+## 7. JSON Metadata Migration Tool (DB-03)
 
-Database unit tests run with SQLite in-memory engines and do not require a running PostgreSQL instance. Foreign keys are explicitly enforced via SQLite PRAGMA triggers.
-
-### Run Extraction and Persistence Tests
+To migrate historical or demo JSON metadata files from `storage_data/metadata/*.json` into PostgreSQL, Kagaz provides an idempotent CLI migration tool:
 
 ```bash
-python -m pytest backend/tests/test_extraction.py -v
+# Preview records to be migrated (dry-run mode):
+python backend/scripts/migrate_json_metadata.py --dry-run
+
+# Run migration with custom defaults:
+python backend/scripts/migrate_json_metadata.py \
+    --storage-dir storage_data \
+    --default-org dev_org \
+    --default-user dev_user
 ```
 
-### Run Document Metadata Tests
+### Migration Script Features & Safety Guarantees:
+1. **Authoritative Insertion**: Reads legacy JSON metadata files, validates document attributes, and writes records into `documents`, `extraction_runs`, and `extractions` tables.
+2. **Preservation of Files**: Never modifies or deletes original JSON or binary files on disk.
+3. **Idempotence**: Detects if a document ID already exists in the database and skips it without duplicating records or throwing constraint errors.
+4. **Relational Linking**: Creates an initial `ExtractionRun` for legacy extraction data, linking every extracted field to the run and document.
+5. **Dry-Run Capability**: `--dry-run` reports exact counts of documents and extractions to migrate without writing to the database.
+
+---
+
+## 8. Running Tests
+
+Database unit tests run with SQLite in-memory engines (`PRAGMA foreign_keys=ON`) and do not require a running PostgreSQL instance. When running against PostgreSQL, provide `DATABASE_URL` in the environment.
+
+### Run DB-03 Persistence Test Suite:
 
 ```bash
-python -m pytest backend/tests/test_document_metadata.py -v
+python -m pytest backend/tests/test_db03_postgresql_persistence.py -v
 ```
 
-### Run All Database Tests
+### Run All Database Tests:
 
 ```bash
-python -m pytest backend/tests/test_document_metadata.py backend/tests/test_extraction.py -v
+python -m pytest backend/tests/test_document_metadata.py backend/tests/test_extraction.py backend/tests/test_db03_postgresql_persistence.py -v
 ```
 
-### Run Whitespace / Formatting Check
+### Run Full Test Suite:
 
 ```bash
-git diff --check
+python -m pytest backend/tests -v
 ```
 
 ---
 
-## 8. Current Architecture: PostgreSQL vs. JSON Files
+## 9. PostgreSQL vs. Storage Responsibilities
 
-| Data | Current Storage Mechanism | Target PostgreSQL Table | Migration Status |
+| Data | Storage Mechanism | Target PostgreSQL Table | Status |
 |---|---|---|---|
-| Uploaded binary files (PDF) | Local filesystem under `storage_data/<document_id>.pdf` (S3 in production) | S3 / Blob store (referenced by `documents.storage_path`) | Filesystem active |
-| Upload metadata | JSON files under `storage_data/metadata/<document_id>.json` | `documents` table | JSON active; PostgreSQL model, CRUD, and migrations ready |
-| Document classification | Recorded in JSON metadata (`category`, `confidence`, `status`) | `documents.classification`, `documents.classification_confidence` | JSON active; PostgreSQL schema ready |
-| Extracted structured fields | Model and persistence layer (`Extraction`) | `extractions` table | PostgreSQL schema, Alembic migrations, and persistence CRUD implemented |
-
----
-
-## 9. Remaining Limitations & Follow-Up Work
-
-1. **Local PostgreSQL Service Verification**:
-   - A local PostgreSQL server was not running during development in this environment (port 5432 closed).
-   - Migrations were validated via Alembic offline SQL generation (`--sql`) and against an isolated SQLite test database.
-   - Live PostgreSQL migration (`alembic upgrade head`) should be run once a PostgreSQL service is provisioned or in the staging CI/CD pipeline.
-2. **Full Ingestion Pipeline Integration**:
-   - Document upload currently persists file metadata to JSON files to preserve the existing BE-02 API contract and file storage behavior.
-   - Future sprints will wire the `DocumentStorage` or upload handler to persist concurrently into PostgreSQL using `create_document_metadata`.
-3. **Field Extraction Service**:
-   - The extraction model, table (`extractions`), unique constraint, and persistence CRUD functions are fully implemented and tested.
-   - In later sprints, background workers (Celery/PaddleOCR/LLM) will invoke `app.crud.extraction.create_extractions_bulk` upon completing structured entity extraction.
+| Uploaded binary files (PDF) | Local filesystem under `storage_data/<document_id>.pdf` (S3 in production) | Referenced by `documents.storage_path` | Binaries in storage |
+| Authoritative metadata | PostgreSQL | `documents` table | Fully integrated |
+| Document processing & status | PostgreSQL | `documents.status`, `documents.processed_at` | Fully integrated (`UPLOADED`, `CLASSIFIED`, `EXTRACTED`, `FAILED`) |
+| Extraction runs & history | PostgreSQL | `extraction_runs` table | Fully integrated |
+| Extracted structured fields | PostgreSQL | `extractions` table | Fully integrated |
+| JSON metadata sidecar | Local filesystem under `storage_data/metadata/<document_id>.json` | Deprecated / secondary sync | Retained for backward-compatible dev reads |

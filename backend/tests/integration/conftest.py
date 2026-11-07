@@ -170,6 +170,29 @@ def storage_dir(tmp_path):
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def integration_db(monkeypatch, storage_dir):
+    """Provide an isolated database session and tables for integration tests."""
+    db_path = storage_dir / "integration_test.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    from app.db.base import Base
+    from app.db.session import get_engine, get_db
+    engine = get_engine(db_url)
+    Base.metadata.create_all(engine)
+
+    from sqlalchemy.orm import sessionmaker
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    from main import app
+    app.dependency_overrides[get_db] = lambda: session
+    yield session
+    app.dependency_overrides.pop(get_db, None)
+    session.close()
+
+
 @pytest.fixture()
 def client(monkeypatch, storage_dir):
     """Yield a TestClient that:
@@ -183,6 +206,12 @@ def client(monkeypatch, storage_dir):
     monkeypatch.setenv("JWT_ISSUER", "kagaz")
     monkeypatch.setenv("JWT_AUDIENCE", "kagaz-api")
     monkeypatch.setenv("OPENROUTER_API_KEY", "fake-integration-test-key")
+    # Enable legacy JSON sidecar for pre-DB-03 integration tests that check for
+    # metadata JSON files on disk.  These tests pre-date the DB-03 work and
+    # explicitly assert that a metadata JSON is written.  Enabling this flag
+    # keeps the existing test expectations intact without weakening DB-03 tests
+    # (which explicitly do NOT set this flag and thus verify pure PostgreSQL behaviour).
+    monkeypatch.setenv("KAGAZ_LEGACY_JSON_FALLBACK", "1")
 
     # Mock only the external HTTP call — not the application logic.
     monkeypatch.setattr(httpx, "post", _OpenRouterMock.handler)
@@ -206,6 +235,8 @@ def reviewer_client(monkeypatch, storage_dir):
     monkeypatch.setenv("JWT_ISSUER", "kagaz")
     monkeypatch.setenv("JWT_AUDIENCE", "kagaz-api")
     monkeypatch.setenv("OPENROUTER_API_KEY", "fake-integration-test-key")
+    # Enable legacy JSON sidecar for pre-DB-03 integration tests
+    monkeypatch.setenv("KAGAZ_LEGACY_JSON_FALLBACK", "1")
 
     monkeypatch.setattr(httpx, "post", _OpenRouterMock.handler)
     _OpenRouterMock.reset()
@@ -222,6 +253,8 @@ def unauthenticated_client(monkeypatch, storage_dir):
     monkeypatch.setenv("JWT_ISSUER", "kagaz")
     monkeypatch.setenv("JWT_AUDIENCE", "kagaz-api")
     monkeypatch.setenv("OPENROUTER_API_KEY", "fake-integration-test-key")
+    # Enable legacy JSON sidecar for pre-DB-03 integration tests
+    monkeypatch.setenv("KAGAZ_LEGACY_JSON_FALLBACK", "1")
     monkeypatch.setattr(httpx, "post", _OpenRouterMock.handler)
     _OpenRouterMock.reset()
     with TestClient(app) as tc:

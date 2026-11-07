@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -22,6 +23,16 @@ from services.structured_extraction import (
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
+
+
+def _legacy_json_enabled() -> bool:
+    """Return True when KAGAZ_LEGACY_JSON_FALLBACK=1 is set.
+
+    When enabled, the upload service writes a JSON sidecar alongside the binary
+    file for backward compatibility with pre-DB-03 test fixtures.
+    In production this MUST NOT be set; PostgreSQL is the authoritative store.
+    """
+    return os.getenv("KAGAZ_LEGACY_JSON_FALLBACK", "").strip() == "1"
 
 # BE-07: Supported upload formats
 # Maps normalised lowercase extension -> canonical MIME type stored in metadata
@@ -56,8 +67,9 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
     the client sent.
 
     Sprint 2: After classification, automatically runs structured field
-    extraction and persists fields + confidence into the metadata JSON so
-    that GET /api/documents/{id}/extract can return them immediately.
+    extraction and persists fields + confidence into PostgreSQL via
+    app.crud.extraction (DB-03). When KAGAZ_LEGACY_JSON_FALLBACK=1 is set,
+    also writes a JSON sidecar for backward compatibility.
     """
     filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     if not filename or "\x00" in filename:
@@ -123,6 +135,32 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
             staged_document.replace(document_path)
             published_document = True
 
+            doc = None
+            if db is not None:
+                try:
+                    from app.crud.document import create_document
+                    from app.models.document import DocumentStatus
+
+                    doc = create_document(
+                        db,
+                        id=document_id,
+                        organization_id=user.get("organization_id", "dev_org"),
+                        uploaded_by=user.get("sub", "dev_user"),
+                        filename=filename,
+                        file_type=canonical_mime,
+                        file_size=size,
+                        storage_path=str(document_path.resolve()),
+                        status=DocumentStatus.UPLOADED,
+                    )
+                except Exception as db_exc:
+                    if published_document:
+                        try:
+                            document_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    logger.exception("Failed to persist initial document record to DB for %s", document_id)
+                    raise UploadError(500, "STORAGE_FAILURE", "Failed to persist document metadata.") from db_exc
+
             extracted_fields = None
             extracted_confidences = None
             ocr_text: str = ""
@@ -144,6 +182,15 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
                     classification.confidence,
                 )
 
+                if db is not None and doc is not None:
+                    from app.models.document import DocumentStatus
+                    doc.classification = classification.category.value
+                    doc.classification_confidence = classification.confidence
+                    doc.status = DocumentStatus.CLASSIFIED
+                    doc.processed_at = datetime.now(timezone.utc)
+                    db.commit()
+                    db.refresh(doc)
+
                 # Step 3: Structured field extraction (Sprint 2)
                 try:
                     extraction = extract_structured_fields(ocr_text, classification.category.value)
@@ -163,48 +210,90 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
                         extracted_fields = None
                         extracted_confidences = None
 
-                    if db is not None:
+                    if db is not None and doc is not None:
                         try:
                             from services.extraction_persistence import persist_extraction_result
-                            persist_extraction_result(db, document_id, extraction)
+                            from app.models.document import DocumentStatus
+                            persist_extraction_result(
+                                db,
+                                document_id,
+                                extraction,
+                                document_type=classification.category.value,
+                            )
+                            doc.status = DocumentStatus.EXTRACTED
+                            doc.processed_at = datetime.now(timezone.utc)
+                            db.commit()
+                            db.refresh(doc)
                         except Exception as p_err:
                             logger.exception("Failed to persist extraction to db for %s: %s", document_id, p_err)
                             response["status"] = "CLASSIFIED"
+                            doc.status = DocumentStatus.CLASSIFIED
+                            db.commit()
                             extracted_fields = None
                             extracted_confidences = None
                 except (StructuredExtractionError, UnsupportedDocumentTypeError) as exc:
                     logger.info("Structured extraction skipped or failed for document %s: %s", document_id, exc)
+                    if db is not None and doc is not None:
+                        try:
+                            from services.extraction_persistence import record_failed_extraction_run
+                            record_failed_extraction_run(
+                                db,
+                                document_id,
+                                document_type=classification.category.value,
+                                error_message=str(exc),
+                            )
+                        except Exception:
+                            pass
                 except Exception as ex_err:
                     logger.warning("Structured extraction failed for %s (non-fatal): %s", document_id, ex_err)
+                    if db is not None and doc is not None:
+                        try:
+                            from services.extraction_persistence import record_failed_extraction_run
+                            record_failed_extraction_run(
+                                db,
+                                document_id,
+                                document_type=classification.category.value,
+                                error_message=str(ex_err),
+                            )
+                        except Exception:
+                            pass
 
             except (ExtractionError, ClassificationError) as e:
                 logger.exception("Failed to classify document %s", document_id)
                 response["category"] = "unknown"
                 response["confidence"] = 0.0
+                if db is not None and doc is not None:
+                    doc.classification = "unknown"
+                    doc.classification_confidence = 0.0
+                    db.commit()
 
             response["file_size"] = size
 
-            metadata = {
-                **response,
-                "file_size": size,
-                "storage_path": str(document_path.resolve()),
-                "submitter_id": user["sub"],
-                "organization_id": user["organization_id"],
-                "ocr_text_length": len(ocr_text),
-            }
-            if extracted_fields is not None:
-                metadata["extracted_fields"] = extracted_fields
-                metadata["extracted_confidence"] = extracted_confidences
-                metadata["status"] = "EXTRACTED"
-            staged_metadata = Path(staging) / "metadata.json"
-            staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-            staged_metadata.replace(metadata_path)
+            # Write JSON sidecar only when legacy compatibility mode is active.
+            # In production (KAGAZ_LEGACY_JSON_FALLBACK not set) PostgreSQL is
+            # the sole authoritative store; no sidecar is written.
+            if _legacy_json_enabled():
+                metadata = {
+                    **response,
+                    "file_size": size,
+                    "storage_path": str(document_path.resolve()),
+                    "submitter_id": user["sub"],
+                    "organization_id": user["organization_id"],
+                    "ocr_text_length": len(ocr_text),
+                }
+                if extracted_fields is not None:
+                    metadata["extracted_fields"] = extracted_fields
+                    metadata["extracted_confidence"] = extracted_confidences
+                    metadata["status"] = "EXTRACTED"
+                staged_metadata = Path(staging) / "metadata.json"
+                staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+                staged_metadata.replace(metadata_path)
 
     except OSError as exc:
         if published_document:
             try:
                 document_path.unlink(missing_ok=True)
-                metadata_path.unlink(missing_ok=True)
+                metadata_path.unlink(missing_ok=True)  # no-op if sidecar was never written
             except OSError:
                 logger.exception("Could not clean up failed upload %s", document_id)
         logger.exception("Failed to store upload %s", document_id)

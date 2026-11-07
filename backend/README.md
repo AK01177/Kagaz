@@ -1,20 +1,32 @@
 # Kagaz backend
 
-FastAPI backend with a public health check, authenticated PDF uploads, and PDF text extraction. Requires Python 3.10 or newer.
+FastAPI backend with PostgreSQL relational persistence, multi-tenant document management, authenticated PDF uploads, and structured document extraction. Requires Python 3.10 or newer.
 
 ## Setup
 
-From the repository root in PowerShell:
+From the repository root:
 
-```powershell
+```bash
+# Set up virtual environment and install dependencies
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
-$env:JWT_SECRET = (.\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_hex(32))")
+source .venv/bin/activate   # On Windows: .\.venv\Scripts\Activate.ps1
+pip install -r backend/requirements.txt
+
+# Configure environment
+cp backend/.env.example backend/.env
+# Update DATABASE_URL and JWT_SECRET as needed
+
+# Run database migrations
 cd backend
-..\.venv\Scripts\python.exe -m uvicorn main:app --reload
+alembic upgrade head
+
+# Start API server
+uvicorn main:app --reload
 ```
 
 Interactive documentation: http://127.0.0.1:8000/docs. `GET /api/health` is public.
+
+## Environment Variables
 
 | Environment variable | Meaning | Default |
 |---|---|---|
@@ -22,51 +34,13 @@ Interactive documentation: http://127.0.0.1:8000/docs. `GET /api/health` is publ
 | `JWT_SECRET` | Shared HS256 signing secret, at least 32 bytes | Required for authenticated requests |
 | `JWT_ISSUER` | Trusted token issuer | `kagaz` |
 | `JWT_AUDIENCE` | Expected token audience | `kagaz-api` |
-| `DOCUMENT_STORAGE_DIR` | Local storage directory | `storage_data`, relative to working directory |
+| `DOCUMENT_STORAGE_DIR` | Local binary storage directory | `storage_data`, relative to working directory |
 
 Export variables or create a `.env` file (see `backend/.env.example`). Use a persistent secret shared with the trusted token issuer outside local testing.
 
+## Database Migrations & Persistence (DB-01, DB-02, DB-03)
 
-## Upload API (BE-02)
-
-`POST /api/documents` accepts a multipart field named `file` and an `Authorization: Bearer <token>` header. HTTP 201 returns `document_id`, `filename`, `file_type`, `status` (`UPLOADED`), and UTC `uploaded_at`.
-
-Supports readable, unencrypted PDFs with at least one page, up to 10 MiB. DOCX and images from the broader requirements remain pending; the existing extraction service supports PDF only. Upload does not run extraction or classification.
-
-The entire upload request is limited to 10 MiB plus 64 KiB for multipart headers,
-boundaries and other fields. Incoming bytes are counted before reaching the
-multipart parser, including when Content-Length is missing or inaccurate.
-Oversized requests return 413 and partial parser files are closed. The separate
-10 MiB file check remains in place after parsing.
-
-Documents use generated IDs as filenames. Basic metadata is persisted in `storage_data/metadata/<document_id>.json`, including file size, storage path, submitter and organization. Identity comes from the verified token. Database integration and the document retrieval endpoint remain separate work.
-
-Errors use `{"error": {"code": "...", "message": "..."}}`: invalid/missing files return 400, missing/invalid tokens 401, forbidden uploads 403, oversized files 413, unsupported types 415, malformed fields 422, storage failures 500, and missing authentication configuration 503.
-
-## JWT integration
-
-Upload verifies HS256 signature, expiry, issuer and audience. Required claims: `sub`, `exp`, `iat`, `iss`, `aud`, `role`, `organization_id`, `active`. Only `role: SUBMITTER` and `active: true` may upload. A trusted signing service must obtain these values from user records.
-
-Login and the user database are not implemented. Active status comes from the signed claim, not a live database check; immediate account revocation needs future session/user integration. Use short-lived tokens. Never distribute the signing secret to frontend clients.
-
-For local testing, open another PowerShell terminal in `backend` and set the same `JWT_SECRET` as the server. Generate a five-minute token and upload a PDF:
-
-```powershell
-$token = (..\.venv\Scripts\python.exe -c "import os,time,jwt; now=int(time.time()); print(jwt.encode({'sub':'local-user','organization_id':'local-org','role':'SUBMITTER','active':True,'iss':os.getenv('JWT_ISSUER','kagaz'),'aud':os.getenv('JWT_AUDIENCE','kagaz-api'),'iat':now,'exp':now+300},os.environ['JWT_SECRET'],algorithm='HS256'))")
-curl.exe -H "Authorization: Bearer $token" -F "file=@invoice.pdf" http://127.0.0.1:8000/api/documents
-```
-
-## Tests
-
-From `backend`:
-
-```powershell
-..\.venv\Scripts\python.exe -m pytest -q
-```
-
-Covers health, extraction, upload persistence, extraction compatibility, file validation, rollback, identity attribution and JWT rejection paths.
-
-## Database Migrations
+PostgreSQL is the **authoritative source of truth** for all document metadata, processing status, and structured extraction results. File binaries remain stored in object storage (local filesystem or cloud S3/blob store).
 
 Alembic manages migrations for PostgreSQL:
 
@@ -85,3 +59,54 @@ alembic upgrade head --sql
 ```
 
 For complete database documentation, schema details, and setup instructions, see `database/db.md`.
+
+## Demo JSON Metadata Migration
+
+To migrate historical or demo JSON metadata from `storage_data/metadata/` into PostgreSQL:
+
+```bash
+# Dry run preview:
+python backend/scripts/migrate_json_metadata.py --dry-run
+
+# Run migration:
+python backend/scripts/migrate_json_metadata.py --storage-dir storage_data
+```
+
+The migration is idempotent, non-destructive, and links imported documents to an initial `ExtractionRun` record.
+
+## API Endpoints
+
+All document endpoints enforce multi-tenant isolation based on the verified JWT's `organization_id`.
+
+- `POST /api/documents`: Uploads a PDF, saves binary to object storage, persists metadata to PostgreSQL (`Document`), and schedules initial pipeline processing.
+- `GET /api/documents`: Lists documents belonging to the authenticated user's organization from PostgreSQL with pagination support.
+- `GET /api/documents/{id}`: Retrieves authoritative document metadata and processing state from PostgreSQL.
+- `GET /api/documents/{id}/file`: Streams the original binary file from object storage.
+- `PATCH /api/documents/{id}/classification`: Updates document category and confidence in PostgreSQL and re-runs entity extraction.
+- `POST /api/documents/{id}/classify`: Manually triggers classification re-evaluation and updates PostgreSQL.
+- `GET /api/documents/{id}/extract`: Retrieves authoritative extraction results from PostgreSQL `extractions` table.
+- `POST /api/documents/{id}/extract`: Re-runs entity extraction, logs an `ExtractionRun`, and persists extracted fields to PostgreSQL.
+- `DELETE /api/documents/{id}`: Removes the document from PostgreSQL (cascading extraction runs and extractions) and deletes the binary from storage.
+
+## JWT Integration
+
+Upload and document management verify HS256 signature, expiry, issuer and audience. Required claims: `sub`, `exp`, `iat`, `iss`, `aud`, `role`, `organization_id`, `active`.
+
+For local testing:
+
+```bash
+export JWT_SECRET="your-32-byte-secret-here-for-local-testing"
+python -c "import os,time,jwt; now=int(time.time()); print(jwt.encode({'sub':'local-user','organization_id':'local-org','role':'SUBMITTER','active':True,'iss':'kagaz','aud':'kagaz-api','iat':now,'exp':now+3600}, os.environ['JWT_SECRET'], algorithm='HS256'))"
+```
+
+## Running Tests
+
+From the repository root:
+
+```bash
+# Run all tests
+pytest backend/tests -v
+
+# Run DB-03 persistence test suite
+pytest backend/tests/test_db03_postgresql_persistence.py -v
+```

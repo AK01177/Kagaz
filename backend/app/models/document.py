@@ -30,6 +30,7 @@ class DocumentStatus(str, enum.Enum):
     UPLOADED = "UPLOADED"
     PROCESSING = "PROCESSING"
     CLASSIFIED = "CLASSIFIED"
+    EXTRACTED = "EXTRACTED"
     FAILED = "FAILED"
 
 
@@ -75,6 +76,8 @@ class Document(Base):
     # Lifecycle
     status = Column(Enum(DocumentStatus), nullable=False, default=DocumentStatus.UPLOADED, index=True)
     upload_timestamp = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Populated once classification runs (BE-04) — nullable until then
     classification = Column(String, nullable=True)            # e.g. "invoice", "transcript"
@@ -86,6 +89,13 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    extraction_runs = relationship(
+        "ExtractionRun",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ExtractionRun.created_at.desc()",
     )
 
     def __repr__(self) -> str:

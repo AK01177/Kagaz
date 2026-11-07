@@ -1,23 +1,75 @@
-"""CRUD operations for document field extractions."""
+"""CRUD operations for document field extractions and extraction runs."""
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
-from app.models.extraction import Extraction
+from app.models.extraction import Extraction, ExtractionRun, ExtractionStatus
 from app.schemas.extraction import (
     ExtractionCreate,
     DocumentExtractionsResponse,
 )
 
 
+def create_extraction_run(
+    db: Session,
+    document_id: str,
+    status: ExtractionStatus = ExtractionStatus.SUCCESS,
+    document_type: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> ExtractionRun:
+    """Create and persist a discrete extraction run record."""
+    run = ExtractionRun(
+        document_id=document_id,
+        status=status,
+        document_type=document_type,
+        error_message=error_message,
+    )
+    try:
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run
+    except Exception:
+        db.rollback()
+        raise
+
+
+def get_extraction_runs_by_document(
+    db: Session,
+    document_id: str,
+) -> List[ExtractionRun]:
+    """Retrieve all extraction runs for a document ordered by newest first."""
+    return (
+        db.query(ExtractionRun)
+        .filter(ExtractionRun.document_id == document_id)
+        .order_by(ExtractionRun.created_at.desc())
+        .all()
+    )
+
+
+def get_latest_extraction_run(
+    db: Session,
+    document_id: str,
+) -> Optional[ExtractionRun]:
+    """Retrieve the most recent extraction run for a document."""
+    return (
+        db.query(ExtractionRun)
+        .filter(ExtractionRun.document_id == document_id)
+        .order_by(ExtractionRun.created_at.desc())
+        .first()
+    )
+
+
 def create_extraction(
     db: Session,
     document_id: str,
     extraction_data: ExtractionCreate,
+    extraction_run_id: Optional[str] = None,
 ) -> Extraction:
     """Create and persist a single extracted field record for a document."""
     record = Extraction(
         document_id=document_id,
+        extraction_run_id=extraction_run_id,
         field_name=extraction_data.field_name,
         value=extraction_data.value,
         confidence=extraction_data.confidence,
@@ -36,6 +88,7 @@ def create_extractions_bulk(
     db: Session,
     document_id: str,
     extractions_data: List[ExtractionCreate],
+    extraction_run_id: Optional[str] = None,
 ) -> List[Extraction]:
     """Persist multiple extracted field records for a document in a single transaction."""
     if not extractions_data:
@@ -44,6 +97,7 @@ def create_extractions_bulk(
     records = [
         Extraction(
             document_id=document_id,
+            extraction_run_id=extraction_run_id,
             field_name=data.field_name,
             value=data.value,
             confidence=data.confidence,

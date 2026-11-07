@@ -12,6 +12,14 @@ Covers:
 * Metadata retrieval via the GET endpoint.
 * Failed uploads leave no partial metadata.
 * Metadata isolation between independent uploads.
+
+DB-03 Note: Since Sprint 3 (DB-03), PostgreSQL is the authoritative source
+for document metadata. These tests run with KAGAZ_LEGACY_JSON_FALLBACK=1
+(set by the integration test fixture) so that the JSON sidecar continues to
+be written alongside the binary — supporting both the JSON file assertions
+below and backward-compatible reads for unmigrated demo documents.
+The GET endpoint returns authoritative data from PostgreSQL; the JSON sidecar
+on disk is a development audit log only.
 """
 
 import json
@@ -91,7 +99,7 @@ class TestMetadataCreation:
 # ---------------------------------------------------------------------------
 
 class TestMetadataRetrieval:
-    """Verify GET /api/documents/{document_id} reads the metadata JSON."""
+    """Verify GET /api/documents/{document_id} returns authoritative data."""
 
     def test_get_document_returns_metadata(self, client, sample_pdf):
         doc_id = upload_document(client, sample_pdf)["body"]["document_id"]
@@ -106,6 +114,15 @@ class TestMetadataRetrieval:
         assert resp.status_code == 404
 
     def test_get_metadata_matches_persisted_json(self, client, invoice_pdf, storage_dir):
+        """DB-03: GET endpoint returns authoritative PostgreSQL data.
+
+        The JSON sidecar on disk is a development audit log; the API response
+        is sourced from PostgreSQL. We verify that the core document fields are
+        consistent between the JSON sidecar and the API response, but we do NOT
+        require exact byte-level equality (the sidecar may contain extra fields
+        like ocr_text_length that the DB response does not expose, and vice versa
+        the DB response may include processed_at which the sidecar may omit).
+        """
         body = upload_document(client, invoice_pdf, "inv.pdf")["body"]
         doc_id = body["document_id"]
 
@@ -114,8 +131,16 @@ class TestMetadataRetrieval:
         )
         meta_api = client.get(f"/api/documents/{doc_id}").json()
 
-        # The GET endpoint returns exactly what is in the JSON file.
-        assert meta_api == meta_disk
+        # Core identity fields must match between sidecar and API response.
+        assert meta_api["document_id"] == meta_disk["document_id"]
+        assert meta_api["filename"] == meta_disk["filename"]
+        assert meta_api["file_type"] == meta_disk["file_type"]
+        assert meta_api["file_size"] == meta_disk["file_size"]
+        assert meta_api["submitter_id"] == meta_disk["submitter_id"]
+        assert meta_api["organization_id"] == meta_disk["organization_id"]
+        # Status and classification reported by API must be at least as recent as disk
+        assert meta_api["status"] == meta_disk.get("status", meta_api["status"])
+        assert meta_api["category"] == meta_disk.get("category", meta_api["category"])
 
 
 # ---------------------------------------------------------------------------
@@ -150,3 +175,4 @@ class TestMetadataIsolation:
         assert not list((storage_dir / "metadata").rglob("*.json")) if (
             storage_dir / "metadata"
         ).exists() else True
+

@@ -14,6 +14,7 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.models.document import Document
@@ -32,7 +33,11 @@ from services.extraction_persistence import persist_extraction_result, Extractio
 
 @pytest.fixture(scope="function")
 def engine():
-    eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    eng = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
 
     @event.listens_for(eng, "connect")
     def set_sqlite_pragma(conn, _record):
@@ -164,7 +169,7 @@ SECRET = "test-secret-only-not-for-production-0123456789"
 
 def _token(**overrides):
     return jwt.encode({
-        "sub": "reviewer_1", "role": "REVIEWER", "organization_id": "org_1",
+        "sub": "reviewer_1", "role": "REVIEWER", "organization_id": "dev_org",
         "active": True, "iss": "kagaz", "aud": "kagaz-api",
         "iat": int(time.time()), "exp": int(time.time()) + 300, **overrides,
     }, SECRET, algorithm="HS256")
@@ -179,7 +184,7 @@ def _pdf_bytes():
 
 
 @pytest.fixture
-def api_client(monkeypatch, tmp_path):
+def api_client(monkeypatch, tmp_path, db):
     monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(tmp_path))
     monkeypatch.setenv("JWT_SECRET", SECRET)
     monkeypatch.setenv("JWT_ISSUER", "kagaz")
@@ -192,8 +197,13 @@ def api_client(monkeypatch, tmp_path):
     )
 
     from main import app
+    from app.db.session import get_db
+    app.dependency_overrides[get_db] = lambda: db
+
     with TestClient(app) as client:
         yield client, tmp_path
+
+    app.dependency_overrides.pop(get_db, None)
 
 
 def test_get_extract_returns_404_for_unknown_document(api_client):
@@ -229,34 +239,53 @@ def test_get_extract_returns_empty_fields_when_not_yet_extracted(api_client):
     assert body["confidence"] == {}
 
 
-def test_get_extract_returns_fields_when_metadata_has_extractions(api_client):
-    client, tmp_path = api_client
+
+def test_get_extract_returns_fields_from_database(api_client, db):
+    client, _ = api_client
 
     pdf = _pdf_bytes()
     upload_res = client.post(
         "/api/documents",
         files={"file": ("invoice.pdf", pdf, "application/pdf")},
     )
+    assert upload_res.status_code == 201
+
     doc_id = upload_res.json()["document_id"]
 
-    # Manually inject extraction data into the JSON metadata
-    metadata_path = tmp_path / "metadata" / f"{doc_id}.json"
-    with open(metadata_path, "r") as f:
-        meta = json.load(f)
-    meta["extracted_fields"] = {"invoice_number": "INV-999", "supplier_name": "Test Co"}
-    meta["extracted_confidence"] = {"invoice_number": 0.98, "supplier_name": 0.91}
-    with open(metadata_path, "w") as f:
-        json.dump(meta, f)
+    # Store extraction results in the test database.
+    create_extractions_bulk(
+        db,
+        doc_id,
+        [
+            ExtractionCreate(
+                field_name="invoice_number",
+                value="INV-999",
+                confidence=0.98,
+            ),
+            ExtractionCreate(
+                field_name="supplier_name",
+                value="Test Co",
+                confidence=0.91,
+            ),
+        ],
+    )
 
+    # Retrieve the saved fields through the real API.
     extract_res = client.get(
         f"/api/documents/{doc_id}/extract",
         headers={"Authorization": f"Bearer {_token()}"},
     )
+
     assert extract_res.status_code == 200
     body = extract_res.json()
+
+    assert body["document_id"] == doc_id
     assert body["fields"]["invoice_number"] == "INV-999"
+    assert body["fields"]["supplier_name"] == "Test Co"
+    assert body["confidence"]["invoice_number"] == pytest.approx(0.98)
     assert body["confidence"]["supplier_name"] == pytest.approx(0.91)
     assert body["status"] == "EXTRACTED"
+
 
 
 def test_get_extract_requires_reviewer_role(api_client):
