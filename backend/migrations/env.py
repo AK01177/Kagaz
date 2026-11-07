@@ -18,6 +18,7 @@ load_dotenv()
 from app.db.base import Base
 from app.models.document import Document
 from app.models.extraction import Extraction
+from app.models.policy import Policy, PolicyChunk, PolicyVersion
 
 config = context.config
 
