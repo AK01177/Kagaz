@@ -1,26 +1,28 @@
 """
 Document API endpoints.
 
-Sprint 2 additions
-- BE-04: PATCH /{id}/classification — correction now requires a valid reviewer
-  JWT (or falls back to dev identity). Auth guard added.
-- BE-06: GET /{id}/extract — returns stored structured extraction fields from
-  the JSON metadata store (JSON-file backend; wired to DB when PostgreSQL
-  is live).
-- BE-07: POST upload now accepts PDF, PNG, JPG and JPEG (validation handled
-  in services/upload.py).
+Sprint 2 additions:
+- BE-04: PATCH /{id}/classification — correction requires valid reviewer JWT.
+- BE-06: GET /{id}/extract — returns stored structured extraction fields.
+- BE-07: POST upload accepts PDF, PNG, JPG and JPEG.
+
+Sprint 3 additions:
+- DB-03: PostgreSQL document metadata and extraction persistence integration.
 """
 from datetime import datetime, timezone
 import json
+import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+from sqlalchemy.orm import Session
 
 from api.auth import require_reviewer, require_submitter
 from api.upload_limit import UploadLimitRoute
+from app.db.session import get_db
 from services.classification import ClassificationError, DocumentCategory, classify_document
 from services.extraction import ExtractionError, extract_text
 from services.structured_extraction import (
@@ -31,6 +33,7 @@ from services.structured_extraction import (
 from services.upload import UploadError, save_upload
 from storage.document_storage import DocumentNotFoundError, DocumentStorage
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/documents", tags=["documents"], route_class=UploadLimitRoute)
 
@@ -41,18 +44,19 @@ class ClassificationCorrectionRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# POST /api/documents — upload a document (BE-07: PDF + image support)
+# POST /api/documents — upload a document (BE-07 / DB-03)
 # ---------------------------------------------------------------------------
 
 @router.post("", status_code=201)
 async def upload_document(
     user: Annotated[dict, Depends(require_submitter)],
     file: Annotated[UploadFile | None, File()] = None,
+    db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     try:
         if file is None:
             raise UploadError(400, "INVALID_FILE", "A file is required.")
-        return await run_in_threadpool(save_upload, file, DocumentStorage(), user)
+        return await run_in_threadpool(save_upload, file, DocumentStorage(), user, db=db)
     except UploadError as exc:
         return JSONResponse(
             status_code=exc.status_code,
@@ -64,9 +68,8 @@ async def upload_document(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/documents/{document_id} — fetch document metadata
+# GET /api/documents/{document_id} — fetch document metadata (DB-03)
 # ---------------------------------------------------------------------------
-
 
 @router.get("/{document_id}/file")
 async def get_document_file(document_id: str):
@@ -93,7 +96,39 @@ async def get_document_file(document_id: str):
 
 
 @router.get("/{document_id}")
-async def get_document(document_id: str):
+async def get_document(
+    document_id: str,
+    db: Annotated[Session | None, Depends(get_db)] = None,
+):
+    # Try fetching from PostgreSQL first (DB-03)
+    if db is not None:
+        try:
+            from app.models.document import Document
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if doc is not None:
+                data = {
+                    "document_id": doc.id,
+                    "filename": doc.filename,
+                    "file_type": doc.file_type,
+                    "file_size": doc.file_size,
+                    "storage_path": doc.storage_path,
+                    "status": doc.status.value if hasattr(doc.status, "value") else str(doc.status),
+                    "uploaded_at": doc.upload_timestamp.isoformat().replace("+00:00", "Z") if doc.upload_timestamp else None,
+                    "category": doc.classification,
+                    "confidence": doc.classification_confidence,
+                    "organization_id": doc.organization_id,
+                    "submitter_id": doc.uploaded_by,
+                }
+                from app.crud.extraction import get_extractions_by_document
+                extractions = get_extractions_by_document(db, document_id)
+                if extractions:
+                    data["extracted_fields"] = {e.field_name: e.value for e in extractions}
+                    data["extracted_confidence"] = {e.field_name: e.confidence for e in extractions}
+                    data["status"] = "EXTRACTED"
+                return data
+        except Exception as e:
+            logger.debug("DB document lookup fallback for %s: %s", document_id, e)
+
     storage = DocumentStorage()
     metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
     if not metadata_path.exists():
@@ -106,7 +141,7 @@ async def get_document(document_id: str):
 
 
 # ---------------------------------------------------------------------------
-# PATCH /api/documents/{document_id}/classification — BE-04: correction
+# PATCH /api/documents/{document_id}/classification — BE-04 / DB-03
 # ---------------------------------------------------------------------------
 
 @router.patch("/{document_id}/classification")
@@ -114,13 +149,9 @@ async def correct_classification(
     document_id: str,
     payload: ClassificationCorrectionRequest,
     user: Annotated[dict, Depends(require_reviewer)],
+    db: Annotated[Session | None, Depends(get_db)] = None,
 ):
-    """Correct a document's classification.
-
-    BE-04: Only active users with the REVIEWER (or higher) role may call
-    this endpoint.  The previous and new values are written into
-    ``classification_history`` for full audit traceability.
-    """
+    """Correct a document's classification."""
     storage = DocumentStorage()
     metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
     if not metadata_path.exists():
@@ -160,6 +191,7 @@ async def correct_classification(
     metadata["last_corrected_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     metadata["classification_history"] = history
 
+    extraction = None
     try:
         text = extract_text(document_id, storage)
         extraction = extract_structured_fields(text, normalized_category)
@@ -171,6 +203,22 @@ async def correct_classification(
         metadata.pop("extracted_confidence", None)
         metadata["status"] = "CLASSIFIED"
 
+    # DB-03: Persist classification and extraction update to DB
+    if db is not None:
+        try:
+            from app.models.document import Document, DocumentStatus
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if doc is not None:
+                doc.classification = normalized_category
+                doc.classification_confidence = 1.0
+                doc.status = DocumentStatus.CLASSIFIED
+                db.commit()
+                if extraction is not None:
+                    from services.extraction_persistence import persist_extraction_result
+                    persist_extraction_result(db, document_id, extraction)
+        except Exception as e:
+            logger.debug("DB classification update fallback for %s: %s", document_id, e)
+
     try:
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
@@ -181,30 +229,32 @@ async def correct_classification(
 
 
 # ---------------------------------------------------------------------------
-# GET /api/documents/{document_id}/extract — BE-06: extraction results
+# GET /api/documents/{document_id}/extract — BE-06 / DB-03
 # ---------------------------------------------------------------------------
 
 @router.get("/{document_id}/extract")
 async def get_extraction_results(
     document_id: str,
     user: Annotated[dict, Depends(require_reviewer)],
+    db: Annotated[Session | None, Depends(get_db)] = None,
 ):
-    """Return stored structured extraction fields for a document.
+    """Return stored structured extraction fields for a document."""
+    # Try fetching from PostgreSQL first (DB-03)
+    if db is not None:
+        try:
+            from app.crud.extraction import get_document_extractions_summary
+            summary = get_document_extractions_summary(db, document_id)
+            if summary is not None:
+                return {
+                    "document_id": summary.document_id,
+                    "document_type": summary.document_type,
+                    "fields": summary.fields,
+                    "confidence": summary.confidence,
+                    "status": "EXTRACTED" if summary.fields else "CLASSIFIED",
+                }
+        except Exception as e:
+            logger.debug("DB extraction lookup fallback for %s: %s", document_id, e)
 
-    BE-06: Response shape matches the contract in docs/api-design.md.
-    Fields and confidence values are read from the document's JSON metadata
-    (populated when structured extraction runs).  When no fields have been
-    extracted yet the ``fields`` and ``confidence`` dicts are empty.
-
-    Response (200):
-    {
-      "document_id": "doc_001",
-      "document_type": "financial",
-      "fields": {"invoice_number": "INV-1042", ...},
-      "confidence": {"invoice_number": 0.97, ...},
-      "status": "EXTRACTED"
-    }
-    """
     storage = DocumentStorage()
     metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
     if not metadata_path.exists():
@@ -216,7 +266,6 @@ async def get_extraction_results(
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
 
-    # Read stored extraction fields (set by the structured extraction service)
     fields: dict = metadata.get("extracted_fields", {})
     confidence: dict = metadata.get("extracted_confidence", {})
     extraction_status = "EXTRACTED" if fields else metadata.get("status", "UPLOADED")
@@ -231,19 +280,16 @@ async def get_extraction_results(
 
 
 # ---------------------------------------------------------------------------
-# POST /api/documents/{document_id}/extract — re-run structured extraction
+# POST /api/documents/{document_id}/extract — re-run structured extraction (DB-03)
 # ---------------------------------------------------------------------------
 
 @router.post("/{document_id}/extract")
 async def run_extraction(
     document_id: str,
     user: Annotated[dict, Depends(require_reviewer)],
+    db: Annotated[Session | None, Depends(get_db)] = None,
 ):
-    """Re-run structured field extraction for an already-classified document.
-
-    Reads the stored document, re-runs OCR + structured extraction, and
-    updates the metadata JSON with fresh fields and confidence scores.
-    """
+    """Re-run structured field extraction for an already-classified document."""
     storage = DocumentStorage()
     metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
     if not metadata_path.exists():
@@ -275,10 +321,6 @@ async def run_extraction(
             )
 
     try:
-        from services.structured_extraction import (  # noqa: PLC0415
-            extract_structured_fields,
-            StructuredExtractionError,
-        )
         extraction_result = await run_in_threadpool(
             extract_structured_fields, text, document_category
         )
@@ -288,6 +330,14 @@ async def run_extraction(
         extracted_confidence = {k: v for k, v in raw_conf.items() if k in extracted_fields}
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Structured extraction failed: {exc}")
+
+    # DB-03: Persist extraction to DB
+    if db is not None:
+        try:
+            from services.extraction_persistence import persist_extraction_result
+            persist_extraction_result(db, document_id, extraction_result)
+        except Exception as e:
+            logger.debug("DB extraction persist fallback for %s: %s", document_id, e)
 
     metadata["extracted_fields"] = extracted_fields
     metadata["extracted_confidence"] = extracted_confidence
@@ -311,11 +361,14 @@ async def run_extraction(
 
 
 # ---------------------------------------------------------------------------
-# POST /api/documents/{document_id}/classify — re-run classification
+# POST /api/documents/{document_id}/classify — re-run classification (DB-03)
 # ---------------------------------------------------------------------------
 
 @router.post("/{document_id}/classify")
-async def reclassify_document(document_id: str):
+async def reclassify_document(
+    document_id: str,
+    db: Annotated[Session | None, Depends(get_db)] = None,
+):
     storage = DocumentStorage()
     metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
     if not metadata_path.exists():
@@ -334,6 +387,7 @@ async def reclassify_document(document_id: str):
         metadata["status"] = "CLASSIFIED"
         metadata["is_manually_corrected"] = False
 
+        extraction = None
         try:
             extraction = extract_structured_fields(text, result.category.value)
             metadata["extracted_fields"] = extraction.to_flat_dict()
@@ -343,6 +397,22 @@ async def reclassify_document(document_id: str):
             metadata.pop("extracted_fields", None)
             metadata.pop("extracted_confidence", None)
             metadata["status"] = "CLASSIFIED"
+
+        if db is not None:
+            try:
+                from app.models.document import Document, DocumentStatus
+                doc = db.query(Document).filter(Document.id == document_id).first()
+                if doc is not None:
+                    doc.classification = result.category.value
+                    doc.classification_confidence = result.confidence
+                    doc.status = DocumentStatus.CLASSIFIED
+                    db.commit()
+                    if extraction is not None:
+                        from services.extraction_persistence import persist_extraction_result
+                        persist_extraction_result(db, document_id, extraction)
+            except Exception as e:
+                logger.debug("DB reclassify fallback for %s: %s", document_id, e)
+
     except (ExtractionError, ClassificationError) as exc:
         raise HTTPException(status_code=422, detail=f"Classification failed: {exc}")
     except Exception as exc:

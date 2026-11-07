@@ -14,8 +14,16 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db():
     """FastAPI dependency — yields a DB session and closes it after the request."""
-    db = SessionLocal()
+    try:
+        db = SessionLocal()
+    except Exception:
+        yield None
+        return
+
     try:
         yield db
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
