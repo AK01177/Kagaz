@@ -48,10 +48,10 @@ class UploadError(Exception):
         self.code = code
 
 
-def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, path: Path, user: dict, response: dict, extraction=None):
+def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, path: Path, user: dict, response: dict, extraction=None) -> bool:
     """Persist Document and optional Extraction records to PostgreSQL (DB-03)."""
     if db is None:
-        return
+        return True
     try:
         from app.models.document import DocumentStatus
         from app.crud.document import create_document_metadata
@@ -82,13 +82,12 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
         )
         create_document_metadata(db, doc_data, document_id=document_id)
         if extraction is not None:
-            try:
-                from services.extraction_persistence import persist_extraction_result
-                persist_extraction_result(db, document_id, extraction)
-            except Exception as p_err:
-                logger.warning("Failed to persist extraction to db for %s: %s", document_id, p_err)
+            from services.extraction_persistence import persist_extraction_result
+            persist_extraction_result(db, document_id, extraction)
+        return True
     except Exception as db_err:
-        logger.warning("Failed to persist document to DB for %s: %s", document_id, db_err)
+        logger.warning("Failed to persist to DB for %s: %s", document_id, db_err)
+        return False
 
 
 def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any = None) -> dict:
@@ -220,17 +219,22 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
             response["file_size"] = size
 
             # DB-03: Persist document and extractions to DB if available
-            _persist_to_db(
-                db,
-                document_id=document_id,
-                filename=filename,
-                mime=canonical_mime,
-                size=size,
-                path=document_path,
-                user=user,
-                response=response,
-                extraction=extraction_obj if extracted_fields else None,
-            )
+            if db is not None:
+                persisted = _persist_to_db(
+                    db,
+                    document_id=document_id,
+                    filename=filename,
+                    mime=canonical_mime,
+                    size=size,
+                    path=document_path,
+                    user=user,
+                    response=response,
+                    extraction=extraction_obj if extracted_fields else None,
+                )
+                if not persisted:
+                    response["status"] = "CLASSIFIED"
+                    extracted_fields = None
+                    extracted_confidences = None
 
             metadata = {
                 **response,
