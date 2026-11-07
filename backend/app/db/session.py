@@ -8,14 +8,30 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg2://postgres:postgres@localhost:5432/kagaz",
 )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+try:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+except Exception:
+    engine = None
+    SessionLocal = None
 
 
 def get_db():
     """FastAPI dependency — yields a DB session and closes it after the request."""
-    db = SessionLocal()
+    if SessionLocal is None:
+        yield None
+        return
+
+    try:
+        db = SessionLocal()
+    except Exception:
+        yield None
+        return
+
     try:
         yield db
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass

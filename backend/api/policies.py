@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/policies", tags=["policies"])
 
 
 @router.post("", response_model=PolicyResponse, status_code=201)
-def create_policy_endpoint(
+async def create_policy_endpoint(
     payload: PolicyCreate,
     user: Annotated[dict, Depends(require_reviewer)],
     db: Annotated[Session, Depends(get_db)],
@@ -37,7 +37,7 @@ def create_policy_endpoint(
 
 
 @router.get("", response_model=List[PolicyResponse])
-def list_policies_endpoint(
+async def list_policies_endpoint(
     user: Annotated[dict, Depends(require_submitter)],
     db: Annotated[Session, Depends(get_db)],
     domain: Optional[str] = Query(None, description="Filter by policy domain"),
@@ -48,7 +48,7 @@ def list_policies_endpoint(
 
 
 @router.get("/{policy_id}", response_model=PolicyResponse)
-def get_policy_endpoint(
+async def get_policy_endpoint(
     policy_id: str,
     user: Annotated[dict, Depends(require_submitter)],
     db: Annotated[Session, Depends(get_db)],
@@ -61,7 +61,7 @@ def get_policy_endpoint(
 
 
 @router.put("/{policy_id}", response_model=PolicyResponse)
-def update_policy_endpoint(
+async def update_policy_endpoint(
     policy_id: str,
     payload: PolicyUpdate,
     user: Annotated[dict, Depends(require_reviewer)],
@@ -75,7 +75,7 @@ def update_policy_endpoint(
 
 
 @router.delete("/{policy_id}", response_model=PolicyResponse)
-def delete_policy_endpoint(
+async def delete_policy_endpoint(
     policy_id: str,
     user: Annotated[dict, Depends(require_reviewer)],
     db: Annotated[Session, Depends(get_db)],
@@ -88,7 +88,7 @@ def delete_policy_endpoint(
 
 
 @router.get("/{policy_id}/versions", response_model=List[PolicyVersionResponse])
-def get_policy_versions_endpoint(
+async def get_policy_versions_endpoint(
     policy_id: str,
     user: Annotated[dict, Depends(require_submitter)],
     db: Annotated[Session, Depends(get_db)],
