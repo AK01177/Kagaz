@@ -9,6 +9,7 @@ Validates:
 5. Migration and rollback work correctly on a clean database.
 """
 import uuid
+from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.exc import IntegrityError
@@ -358,9 +359,10 @@ def test_migration_and_rollback_on_clean_database(tmp_path):
     db_url = f"sqlite:///{db_file}"
 
     # Setup Alembic Config
-    alembic_cfg = Config("backend/alembic.ini")
+    backend_dir = Path(__file__).resolve().parents[1]
+    alembic_cfg = Config(str(backend_dir / "alembic.ini"))
     alembic_cfg.set_main_option("sqlalchemy.url", db_url)
-    alembic_cfg.set_main_option("script_location", "backend/migrations")
+    alembic_cfg.set_main_option("script_location", str(backend_dir / "migrations"))
 
     # 1. Run migration upgrade to head (includes b83f09a12c44)
     command.upgrade(alembic_cfg, "head")
