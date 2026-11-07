@@ -15,9 +15,20 @@ if str(backend_dir) not in sys.path:
 load_dotenv()
 
 
-from app.db.base import Base
-from app.models.document import Document
-from app.models.extraction import Extraction
+try:
+    from app.db.base import Base
+    from app.models.document import Document
+    from app.models.extraction import Extraction
+    from app.models.membership import Membership, MembershipRole
+    from app.models.organization import Organization
+    from app.models.user import User, UserProviderMapping
+except ImportError:
+    from backend.app.db.base import Base
+    from backend.app.models.document import Document
+    from backend.app.models.extraction import Extraction
+    from backend.app.models.membership import Membership, MembershipRole
+    from backend.app.models.organization import Organization
+    from backend.app.models.user import User, UserProviderMapping
 
 config = context.config
 
