@@ -33,6 +33,16 @@ def get_db():
         return
 
     try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        try:
+            db.close()
+        except Exception:
+            pass
+        yield None
+        return
+
+    try:
         yield db
     finally:
         try:
