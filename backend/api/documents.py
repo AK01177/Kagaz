@@ -30,6 +30,12 @@ from services.structured_extraction import (
 )
 from services.upload import UploadError, save_upload
 from storage.document_storage import DocumentNotFoundError, DocumentStorage
+from sqlalchemy.orm import Session
+
+from app.crud.validation import get_validation_result
+from app.db.session import get_db
+from app.schemas.validation import ValidationResultResponse
+from services.validation import validate_document
 
 
 router = APIRouter(prefix="/api/documents", tags=["documents"], route_class=UploadLimitRoute)
@@ -355,3 +361,92 @@ async def reclassify_document(document_id: str):
         raise HTTPException(status_code=500, detail="Could not update metadata")
 
     return metadata
+# ---------------------------------------------------------------------------
+# POST /api/documents/{document_id}/validate — BE-09: validate document against policy
+# ---------------------------------------------------------------------------
+
+@router.post("/{document_id}/validate", response_model=ValidationResultResponse)
+async def validate_document_endpoint(
+    document_id: str,
+    user: Annotated[dict, Depends(require_submitter)],
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+):
+    """BE-09: Validate extracted fields against domain policies and record audit results."""
+    storage = DocumentStorage()
+    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+    if not metadata_path.exists():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    doc_org = metadata.get("organization_id")
+    user_org = user.get("organization_id", "dev_org")
+    if doc_org and user_org and doc_org != user_org:
+        raise HTTPException(status_code=403, detail="Forbidden: Document belongs to a different organization")
+
+    category = metadata.get("category", "financial")
+    fields = metadata.get("extracted_fields") or {}
+    confidences = metadata.get("extracted_confidence") or {}
+
+    result = validate_document(
+        document_id=document_id,
+        organization_id=user_org,
+        domain=category,
+        extracted_fields=fields,
+        extracted_confidence=confidences,
+        db=db,
+        user_id=user.get("sub"),
+        storage=storage,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# GET /api/documents/{document_id}/validate — BE-09: retrieve validation outcome
+# ---------------------------------------------------------------------------
+
+@router.get("/{document_id}/validate", response_model=ValidationResultResponse)
+async def get_document_validation_endpoint(
+    document_id: str,
+    user: Annotated[dict, Depends(require_submitter)],
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+):
+    """BE-09: Fetch persisted validation result for document with organization isolation."""
+    user_org = user.get("organization_id", "dev_org")
+
+    if db is not None:
+        try:
+            raw_record = get_validation_result(db, document_id=document_id)
+            if raw_record:
+                if raw_record.organization_id != user_org:
+                    raise HTTPException(status_code=403, detail="Forbidden: Document belongs to a different organization")
+                return raw_record
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    # Fallback to local metadata storage
+    storage = DocumentStorage()
+    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+    if not metadata_path.exists():
+        raise HTTPException(status_code=404, detail="Validation result not found")
+
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    doc_org = metadata.get("organization_id")
+    if doc_org and user_org and doc_org != user_org:
+        raise HTTPException(status_code=403, detail="Forbidden: Document belongs to a different organization")
+
+    if "validation" not in metadata:
+        raise HTTPException(status_code=404, detail="Document has not been validated yet")
+
+    return metadata["validation"]
