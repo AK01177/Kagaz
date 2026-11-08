@@ -46,6 +46,11 @@ from app.schemas.policy import (
     PolicyResponse,
     PolicyVersionResponse,
 )
+from app.schemas.validation import (
+    ValidationIssue,
+    ValidationEvidence,
+    ValidationResultResponse,
+)
 
 __all__ = [
     "DocumentMetadataCreate",
@@ -83,4 +88,7 @@ __all__ = [
     "PolicyUpdate",
     "PolicyResponse",
     "PolicyVersionResponse",
+    "ValidationIssue",
+    "ValidationEvidence",
+    "ValidationResultResponse",
 ]

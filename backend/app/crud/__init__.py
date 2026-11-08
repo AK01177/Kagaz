@@ -37,6 +37,10 @@ from app.crud.policy import (
     deactivate_policy,
     list_policy_versions,
 )
+from app.crud.validation import (
+    save_validation_result,
+    get_validation_result,
+)
 
 __all__ = [
     "create_document_metadata",
@@ -65,4 +69,6 @@ __all__ = [
     "update_policy",
     "deactivate_policy",
     "list_policy_versions",
+    "save_validation_result",
+    "get_validation_result",
 ]

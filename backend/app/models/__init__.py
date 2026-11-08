@@ -5,6 +5,7 @@ from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
 from app.models.policy import Policy, PolicyVersion
 from app.models.user import User, UserProviderMapping
+from app.models.validation import ValidationResult
 
 __all__ = [
     "Document",
@@ -17,4 +18,5 @@ __all__ = [
     "UserProviderMapping",
     "Membership",
     "MembershipRole",
+    "ValidationResult",
 ]
