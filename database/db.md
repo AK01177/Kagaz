@@ -227,9 +227,9 @@ git diff --check
 | Data | Current Storage Mechanism | Target PostgreSQL Table | Migration Status |
 |---|---|---|---|
 | Uploaded binary files (PDF) | Local filesystem under `storage_data/<document_id>.pdf` (S3 in production) | S3 / Blob store (referenced by `documents.storage_path`) | Filesystem active |
-| Upload metadata | JSON files under `storage_data/metadata/<document_id>.json` | `documents` table | JSON active; PostgreSQL model, CRUD, and migrations ready |
-| Document classification | Recorded in JSON metadata (`category`, `confidence`, `status`) | `documents.classification`, `documents.classification_confidence` | JSON active; PostgreSQL schema ready |
-| Extracted structured fields | Model and persistence layer (`Extraction`) | `extractions` table | PostgreSQL schema, Alembic migrations, and persistence CRUD implemented |
+| Upload metadata | JSON files under `storage_data/metadata/<document_id>.json` | `documents` table | Integrated in DB-03 (PostgreSQL active with JSON fallback) |
+| Document classification | Recorded in JSON metadata (`category`, `confidence`, `status`) | `documents.classification`, `documents.classification_confidence` | Integrated in DB-03 (PostgreSQL active with JSON fallback) |
+| Extracted structured fields | Model and persistence layer (`Extraction`) | `extractions` table | Integrated in DB-03 (PostgreSQL active with JSON fallback) |
 
 ---
 

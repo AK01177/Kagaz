@@ -13,6 +13,8 @@ python-multipart
 PyJWT>=2.10,<3
 typesafe-sdk
 alembic
+openai
+pgvector
 pdf2image
 rapidocr_onnxruntime
 Pillow

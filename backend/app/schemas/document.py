@@ -12,12 +12,16 @@ from app.models.document import DocumentStatus
 
 
 class DocumentMetadataCreate(BaseModel):
+    id: Optional[str] = None
     organization_id: uuid.UUID
     uploaded_by: uuid.UUID
     filename: str
     file_type: str
     file_size: int = Field(gt=0, description="File size in bytes, must be positive")
     storage_path: str
+    status: Optional[DocumentStatus] = None
+    classification: Optional[str] = None
+    classification_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class DocumentMetadataResponse(BaseModel):
