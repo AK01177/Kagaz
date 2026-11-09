@@ -52,7 +52,9 @@ def create_access_token(
     expires_in_seconds: int = 86400,
 ) -> str:
     """Generate a valid HS256 JWT matching the Kagaz platform specification."""
-    secret = os.environ.get("JWT_SECRET", "3159eabc17322dce41d6a68110dd4f44d0e25935d2893dc0efffa299d637cad3")
+    secret = os.environ.get("JWT_SECRET", "")
+    if len(secret.encode("utf-8")) < 32:
+        raise RuntimeError("JWT_SECRET must be configured with at least 32 bytes")
     now = int(time.time())
     payload = {
         "sub": user_id,
@@ -175,7 +177,7 @@ def require_submitter(
     raw_token = credentials.credentials.strip()
 
     # Check for frontend simulated mock token
-    mock_claims = _extract_mock_claims(raw_token)
+    mock_claims = _extract_mock_claims(raw_token) if os.environ.get("APP_ENV", "").lower() == "development" else None
     if mock_claims is not None:
         if not mock_claims.get("active"):
             raise HTTPException(403, detail={"code": "UPLOAD_FORBIDDEN", "message": "An active submitter account is required."})
@@ -217,7 +219,7 @@ def require_reviewer(
     raw_token = credentials.credentials.strip()
 
     # Check for frontend simulated mock token
-    mock_claims = _extract_mock_claims(raw_token)
+    mock_claims = _extract_mock_claims(raw_token) if os.environ.get("APP_ENV", "").lower() == "development" else None
     if mock_claims is not None:
         if not mock_claims.get("active") or mock_claims.get("role") not in _REVIEWER_ROLES:
             raise HTTPException(403, detail={
@@ -250,6 +252,48 @@ def require_reviewer(
             "code": "REVIEW_FORBIDDEN",
             "message": "An active reviewer account is required.",
         })
+    return claims
+
+
+def require_policy_reader(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> dict:
+    """Authenticate policy readers, allowing the development fallback only explicitly."""
+    if credentials is None or credentials.credentials in ("undefined", "null", ""):
+        if os.environ.get("APP_ENV", "").lower() == "development":
+            return {"sub": "dev_reviewer", "organization_id": "dev_org", "role": "REVIEWER", "active": True}
+        raise _unauthenticated()
+
+    raw_token = credentials.credentials.strip()
+    mock_claims = _extract_mock_claims(raw_token)
+    if mock_claims is not None:
+        if os.environ.get("APP_ENV", "").lower() != "development":
+            raise _unauthenticated()
+        if not mock_claims.get("active"):
+            raise HTTPException(403, detail={"code": "POLICY_FORBIDDEN", "message": "An active account is required."})
+        return mock_claims
+
+    secret = os.environ.get("JWT_SECRET", "")
+    if len(secret.encode("utf-8")) < 32:
+        raise HTTPException(status_code=503, detail={
+            "code": "AUTH_NOT_CONFIGURED", "message": "Authentication is not configured.",
+        })
+    try:
+        claims = jwt.decode(
+            raw_token,
+            secret,
+            algorithms=["HS256"],
+            issuer=os.environ.get("JWT_ISSUER", "kagaz"),
+            audience=os.environ.get("JWT_AUDIENCE", "kagaz-api"),
+            options={"require": ["sub", "exp", "iat", "iss", "aud", "role", "organization_id", "active"]},
+        )
+        for key in ("sub", "organization_id", "role"):
+            if not isinstance(claims[key], str) or not claims[key].strip():
+                raise jwt.InvalidTokenError("Invalid identity claim")
+    except jwt.InvalidTokenError as exc:
+        raise _unauthenticated() from exc
+    if claims["active"] is not True:
+        raise HTTPException(403, detail={"code": "POLICY_FORBIDDEN", "message": "An active account is required."})
     return claims
 
 
