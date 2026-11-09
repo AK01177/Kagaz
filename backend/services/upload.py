@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -45,6 +46,48 @@ class UploadError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
+
+
+def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, path: Path, user: dict, response: dict, extraction=None) -> bool:
+    """Persist Document and optional Extraction records to PostgreSQL (DB-03)."""
+    if db is None:
+        return True
+    try:
+        from app.models.document import DocumentStatus
+        from app.crud.document import create_document_metadata
+        from app.schemas.document import DocumentMetadataCreate
+
+        def _to_uuid(v):
+            try:
+                return uuid.UUID(str(v))
+            except Exception:
+                return uuid.uuid5(uuid.NAMESPACE_DNS, str(v))
+
+        doc_status = (
+            DocumentStatus.CLASSIFIED
+            if response.get("status") in ("CLASSIFIED", "EXTRACTED")
+            else DocumentStatus.UPLOADED
+        )
+        doc_data = DocumentMetadataCreate(
+            id=document_id,
+            organization_id=_to_uuid(user.get("organization_id", "default_org")),
+            uploaded_by=_to_uuid(user.get("sub", "default_user")),
+            filename=filename,
+            file_type=mime,
+            file_size=size,
+            storage_path=str(path.resolve()),
+            status=doc_status,
+            classification=response.get("category"),
+            classification_confidence=response.get("confidence"),
+        )
+        create_document_metadata(db, doc_data, document_id=document_id)
+        if extraction is not None:
+            from services.extraction_persistence import persist_extraction_result
+            persist_extraction_result(db, document_id, extraction)
+        return True
+    except Exception as db_err:
+        logger.warning("Failed to persist to DB for %s: %s", document_id, db_err)
+        return False
 
 
 def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any = None) -> dict:
@@ -126,6 +169,7 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
             extracted_fields = None
             extracted_confidences = None
             ocr_text: str = ""
+            extraction_obj = None
 
             try:
                 # Step 1: OCR / text extraction
@@ -146,9 +190,9 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
 
                 # Step 3: Structured field extraction (Sprint 2)
                 try:
-                    extraction = extract_structured_fields(ocr_text, classification.category.value)
-                    raw_fields = extraction.to_flat_dict()
-                    raw_conf = extraction.get_field_confidences()
+                    extraction_obj = extract_structured_fields(ocr_text, classification.category.value)
+                    raw_fields = extraction_obj.to_flat_dict()
+                    raw_conf = extraction_obj.get_field_confidences()
                     non_none_fields = {k: v for k, v in raw_fields.items() if v is not None}
                     if non_none_fields:
                         extracted_fields = non_none_fields
@@ -162,16 +206,6 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
                     else:
                         extracted_fields = None
                         extracted_confidences = None
-
-                    if db is not None:
-                        try:
-                            from services.extraction_persistence import persist_extraction_result
-                            persist_extraction_result(db, document_id, extraction)
-                        except Exception as p_err:
-                            logger.exception("Failed to persist extraction to db for %s: %s", document_id, p_err)
-                            response["status"] = "CLASSIFIED"
-                            extracted_fields = None
-                            extracted_confidences = None
                 except (StructuredExtractionError, UnsupportedDocumentTypeError) as exc:
                     logger.info("Structured extraction skipped or failed for document %s: %s", document_id, exc)
                 except Exception as ex_err:
@@ -183,6 +217,24 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
                 response["confidence"] = 0.0
 
             response["file_size"] = size
+
+            # DB-03: Persist document and extractions to DB if available
+            if db is not None:
+                persisted = _persist_to_db(
+                    db,
+                    document_id=document_id,
+                    filename=filename,
+                    mime=canonical_mime,
+                    size=size,
+                    path=document_path,
+                    user=user,
+                    response=response,
+                    extraction=extraction_obj if extracted_fields else None,
+                )
+                if not persisted:
+                    response["status"] = "CLASSIFIED"
+                    extracted_fields = None
+                    extracted_confidences = None
 
             metadata = {
                 **response,
@@ -235,7 +287,6 @@ def _validate_image(path: Path, ext: str) -> None:
             header = f.read(16)
     except OSError:
         raise
-
     for magic, label in _IMAGE_SIGNATURES:
         if header.startswith(magic):
             return  # magic bytes match — file is valid
