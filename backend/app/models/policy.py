@@ -1,4 +1,4 @@
-"""Database models for organization-scoped policy evidence."""
+"""Database models for policy management and retrieval."""
 import enum
 import uuid
 from datetime import datetime, timezone
@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -59,20 +60,27 @@ class Policy(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     organization_id = Column(String(36), nullable=False, index=True)
     name = Column(String(255), nullable=False)
+    description = Column(String, nullable=True)
     classification = Column(
         Enum(PolicyClassification),
         nullable=False,
         default=PolicyClassification.INTERNAL,
     )
-    domain = Column(String(100), nullable=True)
+    domain = Column(String(100), nullable=True, index=True)
     document_type = Column(String(100), nullable=True)
+    current_version = Column(String(50), nullable=False, default="v1")
+    content = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(String(36), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     versions = relationship(
         "PolicyVersion",
         back_populates="policy",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        order_by="PolicyVersion.created_at.desc()",
     )
 
 
@@ -101,7 +109,7 @@ class PolicyVersion(Base):
     source_document_id = Column(
         String(36),
         ForeignKey("documents.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     version = Column(String(50), nullable=False)
@@ -112,6 +120,9 @@ class PolicyVersion(Base):
         index=True,
     )
     published_at = Column(DateTime(timezone=True), nullable=True)
+    content = Column(Text, nullable=True)
+    changelog = Column(String, nullable=True)
+    created_by = Column(String(36), nullable=True)
     ingestion_error = Column(Text, nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
