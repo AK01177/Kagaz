@@ -13,6 +13,8 @@ class PolicyValidationSource(BaseModel):
     reference_type: Literal["POLICY_CHUNK", "DOCUMENT", "RETRIEVAL"] = "POLICY_CHUNK"
     policy_id: str | None = None
     policy_name: str | None = None
+    policy_domain: str | None = None
+    policy_document_type: str | None = None
     policy_version_id: str | None = None
     policy_version: str | None = None
     source_document_id: str | None = None
@@ -22,6 +24,7 @@ class PolicyValidationSource(BaseModel):
     page_number: int | None = None
     section: str | None = None
     excerpt: str
+    supporting_quote: str | None = None
 
 
 class PolicyValidationFindingResponse(BaseModel):
@@ -48,6 +51,11 @@ class PolicyValidationRunResponse(BaseModel):
     created_at: datetime
 
 
+class PolicyValidationQuoteDraft(BaseModel):
+    source_chunk_id: str
+    quote: str = Field(min_length=12)
+
+
 class PolicyValidationFindingDraft(BaseModel):
     status: FindingStatus
     requirement: str
@@ -56,6 +64,7 @@ class PolicyValidationFindingDraft(BaseModel):
     document_value: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     source_chunk_ids: list[str] = Field(default_factory=list)
+    source_quotes: list[PolicyValidationQuoteDraft] = Field(default_factory=list)
 
 
 class PolicyValidationDraft(BaseModel):

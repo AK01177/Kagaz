@@ -1,8 +1,9 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.models.document import Document
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.models.policy import (
     Policy,
@@ -70,6 +71,7 @@ def create_query_embedding(query: str) -> list[float]:
 class RetrievalResult:
     outcome: str
     rows: list
+    incomplete_policies: list[dict] = field(default_factory=list)
 
 
 def retrieve_policy_evidence(
@@ -87,6 +89,7 @@ def retrieve_policy_evidence(
     normalized_role = (role or "").strip().upper()
     filters = [
         Policy.organization_id == organization_id,
+        Policy.is_active.is_(True),
         Document.organization_id == organization_id,
         distance <= (1 - RELEVANCE_THRESHOLD),
     ]
@@ -109,6 +112,7 @@ def retrieve_policy_evidence(
 
     eligible_filters = [
         Policy.organization_id == organization_id,
+        Policy.is_active.is_(True),
         Document.organization_id == organization_id,
         Policy.classification.in_(allowed_classifications),
     ]
@@ -142,4 +146,87 @@ def retrieve_policy_evidence(
             .first()
         )
         return RetrievalResult("low_relevance" if any_candidates else "no_results", [])
+    return RetrievalResult("results", candidates)
+
+
+def retrieve_policy_validation_corpus(
+    db: Session,
+    organization_id: str,
+    role: str,
+    embedding: list[float],
+    document_type: str | None,
+    limit: int,
+) -> RetrievalResult:
+    """Return the complete active, readable policy scope for validation when it fits.
+
+    Unlike interactive search, validation must not silently omit relevant clauses
+    because they fell outside a top-k or similarity threshold. The bounded result
+    lets callers fail closed and request human review if the whole scope is too large.
+    Policies without a document_type are treated as organization-wide policies.
+    """
+    distance = PolicyChunk.embedding.cosine_distance(embedding)
+    normalized_role = (role or "").strip().upper()
+    allowed_classifications = [PolicyClassification.PUBLIC, PolicyClassification.INTERNAL]
+    for classification, roles in CLASSIFICATION_ROLES.items():
+        if roles is None or normalized_role in roles:
+            allowed_classifications.append(classification)
+
+    filters = [
+        Policy.organization_id == organization_id,
+        Policy.is_active.is_(True),
+        Document.organization_id == organization_id,
+        PolicyVersion.status == PolicyVersionStatus.ACTIVE,
+        Policy.classification.in_(allowed_classifications),
+    ]
+    normalized_type = document_type.strip() if document_type and document_type.strip() else None
+    if normalized_type is None:
+        filters.append(Policy.document_type.is_(None))
+    else:
+        filters.append(or_(Policy.document_type == normalized_type, Policy.document_type.is_(None)))
+
+    policy_scope = [
+        Policy.organization_id == organization_id,
+        Policy.is_active.is_(True),
+        Policy.classification.in_(allowed_classifications),
+    ]
+    if normalized_type is None:
+        policy_scope.append(Policy.document_type.is_(None))
+    else:
+        policy_scope.append(or_(Policy.document_type == normalized_type, Policy.document_type.is_(None)))
+
+    scoped_policies = db.query(Policy.id, Policy.name, Policy.current_version).filter(*policy_scope).all()
+    indexed_policy_ids = {
+        row[0]
+        for row in (
+            db.query(Policy.id)
+            .join(PolicyVersion, PolicyVersion.policy_id == Policy.id)
+            .join(PolicyChunk, PolicyChunk.policy_version_id == PolicyVersion.id)
+            .join(Document, Document.id == PolicyVersion.source_document_id)
+            .filter(*filters)
+            .distinct()
+            .all()
+        )
+    }
+    incomplete_policies = [
+        {"policy_id": policy_id, "policy_name": name, "version": current_version}
+        for policy_id, name, current_version in scoped_policies
+        if policy_id not in indexed_policy_ids
+    ]
+    if incomplete_policies:
+        return RetrievalResult("unindexed_policy_evidence", [], incomplete_policies)
+
+    candidates = (
+        db.query(Policy, PolicyVersion, PolicyChunk, (1 - distance).label("score"), Document)
+        .join(PolicyVersion, PolicyVersion.policy_id == Policy.id)
+        .join(PolicyChunk, PolicyChunk.policy_version_id == PolicyVersion.id)
+        .join(Document, Document.id == PolicyVersion.source_document_id)
+        .filter(*filters)
+        .order_by(distance)
+        .limit(limit + 1)
+        .all()
+    )
+    if len(candidates) > limit:
+        return RetrievalResult("scope_too_large", candidates[:limit])
+    if not candidates:
+        return RetrievalResult("no_results", [])
     return RetrievalResult("results", candidates)
