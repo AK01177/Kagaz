@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -39,8 +40,11 @@ class PolicyClassification(str, enum.Enum):
 
 
 class PolicyVersionStatus(str, enum.Enum):
+    """Track an ingestion attempt through processing, publication, or failure."""
+    PROCESSING = "PROCESSING"
     ACTIVE = "ACTIVE"
     ARCHIVED = "ARCHIVED"
+    FAILED = "FAILED"
 
 
 class Policy(Base):
@@ -54,7 +58,7 @@ class Policy(Base):
     )
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    organization_id = Column(String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    organization_id = Column(String(36), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(String, nullable=True)
     classification = Column(
@@ -62,10 +66,10 @@ class Policy(Base):
         nullable=False,
         default=PolicyClassification.INTERNAL,
     )
-    domain = Column(String(100), nullable=False, index=True)
+    domain = Column(String(100), nullable=True, index=True)
     document_type = Column(String(100), nullable=True)
     current_version = Column(String(50), nullable=False, default="v1")
-    content = Column(Text, nullable=False)
+    content = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     created_by = Column(String(36), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -85,6 +89,14 @@ class PolicyVersion(Base):
     __table_args__ = (
         UniqueConstraint("policy_id", "version", name="uq_policy_versions_policy_version"),
         Index("ix_policy_versions_policy_status", "policy_id", "status"),
+        # Enforce one active version at the database layer, including concurrent requests.
+        Index(
+            "uq_policy_versions_one_active",
+            "policy_id",
+            unique=True,
+            postgresql_where=text("status = 'ACTIVE'"),
+            sqlite_where=text("status = 'ACTIVE'"),
+        ),
     )
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -111,6 +123,8 @@ class PolicyVersion(Base):
     content = Column(Text, nullable=True)
     changelog = Column(String, nullable=True)
     created_by = Column(String(36), nullable=True)
+    ingestion_error = Column(Text, nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     policy = relationship("Policy", back_populates="versions")

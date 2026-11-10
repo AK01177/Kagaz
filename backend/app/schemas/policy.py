@@ -80,3 +80,26 @@ class PolicyRetrievalResponse(BaseModel):
     outcome: str
     results: list[PolicyEvidence] = Field(default_factory=list)
     message: str | None = None
+
+
+class PolicyIngestionResponse(BaseModel):
+    """Result for a submitted or retried policy version."""
+    policy_id: str
+    policy_version_id: str
+    source_document_id: str
+    source_filename: str
+    version: str
+    status: str
+    chunk_count: int = 0
+    ingestion_error: str | None = None
+
+
+class PolicyVersionSummary(BaseModel):
+    """Status and source details returned for one policy version."""
+    policy_version_id: str
+    source_document_id: str
+    source_filename: str
+    version: str
+    status: str
+    chunk_count: int = 0
+    ingestion_error: str | None = None

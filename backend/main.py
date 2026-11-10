@@ -32,8 +32,8 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(documents_router)
 app.include_router(auth_router)
-app.include_router(policies_router)
 app.include_router(policies_retrieval_router)
+app.include_router(policies_router)
 
 
 @app.exception_handler(HTTPException)

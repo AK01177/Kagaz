@@ -297,6 +297,18 @@ def require_policy_reader(
     return claims
 
 
+def require_policy_admin(
+    identity: Annotated[dict, Depends(require_policy_reader)],
+) -> dict:
+    """Allow organization admins to manage policy knowledge for their tenant."""
+    if identity.get("role") != "ORG_ADMIN":
+        raise HTTPException(403, detail={
+            "code": "POLICY_ADMIN_REQUIRED",
+            "message": "An active organization admin account is required.",
+        })
+    return identity
+
+
 def _unauthenticated() -> HTTPException:
     return HTTPException(401, detail={
         "code": "UNAUTHENTICATED", "message": "A valid bearer token is required.",
