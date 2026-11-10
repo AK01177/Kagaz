@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import relationship
 
@@ -38,8 +39,11 @@ class PolicyClassification(str, enum.Enum):
 
 
 class PolicyVersionStatus(str, enum.Enum):
+    """Track an ingestion attempt through processing, publication, or failure."""
+    PROCESSING = "PROCESSING"
     ACTIVE = "ACTIVE"
     ARCHIVED = "ARCHIVED"
+    FAILED = "FAILED"
 
 
 class Policy(Base):
@@ -77,6 +81,14 @@ class PolicyVersion(Base):
     __table_args__ = (
         UniqueConstraint("policy_id", "version", name="uq_policy_versions_policy_version"),
         Index("ix_policy_versions_policy_status", "policy_id", "status"),
+        # Enforce one active version at the database layer, including concurrent requests.
+        Index(
+            "uq_policy_versions_one_active",
+            "policy_id",
+            unique=True,
+            postgresql_where=text("status = 'ACTIVE'"),
+            sqlite_where=text("status = 'ACTIVE'"),
+        ),
     )
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -100,6 +112,8 @@ class PolicyVersion(Base):
         index=True,
     )
     published_at = Column(DateTime(timezone=True), nullable=True)
+    ingestion_error = Column(Text, nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     policy = relationship("Policy", back_populates="versions")

@@ -30,7 +30,7 @@ class EmbeddingServiceError(RuntimeError):
     pass
 
 
-def create_query_embedding(query: str) -> list[float]:
+def create_embeddings(texts: list[str]) -> list[list[float]]:
     global _openai_client
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -40,15 +40,30 @@ def create_query_embedding(query: str) -> list[float]:
 
         if _openai_client is None:
             _openai_client = OpenAI(api_key=api_key, timeout=10.0)
-        response = _openai_client.embeddings.create(
-            model=EMBEDDING_MODEL,
-            input=query,
-        )
-        return response.data[0].embedding
+        embeddings: list[list[float]] = []
+        for offset in range(0, len(texts), 100):
+            # Batch chunks to limit request size while using the same model as retrieval.
+            batch = texts[offset : offset + 100]
+            response = _openai_client.embeddings.create(
+                model=EMBEDDING_MODEL,
+                input=batch,
+            )
+            # The API returns an input index; restore input order before pairing vectors with chunks.
+            embeddings.extend(
+                item.embedding for item in sorted(response.data, key=lambda item: item.index)
+            )
+        if len(embeddings) != len(texts):
+            raise EmbeddingServiceError("Embedding service returned an incomplete response")
+        return embeddings
     except ImportError as exc:
         raise EmbeddingServiceError("The OpenAI client dependency is not installed") from exc
     except (APIError, ValueError, RuntimeError) as exc:
         raise EmbeddingServiceError("Embedding generation failed") from exc
+
+
+def create_query_embedding(query: str) -> list[float]:
+    """Keep query embedding on the same provider/model path as policy chunks."""
+    return create_embeddings([query])[0]
 
 
 @dataclass(frozen=True)
