@@ -1,9 +1,9 @@
 """API routes for document workflow lifecycle transitions and reviewer assignment."""
 from __future__ import annotations
 
-from typing import Annotated, Callable, List, Optional
+from typing import Annotated, Callable, List, Optional, TypeVar
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from api.auth import require_workflow_actor
@@ -11,18 +11,28 @@ from app.db.session import get_db
 from app.schemas.workflow import (
     AssignReviewerRequest,
     DecisionRequest,
+    DocumentAuditTrailResponse,
+    DocumentReviewDetailResponse,
     DocumentWorkflowResponse,
     EligibleReviewerResponse,
     RequestChangesRequest,
     ResubmitDocumentRequest,
+    ReviewCommentRequest,
+    ReviewCommentResponse,
+    ReviewQueueResponse,
     SubmitDocumentRequest,
     SubmitForApprovalRequest,
 )
 from services.workflow import (
     WorkflowError,
+    add_review_comment,
     assign_reviewer,
     decide_document,
+    get_approval_queue,
+    get_document_audit_trail,
+    get_document_review_detail,
     get_document_workflow,
+    get_review_queue,
     list_eligible_reviewers,
     request_changes,
     resubmit_document,
@@ -31,6 +41,8 @@ from services.workflow import (
 )
 
 router = APIRouter(prefix="/api/documents", tags=["workflow"])
+audit_router = APIRouter(prefix="/api/audit", tags=["audit"])
+_T = TypeVar("_T")
 
 
 def _require_db(db: Optional[Session]) -> Session:
@@ -45,7 +57,7 @@ def _require_db(db: Optional[Session]) -> Session:
     return db
 
 
-def _run_workflow_action(fn: Callable[[], DocumentWorkflowResponse]) -> DocumentWorkflowResponse:
+def _run_workflow_action(fn: Callable[[], _T]) -> _T:
     try:
         return fn()
     except WorkflowError as exc:
@@ -53,6 +65,40 @@ def _run_workflow_action(fn: Callable[[], DocumentWorkflowResponse]) -> Document
         if exc.details:
             detail["details"] = exc.details
         raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+
+
+@router.get("/workflow/review-queue", response_model=ReviewQueueResponse)
+def get_review_queue_endpoint(
+    actor: Annotated[dict, Depends(require_workflow_actor)],
+    status: Optional[str] = Query(default=None),
+    assigned_to_me: bool = Query(default=False),
+    classification: Optional[str] = Query(default=None),
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+) -> ReviewQueueResponse:
+    """Return documents in the caller's organization that the caller is permitted to review."""
+    session = _require_db(db)
+    return _run_workflow_action(
+        lambda: get_review_queue(
+            session,
+            actor,
+            status_filter=status,
+            assigned_to_me=assigned_to_me,
+            classification=classification,
+        )
+    )
+
+
+@router.get("/workflow/approval-queue", response_model=ReviewQueueResponse)
+def get_approval_queue_endpoint(
+    actor: Annotated[dict, Depends(require_workflow_actor)],
+    assigned_to_me: bool = Query(default=False),
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+) -> ReviewQueueResponse:
+    """Return documents eligible for human approval within the caller's organization."""
+    session = _require_db(db)
+    return _run_workflow_action(
+        lambda: get_approval_queue(session, actor, assigned_to_me=assigned_to_me)
+    )
 
 
 @router.get("/workflow/reviewers", response_model=List[EligibleReviewerResponse])
@@ -183,6 +229,32 @@ def submit_for_approval_endpoint(
     )
 
 
+@router.get("/{document_id}/review", response_model=DocumentReviewDetailResponse)
+def get_document_review_detail_endpoint(
+    document_id: str,
+    actor: Annotated[dict, Depends(require_workflow_actor)],
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+) -> DocumentReviewDetailResponse:
+    """Return permitted document details, extractions, validation evidence, comments, and audit events."""
+    session = _require_db(db)
+    return _run_workflow_action(lambda: get_document_review_detail(session, document_id, actor))
+
+
+@router.post("/{document_id}/comments", response_model=ReviewCommentResponse, status_code=201)
+def add_review_comment_endpoint(
+    document_id: str,
+    actor: Annotated[dict, Depends(require_workflow_actor)],
+    payload: Optional[ReviewCommentRequest] = Body(default=None),
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+) -> ReviewCommentResponse:
+    """Submit a review comment and record an audit event."""
+    session = _require_db(db)
+    req = payload or ReviewCommentRequest()
+    return _run_workflow_action(
+        lambda: add_review_comment(session, document_id, actor, comment=req.comment)
+    )
+
+
 @router.post("/{document_id}/approve", response_model=DocumentWorkflowResponse)
 def approve_document_endpoint(
     document_id: str,
@@ -199,6 +271,7 @@ def approve_document_endpoint(
             document_id,
             actor,
             approve=True,
+            reason=req.reason,
             comment=req.comment,
         )
     )
@@ -220,6 +293,18 @@ def reject_document_endpoint(
             document_id,
             actor,
             approve=False,
+            reason=req.reason,
             comment=req.comment,
         )
     )
+
+
+@audit_router.get("/{document_id}", response_model=DocumentAuditTrailResponse)
+def get_document_audit_trail_endpoint(
+    document_id: str,
+    actor: Annotated[dict, Depends(require_workflow_actor)],
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+) -> DocumentAuditTrailResponse:
+    """Return chronological audit trail events for a permitted document."""
+    session = _require_db(db)
+    return _run_workflow_action(lambda: get_document_audit_trail(session, document_id, actor))

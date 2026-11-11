@@ -13,18 +13,30 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.document import Document, DocumentStatus
+from app.models.extraction import Extraction
 from app.models.membership import Membership, MembershipRole
 from app.models.policy_validation import PolicyValidationRun
 from app.models.user import User
 from app.models.validation import ValidationResult
-from app.models.workflow import DocumentTransition, WorkflowAction
+from app.models.workflow import AuditEvent, DocumentTransition, ReviewComment, WorkflowAction
 from app.schemas.workflow import (
+    AuditEventResponse,
+    DocumentAuditTrailResponse,
+    DocumentReviewDetailResponse,
     DocumentTransitionResponse,
     DocumentWorkflowResponse,
     EligibleReviewerResponse,
+    QueueDocumentItemResponse,
+    ReviewCommentResponse,
+    ReviewExtractionItemResponse,
+    ReviewPolicyFindingResponse,
+    ReviewPolicyValidationRunResponse,
+    ReviewQueueResponse,
+    ReviewValidationEvidenceResponse,
     ValidationSummaryResponse,
 )
 from storage.document_storage import DocumentStorage
@@ -94,6 +106,47 @@ ELIGIBLE_APPROVER_ROLES = {
 }
 
 
+REVIEW_QUEUE_CALLER_ROLES = {"REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"}
+APPROVAL_QUEUE_CALLER_ROLES = {"APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"}
+REVIEW_COMMENT_CALLER_ROLES = {"REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"}
+REVIEW_COMMENT_ALLOWED_STATUSES = {
+    DocumentStatus.SUBMITTED,
+    DocumentStatus.IN_REVIEW,
+    DocumentStatus.CHANGES_REQUESTED,
+    DocumentStatus.PENDING_APPROVAL,
+}
+TERMINAL_DECISION_STATUSES = {
+    DocumentStatus.APPROVED,
+    DocumentStatus.REJECTED,
+}
+REVIEWER_QUEUE_STATUSES = {
+    DocumentStatus.SUBMITTED,
+    DocumentStatus.IN_REVIEW,
+    DocumentStatus.CHANGES_REQUESTED,
+}
+APPROVER_QUEUE_STATUSES = {
+    DocumentStatus.IN_REVIEW,
+    DocumentStatus.PENDING_APPROVAL,
+}
+
+_ACTION_TO_EVENT_TYPE = {
+    WorkflowAction.SUBMIT: "DOCUMENT_SUBMITTED",
+    WorkflowAction.ASSIGN_REVIEWER: "REVIEWER_ASSIGNED",
+    WorkflowAction.REASSIGN_REVIEWER: "REVIEWER_REASSIGNED",
+    WorkflowAction.REQUEST_CHANGES: "CHANGES_REQUESTED",
+    WorkflowAction.RESUBMIT: "DOCUMENT_RESUBMITTED",
+    WorkflowAction.SUBMIT_FOR_APPROVAL: "SUBMITTED_FOR_APPROVAL",
+    WorkflowAction.ASSIGN_APPROVER: "APPROVER_ASSIGNED",
+    WorkflowAction.APPROVE: "DOCUMENT_APPROVED",
+    WorkflowAction.REJECT: "DOCUMENT_REJECTED",
+}
+_DECISION_ACTIONS = {
+    WorkflowAction.REQUEST_CHANGES: "CHANGES_REQUESTED",
+    WorkflowAction.APPROVE: "APPROVED",
+    WorkflowAction.REJECT: "REJECTED",
+}
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -144,15 +197,19 @@ def _validate_invalid_transition(
 ) -> None:
     if document.status not in allowed_from:
         allowed_values = sorted(status.value for status in allowed_from)
+        details: dict[str, Any] = {
+            "current_status": document.status.value,
+            "allowed_statuses": allowed_values,
+        }
+        if document.status in TERMINAL_DECISION_STATUSES:
+            details["duplicate_decision"] = True
+            details["decision"] = document.status.value
         raise WorkflowError(
             409,
             "INVALID_STATE_TRANSITION",
             f"Cannot {action_label} document in status '{document.status.value}'. "
             f"Allowed statuses: {', '.join(allowed_values)}.",
-            details={
-                "current_status": document.status.value,
-                "allowed_statuses": allowed_values,
-            },
+            details=details,
         )
 
 
@@ -286,7 +343,21 @@ def _build_workflow_response(db: Session, document: Document) -> DocumentWorkflo
         .order_by(DocumentTransition.created_at.asc(), DocumentTransition.id.asc())
         .all()
     )
+    latest_audit_row = (
+        db.query(AuditEvent)
+        .filter(
+            AuditEvent.document_id == document.id,
+            AuditEvent.organization_id == document.organization_id,
+        )
+        .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+        .first()
+    )
     history = [DocumentTransitionResponse.model_validate(row) for row in history_rows]
+    decision_value = (
+        document.status.value
+        if document.status in {DocumentStatus.APPROVED, DocumentStatus.REJECTED, DocumentStatus.CHANGES_REQUESTED}
+        else None
+    )
     return DocumentWorkflowResponse(
         document_id=document.id,
         organization_id=document.organization_id,
@@ -296,8 +367,12 @@ def _build_workflow_response(db: Session, document: Document) -> DocumentWorkflo
         revision_number=document.revision_number,
         workflow_updated_at=document.workflow_updated_at,
         last_decision_by=document.last_decision_by,
+        last_decision_at=document.last_decision_at,
         last_decision_comment=document.last_decision_comment,
+        decision=decision_value,
+        comment=history[-1].comment if history else document.last_decision_comment,
         last_transition=history[-1] if history else None,
+        audit_event=AuditEventResponse.model_validate(latest_audit_row) if latest_audit_row else None,
         history=history,
         validation_summary=_get_validation_summary(db, document),
     )
@@ -317,11 +392,17 @@ def _commit_transition(
     comment: Optional[str] = None,
     storage: Optional[DocumentStorage] = None,
 ) -> DocumentWorkflowResponse:
-    """Atomically persist document state updates and transition audit log."""
+    """Atomically persist document state updates, transition history, and audit event."""
     now = _utc_now()
+    decision_name = _DECISION_ACTIONS.get(action)
     try:
         document.status = to_status
         document.workflow_updated_at = now
+        if decision_name is not None:
+            document.last_decision_by = actor_id
+            document.last_decision_at = now
+            document.last_decision_comment = comment
+
         transition = DocumentTransition(
             document_id=document.id,
             organization_id=document.organization_id,
@@ -336,7 +417,26 @@ def _commit_transition(
             revision_number=document.revision_number,
             created_at=now,
         )
+        audit_event = AuditEvent(
+            document_id=document.id,
+            organization_id=document.organization_id,
+            event_type=_ACTION_TO_EVENT_TYPE.get(action, action.value),
+            actor_id=actor_id,
+            actor_role=actor_role,
+            from_status=from_status.value,
+            to_status=to_status.value,
+            decision=decision_name,
+            reason=comment,
+            details={
+                "action": action.value,
+                "assigned_to_id": assigned_to_id,
+                "previous_assignee_id": previous_assignee_id,
+                "revision_number": document.revision_number,
+            },
+            created_at=now,
+        )
         db.add(transition)
+        db.add(audit_event)
         db.flush()
         db.commit()
         db.refresh(document)
@@ -693,6 +793,7 @@ def decide_document(
     actor: dict,
     *,
     approve: bool,
+    reason: Optional[str] = None,
     comment: Optional[str] = None,
     storage: Optional[DocumentStorage] = None,
 ) -> DocumentWorkflowResponse:
@@ -713,12 +814,10 @@ def decide_document(
         "approver",
     )
 
-    cleaned_comment = _normalize_comment(comment)
+    resolved_reason = _normalize_comment(reason) or _normalize_comment(comment)
     from_status = document.status
     to_status = DocumentStatus.APPROVED if approve else DocumentStatus.REJECTED
     action = WorkflowAction.APPROVE if approve else WorkflowAction.REJECT
-    document.last_decision_by = actor_id
-    document.last_decision_comment = cleaned_comment
 
     return _commit_transition(
         db,
@@ -728,6 +827,361 @@ def decide_document(
         to_status=to_status,
         actor_id=actor_id,
         actor_role=actor_role,
-        comment=cleaned_comment,
+        comment=resolved_reason,
         storage=storage,
+    )
+
+
+def _to_queue_item(document: Document) -> QueueDocumentItemResponse:
+    return QueueDocumentItemResponse(
+        document_id=document.id,
+        organization_id=document.organization_id,
+        uploaded_by=document.uploaded_by,
+        filename=document.filename,
+        file_type=document.file_type,
+        file_size=document.file_size,
+        status=document.status,
+        classification=document.classification,
+        classification_confidence=document.classification_confidence,
+        assigned_reviewer_id=document.assigned_reviewer_id,
+        assigned_approver_id=document.assigned_approver_id,
+        revision_number=document.revision_number,
+        upload_timestamp=document.upload_timestamp,
+        workflow_updated_at=document.workflow_updated_at,
+        last_decision_by=document.last_decision_by,
+        last_decision_at=document.last_decision_at,
+        last_decision_comment=document.last_decision_comment,
+    )
+
+
+def _enforce_document_read_permission(
+    document: Document,
+    actor_id: str,
+    actor_role: str,
+) -> None:
+    if actor_role in ADMIN_OVERRIDE_ROLES or actor_role in {"AUDITOR", "COMPLIANCE"}:
+        return
+    if actor_role == "SUBMITTER":
+        if document.uploaded_by != actor_id:
+            raise WorkflowError(
+                403,
+                "WORKFLOW_FORBIDDEN",
+                "Submitters may only view their own documents.",
+            )
+        return
+    if actor_role == "REVIEWER":
+        if document.assigned_reviewer_id not in (None, actor_id):
+            raise WorkflowError(
+                403,
+                "WORKFLOW_FORBIDDEN",
+                "Document is assigned to another reviewer.",
+            )
+        return
+    if actor_role == "APPROVER":
+        if document.assigned_approver_id not in (None, actor_id):
+            raise WorkflowError(
+                403,
+                "WORKFLOW_FORBIDDEN",
+                "Document is assigned to another approver.",
+            )
+        return
+    raise WorkflowError(403, "WORKFLOW_FORBIDDEN", "Not permitted to view this document.")
+
+
+def _load_ocr_text(document_id: str, storage: Optional[DocumentStorage]) -> Optional[str]:
+    try:
+        doc_storage = storage or DocumentStorage()
+        meta_path = doc_storage.base_dir / "metadata" / f"{document_id}.json"
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            ocr = meta.get("ocr_text")
+            if isinstance(ocr, str) and ocr.strip():
+                return ocr
+    except Exception:
+        pass
+    return None
+
+
+def get_review_queue(
+    db: Session,
+    actor: dict,
+    *,
+    status_filter: Optional[str] = None,
+    assigned_to_me: bool = False,
+    classification: Optional[str] = None,
+) -> ReviewQueueResponse:
+    """Return documents in the caller's organization that the caller is permitted to review."""
+    actor_id, actor_role = _require_role(actor, REVIEW_QUEUE_CALLER_ROLES, "view the review queue")
+    org_id = str(actor["organization_id"])
+
+    query = db.query(Document).filter(Document.organization_id == org_id)
+
+    if actor_role in ADMIN_OVERRIDE_ROLES:
+        allowed_statuses = REVIEWER_QUEUE_STATUSES
+    elif actor_role == "APPROVER":
+        allowed_statuses = APPROVER_QUEUE_STATUSES
+        if assigned_to_me:
+            query = query.filter(Document.assigned_approver_id == actor_id)
+        else:
+            query = query.filter(
+                or_(
+                    Document.assigned_approver_id.is_(None),
+                    Document.assigned_approver_id == actor_id,
+                )
+            )
+    else:
+        allowed_statuses = REVIEWER_QUEUE_STATUSES
+        if assigned_to_me:
+            query = query.filter(Document.assigned_reviewer_id == actor_id)
+        else:
+            query = query.filter(
+                or_(
+                    Document.assigned_reviewer_id == actor_id,
+                    (Document.status == DocumentStatus.SUBMITTED) & (Document.assigned_reviewer_id.is_(None)),
+                )
+            )
+
+    if actor_role in ADMIN_OVERRIDE_ROLES and assigned_to_me:
+        query = query.filter(
+            or_(
+                Document.assigned_reviewer_id == actor_id,
+                Document.assigned_approver_id == actor_id,
+            )
+        )
+
+    query = query.filter(Document.status.in_(allowed_statuses))
+
+    if status_filter is not None and status_filter.strip():
+        try:
+            target_status = DocumentStatus(status_filter.strip().upper())
+        except ValueError as exc:
+            raise WorkflowError(
+                422,
+                "INVALID_QUEUE_FILTER",
+                f"Unknown document status '{status_filter}'.",
+            ) from exc
+        query = query.filter(Document.status == target_status)
+
+    if classification is not None and classification.strip():
+        query = query.filter(Document.classification == classification.strip())
+
+    docs = query.order_by(Document.workflow_updated_at.desc(), Document.upload_timestamp.desc()).all()
+    items = [_to_queue_item(doc) for doc in docs]
+    return ReviewQueueResponse(items=items, total=len(items))
+
+
+def get_approval_queue(
+    db: Session,
+    actor: dict,
+    *,
+    assigned_to_me: bool = False,
+) -> ReviewQueueResponse:
+    """Return documents awaiting human approval that the caller is permitted to decide on."""
+    actor_id, actor_role = _require_role(actor, APPROVAL_QUEUE_CALLER_ROLES, "view the approval queue")
+    org_id = str(actor["organization_id"])
+
+    query = db.query(Document).filter(
+        Document.organization_id == org_id,
+        Document.status.in_(APPROVER_QUEUE_STATUSES),
+    )
+
+    if actor_role == "APPROVER":
+        if assigned_to_me:
+            query = query.filter(Document.assigned_approver_id == actor_id)
+        else:
+            query = query.filter(
+                or_(
+                    Document.assigned_approver_id.is_(None),
+                    Document.assigned_approver_id == actor_id,
+                )
+            )
+    elif assigned_to_me:
+        query = query.filter(Document.assigned_approver_id == actor_id)
+
+    docs = query.order_by(Document.workflow_updated_at.desc(), Document.upload_timestamp.desc()).all()
+    items = [_to_queue_item(doc) for doc in docs]
+    return ReviewQueueResponse(items=items, total=len(items))
+
+
+def get_document_review_detail(
+    db: Session,
+    document_id: str,
+    actor: dict,
+    *,
+    storage: Optional[DocumentStorage] = None,
+) -> DocumentReviewDetailResponse:
+    """Return full permitted review context: document, extractions, validation evidence, comments, and audit."""
+    actor_id, actor_role = _require_role(
+        actor,
+        {"SUBMITTER", "REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN", "AUDITOR", "COMPLIANCE"},
+        "view document review details",
+    )
+    document = _get_scoped_document(db, document_id, str(actor["organization_id"]))
+    _enforce_document_read_permission(document, actor_id, actor_role)
+
+    extraction_rows = (
+        db.query(Extraction)
+        .filter(Extraction.document_id == document.id)
+        .order_by(Extraction.field_name.asc())
+        .all()
+    )
+    validation_row = (
+        db.query(ValidationResult)
+        .filter(
+            ValidationResult.document_id == document.id,
+            ValidationResult.organization_id == document.organization_id,
+        )
+        .first()
+    )
+    policy_runs = (
+        db.query(PolicyValidationRun)
+        .filter(
+            PolicyValidationRun.document_id == document.id,
+            PolicyValidationRun.organization_id == document.organization_id,
+        )
+        .order_by(PolicyValidationRun.created_at.desc(), PolicyValidationRun.id.desc())
+        .all()
+    )
+    comment_rows = (
+        db.query(ReviewComment)
+        .filter(
+            ReviewComment.document_id == document.id,
+            ReviewComment.organization_id == document.organization_id,
+        )
+        .order_by(ReviewComment.created_at.asc(), ReviewComment.id.asc())
+        .all()
+    )
+    transition_rows = (
+        db.query(DocumentTransition)
+        .filter(
+            DocumentTransition.document_id == document.id,
+            DocumentTransition.organization_id == document.organization_id,
+        )
+        .order_by(DocumentTransition.created_at.asc(), DocumentTransition.id.asc())
+        .all()
+    )
+    audit_rows = (
+        db.query(AuditEvent)
+        .filter(
+            AuditEvent.document_id == document.id,
+            AuditEvent.organization_id == document.organization_id,
+        )
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+        .all()
+    )
+
+    return DocumentReviewDetailResponse(
+        document=_to_queue_item(document),
+        extractions=[ReviewExtractionItemResponse.model_validate(row) for row in extraction_rows],
+        ocr_text=_load_ocr_text(document.id, storage),
+        validation=ReviewValidationEvidenceResponse.model_validate(validation_row) if validation_row else None,
+        policy_validation_runs=[
+            ReviewPolicyValidationRunResponse(
+                id=run.id,
+                status=run.status,
+                summary=run.summary,
+                retrieval_outcome=run.retrieval_outcome,
+                policy_versions=list(run.policy_versions or []),
+                requested_by=run.requested_by,
+                created_at=run.created_at,
+                findings=[
+                    ReviewPolicyFindingResponse.model_validate(finding)
+                    for finding in run.findings
+                ],
+            )
+            for run in policy_runs
+        ],
+        comments=[ReviewCommentResponse.model_validate(row) for row in comment_rows],
+        history=[DocumentTransitionResponse.model_validate(row) for row in transition_rows],
+        audit_events=[AuditEventResponse.model_validate(row) for row in audit_rows],
+    )
+
+
+def add_review_comment(
+    db: Session,
+    document_id: str,
+    actor: dict,
+    *,
+    comment: Optional[str] = None,
+) -> ReviewCommentResponse:
+    """Persist a standalone review comment together with an audit event atomically."""
+    actor_id, actor_role = _require_role(actor, REVIEW_COMMENT_CALLER_ROLES, "submit review comments")
+    document = _get_scoped_document(db, document_id, str(actor["organization_id"]))
+    _validate_invalid_transition(document, REVIEW_COMMENT_ALLOWED_STATUSES, "comment on")
+    _enforce_assignee_ownership(actor_id, actor_role, document.assigned_reviewer_id, "REVIEWER", "reviewer")
+    _enforce_assignee_ownership(actor_id, actor_role, document.assigned_approver_id, "APPROVER", "approver")
+
+    cleaned_comment = _normalize_comment(comment)
+    if not cleaned_comment:
+        raise WorkflowError(
+            422,
+            "COMMENT_REQUIRED",
+            "A non-empty review comment is required.",
+        )
+
+    now = _utc_now()
+    revision = max(document.revision_number or 1, 1)
+    try:
+        review_comment = ReviewComment(
+            document_id=document.id,
+            organization_id=document.organization_id,
+            author_id=actor_id,
+            author_role=actor_role,
+            comment=cleaned_comment,
+            revision_number=revision,
+            created_at=now,
+        )
+        audit_event = AuditEvent(
+            document_id=document.id,
+            organization_id=document.organization_id,
+            event_type="REVIEW_COMMENT_ADDED",
+            actor_id=actor_id,
+            actor_role=actor_role,
+            from_status=document.status.value,
+            to_status=document.status.value,
+            decision=None,
+            reason=cleaned_comment,
+            details={"revision_number": revision},
+            created_at=now,
+        )
+        db.add(review_comment)
+        db.add(audit_event)
+        db.flush()
+        db.commit()
+        db.refresh(review_comment)
+    except Exception:
+        db.rollback()
+        raise
+
+    return ReviewCommentResponse.model_validate(review_comment)
+
+
+def get_document_audit_trail(
+    db: Session,
+    document_id: str,
+    actor: dict,
+) -> DocumentAuditTrailResponse:
+    """Retrieve chronological audit events for a permitted document."""
+    actor_id, actor_role = _require_role(
+        actor,
+        {"SUBMITTER", "REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN", "AUDITOR", "COMPLIANCE"},
+        "view document audit trail",
+    )
+    document = _get_scoped_document(db, document_id, str(actor["organization_id"]))
+    _enforce_document_read_permission(document, actor_id, actor_role)
+
+    events = (
+        db.query(AuditEvent)
+        .filter(
+            AuditEvent.document_id == document.id,
+            AuditEvent.organization_id == document.organization_id,
+        )
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+        .all()
+    )
+    return DocumentAuditTrailResponse(
+        document_id=document.id,
+        organization_id=document.organization_id,
+        status=document.status,
+        events=[AuditEventResponse.model_validate(event) for event in events],
     )

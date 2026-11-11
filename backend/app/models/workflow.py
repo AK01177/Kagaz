@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
 )
@@ -78,3 +79,65 @@ class DocumentTransition(Base):
             f"<DocumentTransition doc={self.document_id} action={self.action} "
             f"{self.from_status}->{self.to_status}>"
         )
+
+
+class ReviewComment(Base):
+    """Persistent human review note attached to a document."""
+
+    __tablename__ = "review_comments"
+
+    __table_args__ = (
+        Index("ix_review_comments_doc_created", "document_id", "created_at"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_id = Column(
+        String(36),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    organization_id = Column(String(36), nullable=False, index=True)
+    author_id = Column(String(36), nullable=False, index=True)
+    author_role = Column(String(64), nullable=False)
+    comment = Column(Text, nullable=False)
+    revision_number = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    document = relationship("Document", back_populates="review_comments")
+
+    def __repr__(self) -> str:
+        return f"<ReviewComment doc={self.document_id} author={self.author_id}>"
+
+
+class AuditEvent(Base):
+    """First-class audit trail event created atomically on comments, transitions, and decisions."""
+
+    __tablename__ = "audit_events"
+
+    __table_args__ = (
+        Index("ix_audit_events_doc_created", "document_id", "created_at"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_id = Column(
+        String(36),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    organization_id = Column(String(36), nullable=False, index=True)
+    event_type = Column(String(64), nullable=False, index=True)
+    actor_id = Column(String(36), nullable=False, index=True)
+    actor_role = Column(String(64), nullable=False)
+    from_status = Column(String(64), nullable=True)
+    to_status = Column(String(64), nullable=True)
+    decision = Column(String(32), nullable=True)
+    reason = Column(Text, nullable=True)
+    details = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    document = relationship("Document", back_populates="audit_events")
+
+    def __repr__(self) -> str:
+        return f"<AuditEvent doc={self.document_id} type={self.event_type} actor={self.actor_id}>"
