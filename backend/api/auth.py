@@ -255,10 +255,12 @@ def require_reviewer(
     return claims
 
 
-def require_policy_reader(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+def _authenticate_bearer(
+    credentials: HTTPAuthorizationCredentials | None,
+    *,
+    forbidden_code: str,
 ) -> dict:
-    """Authenticate policy readers, allowing the development fallback only explicitly."""
+    """Decode strict JWT claims, allowing dev fallback only when APP_ENV=development."""
     if credentials is None or credentials.credentials in ("undefined", "null", ""):
         if os.environ.get("APP_ENV", "").lower() == "development":
             return {"sub": "dev_reviewer", "organization_id": "dev_org", "role": "REVIEWER", "active": True}
@@ -270,7 +272,7 @@ def require_policy_reader(
         if os.environ.get("APP_ENV", "").lower() != "development":
             raise _unauthenticated()
         if not mock_claims.get("active"):
-            raise HTTPException(403, detail={"code": "POLICY_FORBIDDEN", "message": "An active account is required."})
+            raise HTTPException(403, detail={"code": forbidden_code, "message": "An active account is required."})
         return mock_claims
 
     secret = os.environ.get("JWT_SECRET", "")
@@ -293,8 +295,22 @@ def require_policy_reader(
     except jwt.InvalidTokenError as exc:
         raise _unauthenticated() from exc
     if claims["active"] is not True:
-        raise HTTPException(403, detail={"code": "POLICY_FORBIDDEN", "message": "An active account is required."})
+        raise HTTPException(403, detail={"code": forbidden_code, "message": "An active account is required."})
     return claims
+
+
+def require_policy_reader(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> dict:
+    """Authenticate policy readers, allowing the development fallback only explicitly."""
+    return _authenticate_bearer(credentials, forbidden_code="POLICY_FORBIDDEN")
+
+
+def require_workflow_actor(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> dict:
+    """Authenticate an active workflow actor via strict JWT verification."""
+    return _authenticate_bearer(credentials, forbidden_code="WORKFLOW_FORBIDDEN")
 
 
 def require_policy_admin(

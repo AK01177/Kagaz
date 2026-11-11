@@ -11,6 +11,7 @@ from api.auth import router as auth_router
 from api.policies import router as policies_router
 from app.api.routes.policies import router as policies_retrieval_router
 from app.api.routes.policy_validation import router as policy_validation_router
+from app.api.routes.workflow import router as workflow_router
 
 load_dotenv()
 
@@ -36,6 +37,7 @@ app.include_router(auth_router)
 app.include_router(policies_retrieval_router)
 app.include_router(policies_router)
 app.include_router(policy_validation_router)
+app.include_router(workflow_router)
 
 
 @app.exception_handler(HTTPException)

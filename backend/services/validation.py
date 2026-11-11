@@ -16,6 +16,16 @@ from storage.document_storage import DocumentStorage
 
 logger = logging.getLogger(__name__)
 
+_ACTIVE_WORKFLOW_STATUSES = {
+    "SUBMITTED",
+    "IN_REVIEW",
+    "CHANGES_REQUESTED",
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "REJECTED",
+}
+
+
 MANDATORY_FIELDS = {
     "financial": ["invoice_number", "total_amount", "supplier_name"],
     "hr_documents": ["candidate_name", "skills"],
@@ -149,10 +159,13 @@ def validate_document(
             with open(metadata_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
             meta["validation"] = result
-            if status == "PASS":
-                meta["status"] = "VALIDATED"
-            elif status == "REVIEW_REQUIRED":
-                meta["status"] = "REVIEW_REQUIRED"
+            # Validation findings stay separate from human workflow/approval state:
+            # only set pre-review sidecar status when the document is not already in workflow.
+            if meta.get("status") not in _ACTIVE_WORKFLOW_STATUSES:
+                if status == "PASS":
+                    meta["status"] = "VALIDATED"
+                elif status == "REVIEW_REQUIRED":
+                    meta["status"] = "REVIEW_REQUIRED"
             with open(metadata_path, "w", encoding="utf-8") as f:
                 json.dump(meta, f, indent=2)
     except Exception as e:
