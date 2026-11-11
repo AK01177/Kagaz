@@ -26,11 +26,32 @@ def utc_now() -> datetime:
 
 
 class DocumentStatus(str, enum.Enum):
-    """Lifecycle status of a document as it moves through the ingestion pipeline."""
+    """
+    Lifecycle status of a document as it moves through the ingestion pipeline
+    and the human review workflow (BE-10).
+
+    Ingestion states (set by the backend processing pipeline):
+      UPLOADED          Document received; awaiting classification/extraction.
+      PROCESSING        Classification and extraction in progress.
+      CLASSIFIED        Pipeline complete; document awaits submitter action.
+      FAILED            Pipeline encountered an unrecoverable error.
+
+    Workflow states (set by explicit human actions via BE-10/BE-11 APIs):
+      PENDING_REVIEW    Submitter has submitted the document for review.
+      UNDER_REVIEW      A reviewer has been assigned and is actively reviewing.
+      CHANGES_REQUESTED Reviewer has requested changes; ball is in submitter's court.
+      APPROVED          Approver has accepted the document.
+      REJECTED          Approver has rejected the document.
+    """
     UPLOADED = "UPLOADED"
     PROCESSING = "PROCESSING"
     CLASSIFIED = "CLASSIFIED"
     FAILED = "FAILED"
+    PENDING_REVIEW = "PENDING_REVIEW"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    CHANGES_REQUESTED = "CHANGES_REQUESTED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class Document(Base):
@@ -79,6 +100,10 @@ class Document(Base):
     # Populated once classification runs (BE-04) — nullable until then
     classification = Column(String, nullable=True)            # e.g. "invoice", "transcript"
     classification_confidence = Column(Float, nullable=True)  # 0.0–1.0
+
+    # Workflow state (BE-10) — the user currently assigned as reviewer.
+    # Populated by ASSIGN action; cleared when the document reaches a terminal state.
+    assigned_reviewer = Column(String(36), nullable=True)
 
     # Relationships
     extractions = relationship(

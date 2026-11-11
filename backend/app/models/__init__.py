@@ -14,6 +14,7 @@ from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
 from app.models.user import User, UserProviderMapping
 from app.models.validation import ValidationResult
+from app.models.workflow import WorkflowAction, WorkflowTransition
 
 __all__ = [
     "Document",
@@ -33,4 +34,6 @@ __all__ = [
     "Membership",
     "MembershipRole",
     "ValidationResult",
+    "WorkflowAction",
+    "WorkflowTransition",
 ]
