@@ -397,6 +397,27 @@ def run_policy_validation(db: Session, document: Document, identity: dict) -> Po
     )
     run.findings = [PolicyValidationFinding(**item) for item in findings]
     db.add(run)
+
+    from services.audit import record_audit_event
+
+    record_audit_event(
+        db,
+        document_id=document.id,
+        organization_id=document.organization_id,
+        event_type="POLICY_VALIDATION_EXECUTED",
+        actor_id=str(identity.get("sub") or "system"),
+        actor_type="USER" if identity.get("sub") else "SYSTEM",
+        actor_role=str(identity.get("role") or "REVIEWER"),
+        from_status=document.status.value,
+        to_status=document.status.value,
+        details={
+            "validation_status": status,
+            "retrieval_outcome": retrieval_outcome,
+            "finding_count": len(findings),
+            "policy_versions": [v.get("version") for v in versions if isinstance(v, dict)],
+        },
+        commit=False,
+    )
     db.commit()
     db.refresh(run)
     return run

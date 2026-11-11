@@ -81,10 +81,56 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
             classification=response.get("category"),
             classification_confidence=response.get("confidence"),
         )
-        create_document_metadata(db, doc_data, document_id=document_id)
+        persisted_doc = create_document_metadata(db, doc_data, document_id=document_id)
         if extraction is not None:
             from services.extraction_persistence import persist_extraction_result
             persist_extraction_result(db, document_id, extraction)
+
+        from services.audit import record_audit_event, record_extraction_audit
+
+        record_audit_event(
+            db,
+            document_id=persisted_doc.id,
+            organization_id=persisted_doc.organization_id,
+            event_type="DOCUMENT_UPLOADED",
+            actor_id=str(user.get("sub") or persisted_doc.uploaded_by),
+            actor_type="USER",
+            actor_role=str(user.get("role") or "SUBMITTER"),
+            to_status="UPLOADED",
+            details={"filename": filename, "file_type": mime, "file_size": size},
+            commit=False,
+        )
+        if response.get("category") and response.get("status") in ("CLASSIFIED", "EXTRACTED"):
+            record_audit_event(
+                db,
+                document_id=persisted_doc.id,
+                organization_id=persisted_doc.organization_id,
+                event_type="DOCUMENT_CLASSIFIED",
+                actor_id="system",
+                actor_type="SYSTEM",
+                actor_role="SYSTEM",
+                from_status="UPLOADED",
+                to_status="CLASSIFIED",
+                details={
+                    "category": response.get("category"),
+                    "confidence": response.get("confidence"),
+                },
+                commit=False,
+            )
+        if extraction is not None:
+            raw_fields = extraction.to_flat_dict() if hasattr(extraction, "to_flat_dict") else {}
+            non_empty_names = sorted(k for k, v in raw_fields.items() if v is not None)
+            record_extraction_audit(
+                db,
+                document_id=persisted_doc.id,
+                organization_id=persisted_doc.organization_id,
+                document_type=response.get("category"),
+                field_names=non_empty_names,
+                from_status="CLASSIFIED",
+                to_status="EXTRACTED",
+                commit=False,
+            )
+        db.commit()
         return True
     except Exception as db_err:
         logger.warning("Failed to persist to DB for %s: %s", document_id, db_err)

@@ -216,11 +216,47 @@ async def correct_classification(
     if db is not None:
         try:
             from app.models.document import Document, DocumentStatus
+            from services.audit import record_audit_event
+
             doc = db.query(Document).filter(Document.id == document_id).first()
             if doc is not None:
+                prev_status = doc.status.value
                 doc.classification = normalized_category
                 doc.classification_confidence = 1.0
-                doc.status = DocumentStatus.CLASSIFIED
+                doc.status = DocumentStatus.EXTRACTED if extraction is not None else DocumentStatus.CLASSIFIED
+                record_audit_event(
+                    db,
+                    document_id=doc.id,
+                    organization_id=doc.organization_id,
+                    event_type="CLASSIFICATION_CORRECTED",
+                    actor_id=str(user.get("sub", "reviewer")),
+                    actor_type="USER",
+                    actor_role=str(user.get("role", "REVIEWER")),
+                    from_status=prev_status,
+                    to_status=DocumentStatus.CLASSIFIED.value,
+                    reason=payload.notes,
+                    details={
+                        "previous_category": previous_category,
+                        "updated_category": normalized_category,
+                        "previous_confidence": previous_confidence,
+                    },
+                    commit=False,
+                )
+                if extraction is not None:
+                    from services.audit import record_extraction_audit
+
+                    raw_ext = extraction.to_flat_dict() if hasattr(extraction, "to_flat_dict") else {}
+                    ext_names = [k for k, v in raw_ext.items() if v is not None]
+                    record_extraction_audit(
+                        db,
+                        document_id=doc.id,
+                        organization_id=doc.organization_id,
+                        document_type=normalized_category,
+                        field_names=ext_names,
+                        from_status=DocumentStatus.CLASSIFIED.value,
+                        to_status=DocumentStatus.EXTRACTED.value,
+                        commit=False,
+                    )
                 db.commit()
                 if extraction is not None:
                     from services.extraction_persistence import persist_extraction_result
@@ -340,13 +376,60 @@ async def run_extraction(
         extracted_fields = {k: v for k, v in raw_fields.items() if v is not None}
         extracted_confidence = {k: v for k, v in raw_conf.items() if k in extracted_fields}
     except Exception as exc:
+        if db is not None:
+            try:
+                from app.models.document import Document
+                from services.audit import record_audit_event
+
+                doc = db.query(Document).filter(Document.id == document_id).first()
+                if doc is not None:
+                    record_audit_event(
+                        db,
+                        document_id=doc.id,
+                        organization_id=doc.organization_id,
+                        event_type="EXTRACTION_FAILED",
+                        actor_id=str(user.get("sub", "reviewer")),
+                        actor_type="USER",
+                        actor_role=str(user.get("role", "REVIEWER")),
+                        from_status=doc.status.value,
+                        to_status=doc.status.value,
+                        details={
+                            "document_type": document_category,
+                            "error_type": type(exc).__name__,
+                        },
+                        commit=True,
+                    )
+            except Exception as audit_err:
+                logger.debug("Non-fatal audit failure record skipped for %s: %s", document_id, audit_err)
         raise HTTPException(status_code=422, detail=f"Structured extraction failed: {exc}")
 
     # DB-03: Persist extraction to DB
     if db is not None:
         try:
+            from app.models.document import Document, DocumentStatus
+            from services.audit import record_audit_event
             from services.extraction_persistence import persist_extraction_result
+
             persist_extraction_result(db, document_id, extraction_result)
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if doc is not None:
+                from services.audit import record_extraction_audit
+
+                prev_status = doc.status.value
+                record_extraction_audit(
+                    db,
+                    document_id=doc.id,
+                    organization_id=doc.organization_id,
+                    document_type=document_category,
+                    field_names=list(extracted_fields.keys()),
+                    actor_id=str(user.get("sub", "reviewer")),
+                    actor_type="USER",
+                    actor_role=str(user.get("role", "REVIEWER")),
+                    from_status=prev_status,
+                    to_status=DocumentStatus.EXTRACTED.value,
+                    ocr_text_length=len(text),
+                    commit=True,
+                )
         except Exception as e:
             logger.debug("DB extraction persist fallback for %s: %s", document_id, e)
 
@@ -412,11 +495,46 @@ async def reclassify_document(
         if db is not None:
             try:
                 from app.models.document import Document, DocumentStatus
+                from services.audit import record_audit_event
+
                 doc = db.query(Document).filter(Document.id == document_id).first()
                 if doc is not None:
+                    prev_status = doc.status.value
                     doc.classification = result.category.value
                     doc.classification_confidence = result.confidence
-                    doc.status = DocumentStatus.CLASSIFIED
+                    doc.status = DocumentStatus.EXTRACTED if extraction is not None else DocumentStatus.CLASSIFIED
+                    record_audit_event(
+                        db,
+                        document_id=doc.id,
+                        organization_id=doc.organization_id,
+                        event_type="DOCUMENT_CLASSIFIED",
+                        actor_id="system",
+                        actor_type="SYSTEM",
+                        actor_role="SYSTEM",
+                        from_status=prev_status,
+                        to_status=DocumentStatus.CLASSIFIED.value,
+                        details={
+                            "category": result.category.value,
+                            "confidence": result.confidence,
+                            "trigger": "reclassify",
+                        },
+                        commit=False,
+                    )
+                    if extraction is not None:
+                        from services.audit import record_extraction_audit
+
+                        raw_ext = extraction.to_flat_dict() if hasattr(extraction, "to_flat_dict") else {}
+                        ext_names = [k for k, v in raw_ext.items() if v is not None]
+                        record_extraction_audit(
+                            db,
+                            document_id=doc.id,
+                            organization_id=doc.organization_id,
+                            document_type=result.category.value,
+                            field_names=ext_names,
+                            from_status=DocumentStatus.CLASSIFIED.value,
+                            to_status=DocumentStatus.EXTRACTED.value,
+                            commit=False,
+                        )
                     db.commit()
                     if extraction is not None:
                         from services.extraction_persistence import persist_extraction_result

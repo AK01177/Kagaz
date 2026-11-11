@@ -148,6 +148,25 @@ def validate_document(
                 evidence=evidence,
                 validated_by=user_id,
             )
+            from services.audit import record_audit_event
+
+            record_audit_event(
+                db,
+                document_id=document_id,
+                organization_id=organization_id,
+                event_type="DOCUMENT_VALIDATED",
+                actor_id=str(user_id) if user_id else "system",
+                actor_type="USER" if user_id else "SYSTEM",
+                actor_role="REVIEWER" if user_id else "SYSTEM",
+                details={
+                    "validation_status": status,
+                    "policy_id": policy_id,
+                    "policy_version": policy_version,
+                    "issue_count": len(issues),
+                },
+                commit=True,
+                ensure_document_exists=True,
+            )
         except Exception as e:
             logger.warning("Failed to persist validation result to DB for %s: %s", document_id, e)
 
