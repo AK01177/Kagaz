@@ -14,6 +14,7 @@ from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
 from app.models.user import User, UserProviderMapping
 from app.models.validation import ValidationResult
+from app.models.notification import Notification
 from app.models.workflow import AuditEvent, DocumentTransition, ReviewComment, WorkflowAction
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "UserProviderMapping",
     "Membership",
     "MembershipRole",
+    "Notification",
     "ValidationResult",
     "DocumentTransition",
     "ReviewComment",
