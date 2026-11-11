@@ -66,12 +66,14 @@ class AuditEventResponse(BaseModel):
     organization_id: str
     event_type: str
     actor_id: str
+    actor_type: str = "USER"
     actor_role: str
     from_status: Optional[str] = None
     to_status: Optional[str] = None
     decision: Optional[str] = None
     reason: Optional[str] = None
     details: dict[str, Any] = Field(default_factory=dict)
+    sequence_no: int = 0
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

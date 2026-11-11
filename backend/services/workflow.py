@@ -23,6 +23,7 @@ from app.models.policy_validation import PolicyValidationRun
 from app.models.user import User
 from app.models.validation import ValidationResult
 from app.models.workflow import AuditEvent, DocumentTransition, ReviewComment, WorkflowAction
+from services.audit import build_audit_event, sanitize_audit_text
 from app.schemas.workflow import (
     AuditEventResponse,
     DocumentAuditTrailResponse,
@@ -417,11 +418,12 @@ def _commit_transition(
             revision_number=document.revision_number,
             created_at=now,
         )
-        audit_event = AuditEvent(
+        audit_event = build_audit_event(
             document_id=document.id,
             organization_id=document.organization_id,
             event_type=_ACTION_TO_EVENT_TYPE.get(action, action.value),
             actor_id=actor_id,
+            actor_type="USER",
             actor_role=actor_role,
             from_status=from_status.value,
             to_status=to_status.value,
@@ -1066,7 +1068,7 @@ def get_document_review_detail(
             AuditEvent.document_id == document.id,
             AuditEvent.organization_id == document.organization_id,
         )
-        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.sequence_no.asc(), AuditEvent.id.asc())
         .all()
     )
 
@@ -1131,11 +1133,12 @@ def add_review_comment(
             revision_number=revision,
             created_at=now,
         )
-        audit_event = AuditEvent(
+        audit_event = build_audit_event(
             document_id=document.id,
             organization_id=document.organization_id,
             event_type="REVIEW_COMMENT_ADDED",
             actor_id=actor_id,
+            actor_type="USER",
             actor_role=actor_role,
             from_status=document.status.value,
             to_status=document.status.value,
@@ -1176,7 +1179,7 @@ def get_document_audit_trail(
             AuditEvent.document_id == document.id,
             AuditEvent.organization_id == document.organization_id,
         )
-        .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+        .order_by(AuditEvent.created_at.asc(), AuditEvent.sequence_no.asc(), AuditEvent.id.asc())
         .all()
     )
     return DocumentAuditTrailResponse(

@@ -14,8 +14,9 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    event,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Session, relationship
 
 from app.db.base import Base
 
@@ -128,16 +129,40 @@ class AuditEvent(Base):
     )
     organization_id = Column(String(36), nullable=False, index=True)
     event_type = Column(String(64), nullable=False, index=True)
-    actor_id = Column(String(36), nullable=False, index=True)
+    actor_id = Column(String(64), nullable=False, index=True)
+    actor_type = Column(String(16), nullable=False, default="USER")
     actor_role = Column(String(64), nullable=False)
     from_status = Column(String(64), nullable=True)
     to_status = Column(String(64), nullable=True)
     decision = Column(String(32), nullable=True)
     reason = Column(Text, nullable=True)
     details = Column(JSON, nullable=False, default=dict)
+    sequence_no = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     document = relationship("Document", back_populates="audit_events")
 
     def __repr__(self) -> str:
         return f"<AuditEvent doc={self.document_id} type={self.event_type} actor={self.actor_id}>"
+
+
+class AuditImmutabilityError(ValueError):
+    """Raised when attempting to update or delete append-only audit records."""
+
+
+_IMMUTABLE_AUDIT_MODELS = (AuditEvent, DocumentTransition)
+
+
+@event.listens_for(Session, "before_flush")
+def _enforce_audit_immutability(session: Session, _flush_context, _instances) -> None:
+    """Prevent normal application code from altering or deleting persisted audit history."""
+    for obj in session.dirty:
+        if isinstance(obj, _IMMUTABLE_AUDIT_MODELS) and session.is_modified(obj, include_collections=False):
+            raise AuditImmutabilityError(f"{type(obj).__name__} records are immutable and cannot be modified.")
+
+    deleted_document_ids = {
+        obj.id for obj in session.deleted if getattr(obj, "__tablename__", None) == "documents"
+    }
+    for obj in session.deleted:
+        if isinstance(obj, _IMMUTABLE_AUDIT_MODELS) and obj.document_id not in deleted_document_ids:
+            raise AuditImmutabilityError(f"{type(obj).__name__} records are immutable and cannot be deleted.")
