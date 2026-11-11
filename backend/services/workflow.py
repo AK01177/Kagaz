@@ -442,11 +442,33 @@ def _commit_transition(
         db.flush()
         db.commit()
         db.refresh(document)
+        db.refresh(transition)
     except Exception:
         db.rollback()
         raise
 
     _sync_sidecar_metadata(document, storage=storage)
+
+    # Dispatch in-app notifications (BE-13) - isolated and safe
+    try:
+        from services.notification import dispatch_workflow_notification
+        dispatch_workflow_notification(
+            db,
+            document=document,
+            transition=transition,
+            action=action,
+            actor_id=actor_id,
+            actor_role=actor_role,
+            assigned_to_id=assigned_to_id,
+            comment=comment,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Notification dispatch failed for document %s: %s",
+            document.id,
+            exc,
+        )
+
     return _build_workflow_response(db, document)
 
 
