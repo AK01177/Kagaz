@@ -6,7 +6,7 @@ import time
 from typing import Annotated, Collection, Optional
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -112,13 +112,8 @@ def get_auth_db(
     yield db
 
 
-def _resolve_active_membership(
-    db: Session,
-    *,
-    user_id: str,
-    organization_id: Optional[str] = None,
-) -> Optional[Membership]:
-    query = (
+def _active_memberships_query(db: Session, *, user_id: str):
+    return (
         db.query(Membership)
         .join(Organization, Organization.id == Membership.organization_id)
         .filter(
@@ -127,11 +122,35 @@ def _resolve_active_membership(
             Organization.is_active.is_(True),
         )
     )
+
+
+def _resolve_active_membership(
+    db: Session,
+    *,
+    user_id: str,
+    organization_id: Optional[str] = None,
+) -> Optional[Membership]:
+    query = _active_memberships_query(db, user_id=user_id)
     if organization_id is not None:
         query = query.filter(Membership.organization_id == organization_id)
     else:
         query = query.order_by(Membership.created_at.asc(), Membership.id.asc())
     return query.first()
+
+
+def _list_active_memberships(db: Session, *, user_id: str) -> list[dict[str, str]]:
+    rows = (
+        _active_memberships_query(db, user_id=user_id)
+        .order_by(Membership.created_at.asc(), Membership.id.asc())
+        .all()
+    )
+    return [
+        {
+            "organization_id": row.organization_id,
+            "role": row.role.value if hasattr(row.role, "value") else str(row.role),
+        }
+        for row in rows
+    ]
 
 
 def _decode_bearer_token(raw_token: str) -> dict:
@@ -240,8 +259,9 @@ async def login(
 def get_current_user(
     credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer)],
     db: Annotated[Optional[Session], Depends(get_auth_db)] = None,
+    x_organization_id: Annotated[Optional[str], Header(alias="X-Organization-Id")] = None,
 ) -> dict:
-    """Verify bearer JWT and resolve server-side identity, organization, and role."""
+    """Verify bearer JWT and resolve server-side identity, active organization, and role."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise _unauthenticated()
 
@@ -256,6 +276,20 @@ def get_current_user(
             detail={"code": "ACCOUNT_INACTIVE", "message": "An active account is required."},
         )
 
+    requested_org: Optional[str] = None
+    if x_organization_id is not None:
+        requested_org = x_organization_id.strip()
+        if not requested_org:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "MEMBERSHIP_REQUIRED",
+                    "message": "An active organization membership is required.",
+                },
+            )
+
+    target_organization_id = requested_org or claims["organization_id"]
+
     if db is not None:
         db_user = db.query(User).filter(User.id == claims["sub"]).first()
         if db_user is None:
@@ -268,7 +302,7 @@ def get_current_user(
         membership = _resolve_active_membership(
             db,
             user_id=db_user.id,
-            organization_id=claims["organization_id"],
+            organization_id=target_organization_id,
         )
         if membership is None:
             raise HTTPException(
@@ -289,12 +323,65 @@ def get_current_user(
             "organization_id": membership.organization_id,
             "role": resolved_role,
             "active": True,
+            "memberships": _list_active_memberships(db, user_id=db_user.id),
         }
 
-    return claims
+    if requested_org is not None and requested_org != claims["organization_id"]:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "MEMBERSHIP_REQUIRED",
+                "message": "An active organization membership is required.",
+            },
+        )
+
+    return {
+        **claims,
+        "memberships": claims.get("memberships")
+        or [{"organization_id": claims["organization_id"], "role": claims["role"]}],
+    }
 
 
 require_authenticated_user = get_current_user
+
+
+def get_active_organization_id(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> str:
+    """Return the verified active organization context for the authenticated user."""
+    organization_id = identity.get("organization_id")
+    if not isinstance(organization_id, str) or not organization_id.strip():
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "MEMBERSHIP_REQUIRED",
+                "message": "An active organization membership is required.",
+            },
+        )
+    return organization_id.strip()
+
+
+def require_organization_membership(
+    identity: dict,
+    target_organization_id: Optional[str],
+    *,
+    forbidden_message: str = "Forbidden: Resource belongs to a different organization",
+) -> str:
+    """Fail closed unless the caller's active organization matches target_organization_id."""
+    user_org = identity.get("organization_id")
+    if not isinstance(user_org, str) or not user_org.strip():
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "MEMBERSHIP_REQUIRED",
+                "message": "An active organization membership is required.",
+            },
+        )
+    if not isinstance(target_organization_id, str) or not target_organization_id.strip():
+        raise HTTPException(status_code=403, detail=forbidden_message)
+    if target_organization_id.strip() != user_org.strip():
+        raise HTTPException(status_code=403, detail=forbidden_message)
+    return user_org.strip()
 
 
 @router.get("/me")
@@ -309,6 +396,21 @@ def get_authenticated_profile(
         "role": identity["role"],
         "organization_id": identity["organization_id"],
         "active": identity["active"],
+    }
+
+
+@router.get("/memberships")
+def list_authenticated_memberships(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """List verified active organization memberships for the authenticated caller."""
+    memberships = identity.get("memberships") or [
+        {"organization_id": identity["organization_id"], "role": identity["role"]}
+    ]
+    return {
+        "user_id": identity["sub"],
+        "active_organization_id": identity["organization_id"],
+        "memberships": memberships,
     }
 
 

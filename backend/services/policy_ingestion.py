@@ -1,9 +1,11 @@
 """PDF policy ingestion into the existing organization-scoped vector store."""
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.document import Document
 from app.models.policy import (
     EMBEDDING_DIMENSION,
     Policy,
@@ -64,11 +66,20 @@ def ingest_policy_version(
     version: PolicyVersion,
     source_filename: str,
     storage: DocumentStorage,
+    *,
+    expected_organization_id: Optional[str] = None,
 ) -> int:
     """Record unexpected processing errors so this version remains visible and retryable."""
     version_id = version.id
     try:
-        return _process_policy_version(db, policy, version, source_filename, storage)
+        return _process_policy_version(
+            db,
+            policy,
+            version,
+            source_filename,
+            storage,
+            expected_organization_id=expected_organization_id,
+        )
     except Exception:
         # Undo any partial chunk writes before recording the failure in a fresh transaction.
         db.rollback()
@@ -88,8 +99,26 @@ def _process_policy_version(
     version: PolicyVersion,
     source_filename: str,
     storage: DocumentStorage,
+    *,
+    expected_organization_id: Optional[str] = None,
 ) -> int:
-    """Extract, embed and atomically activate a policy version."""
+    """Verify organization boundaries, extract, embed and atomically activate a policy version."""
+    policy_org = (policy.organization_id or "").strip()
+    if not policy_org:
+        return _fail(db, version, "Policy ingestion rejected: missing organization context.")
+    if expected_organization_id is not None and policy_org != str(expected_organization_id).strip():
+        return _fail(db, version, "Policy ingestion rejected: organization context mismatch.")
+    if version.policy_id != policy.id:
+        return _fail(db, version, "Policy ingestion rejected: policy version mismatch.")
+
+    source_doc = db.query(Document).filter(Document.id == version.source_document_id).first()
+    if source_doc is None or source_doc.organization_id != policy_org:
+        return _fail(
+            db,
+            version,
+            "Policy ingestion rejected: source document does not belong to policy organization.",
+        )
+
     try:
         # Reuse the document extraction service so scanned PDFs take its OCR fallback path.
         text = extract_text(version.source_document_id, storage)

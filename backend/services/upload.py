@@ -71,8 +71,8 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
             doc_status = DocumentStatus.UPLOADED
         doc_data = DocumentMetadataCreate(
             id=document_id,
-            organization_id=_to_uuid(user.get("organization_id", "default_org")),
-            uploaded_by=_to_uuid(user.get("sub", "default_user")),
+            organization_id=_to_uuid(user["organization_id"]),
+            uploaded_by=_to_uuid(user["sub"]),
             filename=filename,
             file_type=mime,
             file_size=size,
@@ -84,7 +84,12 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
         persisted_doc = create_document_metadata(db, doc_data, document_id=document_id)
         if extraction is not None:
             from services.extraction_persistence import persist_extraction_result
-            persist_extraction_result(db, document_id, extraction)
+            persist_extraction_result(
+                db,
+                document_id,
+                extraction,
+                organization_id=persisted_doc.organization_id,
+            )
 
         from services.audit import record_audit_event, record_extraction_audit
 
@@ -149,6 +154,11 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
     extraction and persists fields + confidence into the metadata JSON so
     that GET /api/documents/{id}/extract can return them immediately.
     """
+    org_id = str(user.get("organization_id") or "").strip()
+    actor_id = str(user.get("sub") or "").strip()
+    if not org_id or not actor_id:
+        raise UploadError(403, "MEMBERSHIP_REQUIRED", "Authenticated organization membership is required.")
+
     filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     if not filename or "\x00" in filename:
         raise UploadError(400, "INVALID_FILE", "A valid filename is required.")
