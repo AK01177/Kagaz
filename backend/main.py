@@ -10,6 +10,7 @@ from api.documents import router as documents_router
 from api.auth import router as auth_router
 from api.policies import router as policies_router
 from app.api.routes.policies import router as policies_retrieval_router
+from app.api.routes.policy_validation import router as policy_validation_router
 
 load_dotenv()
 
@@ -34,6 +35,7 @@ app.include_router(documents_router)
 app.include_router(auth_router)
 app.include_router(policies_retrieval_router)
 app.include_router(policies_router)
+app.include_router(policy_validation_router)
 
 
 @app.exception_handler(HTTPException)

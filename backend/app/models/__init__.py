@@ -9,9 +9,9 @@ from app.models.policy import (
     PolicyVersion,
     PolicyVersionStatus,
 )
+from app.models.policy_validation import PolicyValidationFinding, PolicyValidationRun
 from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
-from app.models.policy import Policy, PolicyVersion
 from app.models.user import User, UserProviderMapping
 from app.models.validation import ValidationResult
 
@@ -25,9 +25,9 @@ __all__ = [
     "PolicyClassification",
     "PolicyVersion",
     "PolicyVersionStatus",
+    "PolicyValidationRun",
+    "PolicyValidationFinding",
     "Organization",
-    "Policy",
-    "PolicyVersion",
     "User",
     "UserProviderMapping",
     "Membership",
