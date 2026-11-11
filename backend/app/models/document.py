@@ -14,6 +14,7 @@ from sqlalchemy import (
     Float,
     Integer,
     String,
+    Text,
 )
 from sqlalchemy.orm import relationship
 
@@ -26,11 +27,21 @@ def utc_now() -> datetime:
 
 
 class DocumentStatus(str, enum.Enum):
-    """Lifecycle status of a document as it moves through the ingestion pipeline."""
+    """Lifecycle status of a document through ingestion and human workflow."""
+
     UPLOADED = "UPLOADED"
     PROCESSING = "PROCESSING"
     CLASSIFIED = "CLASSIFIED"
+    EXTRACTED = "EXTRACTED"
+    VALIDATED = "VALIDATED"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
     FAILED = "FAILED"
+    SUBMITTED = "SUBMITTED"
+    IN_REVIEW = "IN_REVIEW"
+    CHANGES_REQUESTED = "CHANGES_REQUESTED"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 
 class Document(Base):
@@ -72,9 +83,15 @@ class Document(Base):
     # Storage location (S3 key/path — not the file itself)
     storage_path = Column(String, nullable=False)
 
-    # Lifecycle
+    # Lifecycle & assignment
     status = Column(Enum(DocumentStatus), nullable=False, default=DocumentStatus.UPLOADED, index=True)
     upload_timestamp = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    assigned_reviewer_id = Column(String(36), nullable=True, index=True)
+    assigned_approver_id = Column(String(36), nullable=True, index=True)
+    revision_number = Column(Integer, nullable=False, default=0)
+    workflow_updated_at = Column(DateTime(timezone=True), nullable=True)
+    last_decision_by = Column(String(36), nullable=True)
+    last_decision_comment = Column(Text, nullable=True)
 
     # Populated once classification runs (BE-04) — nullable until then
     classification = Column(String, nullable=True)            # e.g. "invoice", "transcript"
@@ -86,6 +103,13 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    transitions = relationship(
+        "DocumentTransition",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="DocumentTransition.created_at",
     )
 
     def __repr__(self) -> str:

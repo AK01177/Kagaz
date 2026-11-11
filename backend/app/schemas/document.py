@@ -35,6 +35,10 @@ class DocumentMetadataResponse(BaseModel):
     upload_timestamp: datetime
     classification: Optional[str] = None
     classification_confidence: Optional[float] = None
+    assigned_reviewer_id: Optional[str] = None
+    assigned_approver_id: Optional[str] = None
+    revision_number: int = 0
+    workflow_updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 

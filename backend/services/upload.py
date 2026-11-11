@@ -63,11 +63,12 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
             except Exception:
                 return uuid.uuid5(uuid.NAMESPACE_DNS, str(v))
 
-        doc_status = (
-            DocumentStatus.CLASSIFIED
-            if response.get("status") in ("CLASSIFIED", "EXTRACTED")
-            else DocumentStatus.UPLOADED
-        )
+        if response.get("status") == "EXTRACTED":
+            doc_status = DocumentStatus.EXTRACTED
+        elif response.get("status") == "CLASSIFIED":
+            doc_status = DocumentStatus.CLASSIFIED
+        else:
+            doc_status = DocumentStatus.UPLOADED
         doc_data = DocumentMetadataCreate(
             id=document_id,
             organization_id=_to_uuid(user.get("organization_id", "default_org")),
