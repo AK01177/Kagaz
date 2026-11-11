@@ -92,11 +92,11 @@ class TestReclassifyEndpoint:
     """POST /api/documents/{document_id}/classify re-extracts and reclassifies."""
 
     def test_reclassify_returns_updated_classification(
-        self, client, invoice_pdf, storage_dir
+        self, client, invoice_pdf, storage_dir, reviewer_headers
     ):
         doc_id = upload_document(client, invoice_pdf, "inv.pdf")["body"]["document_id"]
 
-        resp = client.post(f"/api/documents/{doc_id}/classify")
+        resp = client.post(f"/api/documents/{doc_id}/classify", headers=reviewer_headers)
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "CLASSIFIED"
@@ -104,10 +104,10 @@ class TestReclassifyEndpoint:
         assert 0.0 < body["confidence"] <= 1.0
 
     def test_reclassify_updates_persisted_metadata(
-        self, client, invoice_pdf, storage_dir
+        self, client, invoice_pdf, storage_dir, reviewer_headers
     ):
         doc_id = upload_document(client, invoice_pdf)["body"]["document_id"]
-        client.post(f"/api/documents/{doc_id}/classify")
+        client.post(f"/api/documents/{doc_id}/classify", headers=reviewer_headers)
 
         meta = json.loads(
             (storage_dir / "metadata" / f"{doc_id}.json").read_text()
@@ -115,8 +115,8 @@ class TestReclassifyEndpoint:
         assert meta["status"] == "CLASSIFIED"
         assert meta["category"] == "financial"
 
-    def test_reclassify_nonexistent_document_returns_404(self, client):
-        resp = client.post("/api/documents/doc_does_not_exist/classify")
+    def test_reclassify_nonexistent_document_returns_404(self, client, reviewer_headers):
+        resp = client.post("/api/documents/doc_does_not_exist/classify", headers=reviewer_headers)
         assert resp.status_code == 404
 
 
@@ -211,7 +211,7 @@ class TestManualClassificationCorrection:
         assert resp.status_code == 200
 
         # … then reclassify via the API.
-        resp = client.post(f"/api/documents/{doc_id}/classify")
+        resp = client.post(f"/api/documents/{doc_id}/classify", headers=reviewer_headers)
         assert resp.status_code == 200
         body = resp.json()
         assert body["is_manually_corrected"] is False

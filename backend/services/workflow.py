@@ -88,7 +88,7 @@ DECISION_ALLOWED_FROM = {
 }
 
 SUBMIT_CALLER_ROLES = {"SUBMITTER", "ORG_ADMIN", "SYSTEM_ADMIN"}
-ASSIGN_REVIEWER_CALLER_ROLES = {"REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"}
+ASSIGN_REVIEWER_CALLER_ROLES = {"REVIEWER", "ORG_ADMIN", "SYSTEM_ADMIN"}
 REQUEST_CHANGES_REVIEWER_ROLES = {"REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"}
 REQUEST_CHANGES_APPROVAL_ROLES = {"APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"}
 SUBMIT_FOR_APPROVAL_CALLER_ROLES = {"REVIEWER", "ORG_ADMIN", "SYSTEM_ADMIN"}
@@ -159,12 +159,25 @@ def _normalize_comment(comment: Optional[str]) -> Optional[str]:
     return stripped or None
 
 
-def _require_role(actor: dict, allowed_roles: set[str], action_label: str) -> tuple[str, str]:
+from app.core.permissions import Permission, identity_has_permission
+
+
+def _require_role(
+    actor: dict,
+    allowed_roles: set[str],
+    action_label: str,
+    *,
+    required_permission: Optional[Permission] = None,
+) -> tuple[str, str]:
     actor_id = str(actor.get("sub") or "").strip()
     actor_role = str(actor.get("role") or "").strip().upper()
     if not actor_id or not actor.get("active", False):
         raise WorkflowError(403, "WORKFLOW_FORBIDDEN", "An active authenticated account is required.")
-    if actor_role not in allowed_roles:
+    has_permission = (
+        required_permission is not None
+        and identity_has_permission(actor, required_permission)
+    )
+    if actor_role not in allowed_roles and not has_permission:
         raise WorkflowError(
             403,
             "WORKFLOW_FORBIDDEN",
@@ -823,7 +836,12 @@ def decide_document(
 ) -> DocumentWorkflowResponse:
     """Record an explicit human APPROVE or REJECT decision from an authorized approver."""
     action_label = "approve documents" if approve else "reject documents"
-    actor_id, actor_role = _require_role(actor, APPROVER_CALLER_ROLES, action_label)
+    actor_id, actor_role = _require_role(
+        actor,
+        APPROVER_CALLER_ROLES,
+        action_label,
+        required_permission=Permission.WORKFLOW_DECIDE,
+    )
     document = _get_scoped_document(db, document_id, str(actor["organization_id"]))
     _validate_invalid_transition(
         document,

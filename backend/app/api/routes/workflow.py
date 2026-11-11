@@ -6,7 +6,7 @@ from typing import Annotated, Callable, List, Optional, TypeVar
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from api.auth import require_workflow_actor
+from api.auth import Permission, require_audit_reader, require_permission
 from app.db.session import get_db
 from app.schemas.workflow import (
     AssignReviewerRequest,
@@ -69,7 +69,7 @@ def _run_workflow_action(fn: Callable[[], _T]) -> _T:
 
 @router.get("/workflow/review-queue", response_model=ReviewQueueResponse)
 def get_review_queue_endpoint(
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_REVIEW_QUEUE))],
     status: Optional[str] = Query(default=None),
     assigned_to_me: bool = Query(default=False),
     classification: Optional[str] = Query(default=None),
@@ -90,7 +90,7 @@ def get_review_queue_endpoint(
 
 @router.get("/workflow/approval-queue", response_model=ReviewQueueResponse)
 def get_approval_queue_endpoint(
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_APPROVAL_QUEUE))],
     assigned_to_me: bool = Query(default=False),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> ReviewQueueResponse:
@@ -103,7 +103,7 @@ def get_approval_queue_endpoint(
 
 @router.get("/workflow/reviewers", response_model=List[EligibleReviewerResponse])
 def list_workflow_reviewers_endpoint(
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_VIEW_REVIEWERS))],
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> List[EligibleReviewerResponse]:
     """List active users eligible to review documents in the caller's organization."""
@@ -114,7 +114,7 @@ def list_workflow_reviewers_endpoint(
 @router.get("/{document_id}/workflow", response_model=DocumentWorkflowResponse)
 def get_document_workflow_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_VIEW_STATUS))],
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentWorkflowResponse:
     """Return current document workflow state, assignees, transition history, and advisory validation."""
@@ -125,7 +125,7 @@ def get_document_workflow_endpoint(
 @router.post("/{document_id}/submit", response_model=DocumentWorkflowResponse)
 def submit_document_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_SUBMIT))],
     payload: Optional[SubmitDocumentRequest] = Body(default=None),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentWorkflowResponse:
@@ -147,7 +147,7 @@ def submit_document_endpoint(
 @router.post("/{document_id}/assign", response_model=DocumentWorkflowResponse)
 def assign_reviewer_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_ASSIGN_REVIEWER))],
     payload: AssignReviewerRequest = Body(...),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentWorkflowResponse:
@@ -168,7 +168,7 @@ def assign_reviewer_endpoint(
 @router.post("/{document_id}/request-changes", response_model=DocumentWorkflowResponse)
 def request_changes_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_REQUEST_CHANGES))],
     payload: Optional[RequestChangesRequest] = Body(default=None),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentWorkflowResponse:
@@ -188,7 +188,7 @@ def request_changes_endpoint(
 @router.post("/{document_id}/resubmit", response_model=DocumentWorkflowResponse)
 def resubmit_document_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_RESUBMIT))],
     payload: Optional[ResubmitDocumentRequest] = Body(default=None),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentWorkflowResponse:
@@ -210,7 +210,7 @@ def resubmit_document_endpoint(
 @router.post("/{document_id}/submit-for-approval", response_model=DocumentWorkflowResponse)
 def submit_for_approval_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_SUBMIT_FOR_APPROVAL))],
     payload: Optional[SubmitForApprovalRequest] = Body(default=None),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentWorkflowResponse:
@@ -232,7 +232,7 @@ def submit_for_approval_endpoint(
 @router.get("/{document_id}/review", response_model=DocumentReviewDetailResponse)
 def get_document_review_detail_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_REVIEW_DETAIL))],
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentReviewDetailResponse:
     """Return permitted document details, extractions, validation evidence, comments, and audit events."""
@@ -243,7 +243,7 @@ def get_document_review_detail_endpoint(
 @router.post("/{document_id}/comments", response_model=ReviewCommentResponse, status_code=201)
 def add_review_comment_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_REVIEW_COMMENT))],
     payload: Optional[ReviewCommentRequest] = Body(default=None),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> ReviewCommentResponse:
@@ -258,7 +258,7 @@ def add_review_comment_endpoint(
 @router.post("/{document_id}/approve", response_model=DocumentWorkflowResponse)
 def approve_document_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_DECIDE))],
     payload: Optional[DecisionRequest] = Body(default=None),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentWorkflowResponse:
@@ -280,7 +280,7 @@ def approve_document_endpoint(
 @router.post("/{document_id}/reject", response_model=DocumentWorkflowResponse)
 def reject_document_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.WORKFLOW_DECIDE))],
     payload: Optional[DecisionRequest] = Body(default=None),
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentWorkflowResponse:
@@ -302,7 +302,7 @@ def reject_document_endpoint(
 @audit_router.get("/{document_id}", response_model=DocumentAuditTrailResponse)
 def get_document_audit_trail_endpoint(
     document_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_audit_reader)],
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> DocumentAuditTrailResponse:
     """Return chronological audit trail events for a permitted document."""

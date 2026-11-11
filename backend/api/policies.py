@@ -6,7 +6,7 @@ from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from api.auth import require_reviewer, require_submitter
+from api.auth import require_policy_admin, require_policy_reader
 from app.db.session import get_db
 from app.crud.policy import (
     create_policy,
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/policies", tags=["policies"])
 @router.post("", response_model=PolicyResponse, status_code=201)
 async def create_policy_endpoint(
     payload: PolicyCreate,
-    user: Annotated[dict, Depends(require_reviewer)],
+    user: Annotated[dict, Depends(require_policy_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Create a new policy and initial v1 version for the caller's organization."""
@@ -38,7 +38,7 @@ async def create_policy_endpoint(
 
 @router.get("", response_model=List[PolicyResponse])
 async def list_policies_endpoint(
-    user: Annotated[dict, Depends(require_submitter)],
+    user: Annotated[dict, Depends(require_policy_reader)],
     db: Annotated[Session, Depends(get_db)],
     domain: Optional[str] = Query(None, description="Filter by policy domain"),
     is_active: Optional[bool] = Query(None, description="Filter active/inactive policies"),
@@ -50,7 +50,7 @@ async def list_policies_endpoint(
 @router.get("/{policy_id}", response_model=PolicyResponse)
 async def get_policy_endpoint(
     policy_id: str,
-    user: Annotated[dict, Depends(require_submitter)],
+    user: Annotated[dict, Depends(require_policy_reader)],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Fetch policy details by ID within the caller's organization."""
@@ -64,7 +64,7 @@ async def get_policy_endpoint(
 async def update_policy_endpoint(
     policy_id: str,
     payload: PolicyUpdate,
-    user: Annotated[dict, Depends(require_reviewer)],
+    user: Annotated[dict, Depends(require_policy_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Update policy attributes and snapshot a new version if content is modified."""
@@ -77,7 +77,7 @@ async def update_policy_endpoint(
 @router.delete("/{policy_id}", response_model=PolicyResponse)
 async def delete_policy_endpoint(
     policy_id: str,
-    user: Annotated[dict, Depends(require_reviewer)],
+    user: Annotated[dict, Depends(require_policy_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Soft-deactivate a policy within the caller's organization."""
@@ -90,7 +90,7 @@ async def delete_policy_endpoint(
 @router.get("/{policy_id}/versions", response_model=List[PolicyVersionResponse])
 async def get_policy_versions_endpoint(
     policy_id: str,
-    user: Annotated[dict, Depends(require_submitter)],
+    user: Annotated[dict, Depends(require_policy_admin)],
     db: Annotated[Session, Depends(get_db)],
 ):
     """List full audit version history for a policy."""

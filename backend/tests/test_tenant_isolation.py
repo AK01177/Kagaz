@@ -512,12 +512,12 @@ class TestPolicyWorkflowAssistantAuditAndNotificationIsolation:
         assert (
             client.put(
                 f"/api/policies/{pol_b.id}",
-                headers=rev_a,
+                headers=adm_a,
                 json={"name": "Hijacked"},
             ).status_code
             == 404
         )
-        assert client.delete(f"/api/policies/{pol_b.id}", headers=rev_a).status_code == 404
+        assert client.delete(f"/api/policies/{pol_b.id}", headers=adm_a).status_code == 404
         assert client.get(f"/api/policies/{pol_b.id}/versions", headers=adm_a).status_code == 404
         assert list_policy_versions(db_session, pol_b.id, organization_id=ids["org_a"]) == []
 
