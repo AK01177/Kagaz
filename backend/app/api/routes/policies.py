@@ -193,7 +193,14 @@ def _ingest_uploaded_policy(
             "message": "The policy ingestion request could not be recorded.",
         })
 
-    chunk_count = ingest_policy_version(db, policy, version, filename, storage)
+    chunk_count = ingest_policy_version(
+        db,
+        policy,
+        version,
+        filename,
+        storage,
+        expected_organization_id=identity["organization_id"],
+    )
     db.refresh(version)
     return _ingestion_response(policy, version, source, chunk_count)
 
@@ -326,6 +333,7 @@ async def retry_policy_version(
         version,
         source.filename,
         storage,
+        expected_organization_id=identity["organization_id"],
     )
     db.refresh(version)
     return _ingestion_response(policy, version, source, chunk_count)

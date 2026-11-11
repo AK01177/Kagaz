@@ -147,6 +147,13 @@ def _overall_status(findings: list[dict], force_review: bool = False) -> str:
 
 
 def run_policy_validation(db: Session, document: Document, identity: dict) -> PolicyValidationRun:
+    from api.auth import require_organization_membership
+
+    verified_org_id = require_organization_membership(
+        identity,
+        document.organization_id,
+        forbidden_message="Forbidden: Document belongs to a different organization",
+    )
     extractions = db.query(Extraction).filter(Extraction.document_id == document.id).order_by(Extraction.field_name).all()
     schema = get_extraction_schema(document.classification or "")
     known_fields = set(schema.model_fields) if schema else set()

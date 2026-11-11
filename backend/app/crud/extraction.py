@@ -64,29 +64,38 @@ def create_extractions_bulk(
 def get_extractions_by_document(
     db: Session,
     document_id: str,
+    organization_id: Optional[str] = None,
 ) -> List[Extraction]:
     """Retrieve all extraction records for a document, ordered by field name."""
-    return (
-        db.query(Extraction)
-        .filter(Extraction.document_id == document_id)
-        .order_by(Extraction.field_name.asc())
-        .all()
-    )
+    query = db.query(Extraction).filter(Extraction.document_id == document_id)
+    if organization_id is not None:
+        query = query.join(Document, Document.id == Extraction.document_id).filter(
+            Document.organization_id == str(organization_id)
+        )
+    return query.order_by(Extraction.field_name.asc()).all()
 
 
 def get_document_extractions_summary(
     db: Session,
     document_id: str,
+    organization_id: Optional[str] = None,
 ) -> Optional[DocumentExtractionsResponse]:
     """
     Format stored extractions into the API shape defined in docs/api-design.md
     GET /api/documents/{document_id}/extract
     """
-    doc = db.query(Document).filter(Document.id == document_id).first()
+    doc_query = db.query(Document).filter(Document.id == document_id)
+    if organization_id is not None:
+        doc_query = doc_query.filter(Document.organization_id == str(organization_id))
+    doc = doc_query.first()
     if doc is None:
         return None
 
-    records = get_extractions_by_document(db, document_id)
+    records = get_extractions_by_document(
+        db,
+        document_id,
+        organization_id=organization_id,
+    )
     fields = {r.field_name: r.value for r in records}
     confidence = {r.field_name: r.confidence for r in records}
 
@@ -101,8 +110,21 @@ def get_document_extractions_summary(
 def delete_extractions_by_document(
     db: Session,
     document_id: str,
+    organization_id: Optional[str] = None,
 ) -> int:
-    """Delete all extraction records for a given document."""
+    """Delete all extraction records for a given document within optional org scope."""
+    if organization_id is not None:
+        doc = (
+            db.query(Document)
+            .filter(
+                Document.id == document_id,
+                Document.organization_id == str(organization_id),
+            )
+            .first()
+        )
+        if doc is None:
+            return 0
+
     try:
         deleted_count = (
             db.query(Extraction)

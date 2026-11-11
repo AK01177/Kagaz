@@ -106,6 +106,15 @@ def deactivate_policy(db: Session, policy: Policy) -> Policy:
     return policy
 
 
-def list_policy_versions(db: Session, policy_id: str) -> List[PolicyVersion]:
-    """Retrieve full audit version history for a policy."""
-    return db.query(PolicyVersion).filter(PolicyVersion.policy_id == policy_id).order_by(PolicyVersion.created_at.desc()).all()
+def list_policy_versions(
+    db: Session,
+    policy_id: str,
+    organization_id: Optional[str] = None,
+) -> List[PolicyVersion]:
+    """Retrieve full audit version history for a policy within optional organization scope."""
+    query = db.query(PolicyVersion).filter(PolicyVersion.policy_id == policy_id)
+    if organization_id is not None:
+        query = query.join(Policy, Policy.id == PolicyVersion.policy_id).filter(
+            Policy.organization_id == organization_id
+        )
+    return query.order_by(PolicyVersion.created_at.desc()).all()

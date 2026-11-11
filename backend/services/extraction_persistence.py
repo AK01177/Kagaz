@@ -16,7 +16,7 @@ Design notes
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from app.crud.extraction import (
     delete_extractions_by_document,
     get_document_extractions_summary,
 )
+from app.models.document import Document
 from app.schemas.extraction import (
     BaseDocumentExtraction,
     DocumentExtractionsResponse,
@@ -42,6 +43,8 @@ def persist_extraction_result(
     db: Session,
     document_id: str,
     extraction: BaseDocumentExtraction,
+    *,
+    organization_id: Optional[str] = None,
 ) -> List[ExtractionCreate]:
     """Convert a structured extraction result and persist it to the database.
 
@@ -52,13 +55,21 @@ def persist_extraction_result(
         db: Active SQLAlchemy session.
         document_id: Identifier of the parent document.
         extraction: Populated schema instance from the extraction service.
+        organization_id: Optional caller organization context that must match the document.
 
     Returns:
         List of ExtractionCreate objects that were persisted.
 
     Raises:
-        ExtractionPersistenceError: When the database operation fails.
+        ExtractionPersistenceError: When tenant context fails or the database operation fails.
     """
+    if organization_id is not None:
+        doc = db.query(Document).filter(Document.id == document_id).first()
+        if doc is None or doc.organization_id != str(organization_id):
+            raise ExtractionPersistenceError(
+                f"Document '{document_id}' does not belong to organization '{organization_id}'."
+            )
+
     flat_values = extraction.to_flat_dict()
     confidences = extraction.get_field_confidences()
 
@@ -86,7 +97,11 @@ def persist_extraction_result(
 
     try:
         # Delete existing records first to keep the operation idempotent
-        deleted = delete_extractions_by_document(db, document_id)
+        deleted = delete_extractions_by_document(
+            db,
+            document_id,
+            organization_id=organization_id,
+        )
         if deleted:
             logger.info(
                 "Replaced %d existing extraction record(s) for document %s",
@@ -114,6 +129,8 @@ def persist_extraction_result(
 def get_extraction_response(
     db: Session,
     document_id: str,
+    *,
+    organization_id: Optional[str] = None,
 ) -> DocumentExtractionsResponse | None:
     """Fetch and format stored extraction records for the API response.
 
@@ -121,4 +138,8 @@ def get_extraction_response(
     Returns an empty-fields response when the document exists but has
     no stored extractions yet (e.g. still processing).
     """
-    return get_document_extractions_summary(db, document_id)
+    return get_document_extractions_summary(
+        db,
+        document_id,
+        organization_id=organization_id,
+    )

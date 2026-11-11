@@ -20,7 +20,12 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
-from api.auth import require_authenticated_user, require_reviewer, require_submitter
+from api.auth import (
+    require_authenticated_user,
+    require_organization_membership,
+    require_reviewer,
+    require_submitter,
+)
 from api.upload_limit import UploadLimitRoute
 from app.db.session import get_db
 from services.classification import ClassificationError, DocumentCategory, classify_document
@@ -77,14 +82,27 @@ async def upload_document(
 # GET /api/documents/{document_id} — fetch document metadata (DB-03)
 # ---------------------------------------------------------------------------
 
-def _assert_document_org_access(doc_org: Optional[str], user: dict) -> None:
-    """Enforce tenant isolation between authenticated caller and document organization."""
-    user_org = user.get("organization_id")
-    if doc_org and user_org and doc_org != user_org:
-        raise HTTPException(
-            status_code=403,
-            detail="Forbidden: Document belongs to a different organization",
-        )
+def _assert_document_org_access(doc_org: Optional[str], user: dict) -> str:
+    """Enforce fail-closed tenant isolation between caller and document organization."""
+    return require_organization_membership(
+        user,
+        doc_org,
+        forbidden_message="Forbidden: Document belongs to a different organization",
+    )
+
+
+def _authorize_document_metadata(
+    document_id: str,
+    metadata: dict,
+    storage: DocumentStorage,
+    db: Optional[Session],
+    user: dict,
+) -> str:
+    """Verify document ownership from metadata JSON or backing DB record, failing closed."""
+    meta_org = metadata.get("organization_id")
+    if isinstance(meta_org, str) and meta_org.strip():
+        return _assert_document_org_access(meta_org.strip(), user)
+    return _assert_document_org_access(_lookup_document_org(document_id, storage, db), user)
 
 
 def _lookup_document_org(document_id: str, storage: DocumentStorage, db: Optional[Session]) -> Optional[str]:
@@ -92,18 +110,20 @@ def _lookup_document_org(document_id: str, storage: DocumentStorage, db: Optiona
     if metadata_path.exists():
         try:
             with open(metadata_path, "r", encoding="utf-8") as f:
-                return json.load(f).get("organization_id")
+                meta_org = json.load(f).get("organization_id")
+                if isinstance(meta_org, str) and meta_org.strip():
+                    return meta_org.strip()
         except Exception:
-            pass
+            return None
     if db is not None:
         try:
             from app.models.document import Document
 
             doc = db.query(Document).filter(Document.id == document_id).first()
-            if doc is not None:
-                return doc.organization_id
+            if doc is not None and isinstance(doc.organization_id, str) and doc.organization_id.strip():
+                return doc.organization_id.strip()
         except Exception:
-            pass
+            return None
     return None
 
 
@@ -153,7 +173,7 @@ async def get_document(
                 metadata = json.load(f)
         except Exception:
             raise HTTPException(status_code=500, detail="Could not read metadata")
-        _assert_document_org_access(metadata.get("organization_id"), user)
+        _authorize_document_metadata(document_id, metadata, storage, db, user)
         return metadata
 
     # DB fallback if metadata JSON file is absent
@@ -177,7 +197,11 @@ async def get_document(
                     "submitter_id": doc.uploaded_by,
                 }
                 from app.crud.extraction import get_extractions_by_document
-                extractions = get_extractions_by_document(db, document_id)
+                extractions = get_extractions_by_document(
+                    db,
+                    document_id,
+                    organization_id=user["organization_id"],
+                )
                 if extractions:
                     data["extracted_fields"] = {e.field_name: e.value for e in extractions}
                     data["extracted_confidence"] = {e.field_name: e.confidence for e in extractions}
@@ -208,6 +232,14 @@ async def correct_classification(
     if not metadata_path.exists():
         raise HTTPException(status_code=404, detail="Document not found")
 
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    _authorize_document_metadata(document_id, metadata, storage, db, user)
+
     valid_categories = [c.value for c in DocumentCategory]
     normalized_category = payload.category.strip().lower()
     if normalized_category not in valid_categories:
@@ -215,14 +247,6 @@ async def correct_classification(
             status_code=422,
             detail=f"Invalid category '{payload.category}'. Valid categories are: {', '.join(valid_categories)}",
         )
-
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not read metadata")
-
-    _assert_document_org_access(metadata.get("organization_id"), user)
 
     previous_category = metadata.get("category")
     previous_confidence = metadata.get("confidence")
@@ -262,7 +286,14 @@ async def correct_classification(
             from app.models.document import Document, DocumentStatus
             from services.audit import record_audit_event
 
-            doc = db.query(Document).filter(Document.id == document_id).first()
+            doc = (
+                db.query(Document)
+                .filter(
+                    Document.id == document_id,
+                    Document.organization_id == user["organization_id"],
+                )
+                .first()
+            )
             if doc is not None:
                 prev_status = doc.status.value
                 doc.classification = normalized_category
@@ -304,7 +335,12 @@ async def correct_classification(
                 db.commit()
                 if extraction is not None:
                     from services.extraction_persistence import persist_extraction_result
-                    persist_extraction_result(db, document_id, extraction)
+                    persist_extraction_result(
+                        db,
+                        document_id,
+                        extraction,
+                        organization_id=user["organization_id"],
+                    )
         except Exception as e:
             logger.debug("DB classification update fallback for %s: %s", document_id, e)
 
@@ -338,7 +374,13 @@ async def get_extraction_results(
         except Exception:
             raise HTTPException(status_code=500, detail="Could not read metadata")
 
-    # If neither metadata JSON nor DB has the document, return 404
+    # Enforce tenant isolation before querying DB extraction tables
+    doc_org = _lookup_document_org(document_id, storage, db)
+    if not metadata and doc_org is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    _assert_document_org_access(metadata.get("organization_id") or doc_org, user)
+
     fields: dict = metadata.get("extracted_fields", {})
     confidence: dict = metadata.get("extracted_confidence", {})
     doc_type = metadata.get("category")
@@ -347,7 +389,11 @@ async def get_extraction_results(
     if db is not None:
         try:
             from app.crud.extraction import get_document_extractions_summary
-            summary = get_document_extractions_summary(db, document_id)
+            summary = get_document_extractions_summary(
+                db,
+                document_id,
+                organization_id=user["organization_id"],
+            )
             if summary is not None:
                 doc_type = summary.document_type or doc_type
                 if summary.fields:
@@ -358,8 +404,6 @@ async def get_extraction_results(
 
     if not metadata and not doc_type:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    _assert_document_org_access(metadata.get("organization_id") or _lookup_document_org(document_id, storage, db), user)
 
     extraction_status = "EXTRACTED" if fields else metadata.get("status", "UPLOADED")
 
@@ -394,7 +438,7 @@ async def run_extraction(
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
 
-    _assert_document_org_access(metadata.get("organization_id"), user)
+    _authorize_document_metadata(document_id, metadata, storage, db, user)
 
     try:
         text = await run_in_threadpool(extract_text, document_id, storage)
@@ -429,7 +473,14 @@ async def run_extraction(
                 from app.models.document import Document
                 from services.audit import record_audit_event
 
-                doc = db.query(Document).filter(Document.id == document_id).first()
+                doc = (
+                    db.query(Document)
+                    .filter(
+                        Document.id == document_id,
+                        Document.organization_id == user["organization_id"],
+                    )
+                    .first()
+                )
                 if doc is not None:
                     record_audit_event(
                         db,
@@ -458,8 +509,20 @@ async def run_extraction(
             from services.audit import record_audit_event
             from services.extraction_persistence import persist_extraction_result
 
-            persist_extraction_result(db, document_id, extraction_result)
-            doc = db.query(Document).filter(Document.id == document_id).first()
+            persist_extraction_result(
+                db,
+                document_id,
+                extraction_result,
+                organization_id=user["organization_id"],
+            )
+            doc = (
+                db.query(Document)
+                .filter(
+                    Document.id == document_id,
+                    Document.organization_id == user["organization_id"],
+                )
+                .first()
+            )
             if doc is not None:
                 from services.audit import record_extraction_audit
 
@@ -522,7 +585,7 @@ async def reclassify_document(
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
 
-    _assert_document_org_access(metadata.get("organization_id"), user)
+    _authorize_document_metadata(document_id, metadata, storage, db, user)
 
     try:
         text = extract_text(document_id, storage)
@@ -548,7 +611,14 @@ async def reclassify_document(
                 from app.models.document import Document, DocumentStatus
                 from services.audit import record_audit_event
 
-                doc = db.query(Document).filter(Document.id == document_id).first()
+                doc = (
+                    db.query(Document)
+                    .filter(
+                        Document.id == document_id,
+                        Document.organization_id == user["organization_id"],
+                    )
+                    .first()
+                )
                 if doc is not None:
                     prev_status = doc.status.value
                     doc.classification = result.category.value
@@ -589,7 +659,12 @@ async def reclassify_document(
                     db.commit()
                     if extraction is not None:
                         from services.extraction_persistence import persist_extraction_result
-                        persist_extraction_result(db, document_id, extraction)
+                        persist_extraction_result(
+                            db,
+                            document_id,
+                            extraction,
+                            organization_id=user["organization_id"],
+                        )
             except Exception as e:
                 logger.debug("DB reclassify fallback for %s: %s", document_id, e)
 
@@ -627,9 +702,7 @@ async def validate_document_endpoint(
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
 
-    doc_org = metadata.get("organization_id")
-    user_org = user["organization_id"]
-    _assert_document_org_access(doc_org, user)
+    user_org = _authorize_document_metadata(document_id, metadata, storage, db, user)
 
     category = metadata.get("category", "financial")
     fields = metadata.get("extracted_fields") or {}
@@ -664,7 +737,7 @@ async def get_document_validation_endpoint(
     if db is not None:
         try:
             raw_record = get_validation_result(db, document_id=document_id)
-            if raw_record:
+            if raw_record is not None:
                 _assert_document_org_access(raw_record.organization_id, user)
                 return raw_record
         except HTTPException:
@@ -676,6 +749,9 @@ async def get_document_validation_endpoint(
     storage = DocumentStorage()
     metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
     if not metadata_path.exists():
+        doc_org = _lookup_document_org(document_id, storage, db)
+        if doc_org is not None:
+            _assert_document_org_access(doc_org, user)
         raise HTTPException(status_code=404, detail="Validation result not found")
 
     try:
@@ -684,7 +760,7 @@ async def get_document_validation_endpoint(
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
 
-    _assert_document_org_access(metadata.get("organization_id"), user)
+    _authorize_document_metadata(document_id, metadata, storage, db, user)
 
     if "validation" not in metadata:
         raise HTTPException(status_code=404, detail="Document has not been validated yet")
