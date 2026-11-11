@@ -91,6 +91,7 @@ class Document(Base):
     revision_number = Column(Integer, nullable=False, default=0)
     workflow_updated_at = Column(DateTime(timezone=True), nullable=True)
     last_decision_by = Column(String(36), nullable=True)
+    last_decision_at = Column(DateTime(timezone=True), nullable=True)
     last_decision_comment = Column(Text, nullable=True)
 
     # Populated once classification runs (BE-04) — nullable until then
@@ -110,6 +111,20 @@ class Document(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="DocumentTransition.created_at",
+    )
+    review_comments = relationship(
+        "ReviewComment",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="ReviewComment.created_at",
+    )
+    audit_events = relationship(
+        "AuditEvent",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="AuditEvent.created_at",
     )
 
     def __repr__(self) -> str:
