@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from reportlab.pdfgen import canvas
 
+from app.db.session import get_db
 from main import app
 from services.extraction import extract_text
 from services import upload
@@ -33,9 +34,13 @@ def client(monkeypatch, tmp_path):
     
     from services.classification import ClassificationResult, DocumentCategory
     monkeypatch.setattr("services.upload.classify_document", lambda text: ClassificationResult(category=DocumentCategory.INVOICE, confidence=0.95))
-    
-    with TestClient(app, headers={"Authorization": f"Bearer {token()}"}) as client:
-        yield client
+
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app, headers={"Authorization": f"Bearer {token()}"}) as client:
+            yield client
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture
@@ -133,13 +138,13 @@ def test_rejects_invalid_identity(client, pdf, claims, status):
     assert "error" in response.json()
 
 
-def test_allows_missing_authentication_in_dev_mode(client, pdf):
+def test_rejects_missing_or_empty_authentication(client, pdf):
     response = client.post(
         "/api/documents",
         headers={"Authorization": ""},
         files={"file": ("auth.pdf", pdf, "application/pdf")},
     )
-    assert response.status_code == 201
+    assert response.status_code == 401
 
 
 def test_rejects_wrong_signature(client):

@@ -7,14 +7,19 @@ from sqlalchemy.orm import Session
 try:
     from app.models.user import User, UserProviderMapping
     from app.schemas.user import UserCreate, UserProviderMappingCreate
+    from services.password import hash_password
 except ImportError:
     from backend.app.models.user import User, UserProviderMapping
     from backend.app.schemas.user import UserCreate, UserProviderMappingCreate
+    from backend.services.password import hash_password
 
 
 def create_user(db: Session, data: UserCreate) -> User:
     """Create and persist a new User."""
     user_dict = data.model_dump(exclude_unset=True)
+    raw_password = user_dict.pop("password", None)
+    if raw_password is not None:
+        user_dict["password_hash"] = hash_password(raw_password)
     if "email" in user_dict:
         user_dict["email"] = user_dict["email"].strip().lower()
     user = User(**user_dict)

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
-from api.auth import require_reviewer, require_submitter
+from api.auth import require_authenticated_user, require_reviewer, require_submitter
 from api.upload_limit import UploadLimitRoute
 from app.db.session import get_db
 from services.classification import ClassificationError, DocumentCategory, classify_document
@@ -77,13 +77,49 @@ async def upload_document(
 # GET /api/documents/{document_id} — fetch document metadata (DB-03)
 # ---------------------------------------------------------------------------
 
+def _assert_document_org_access(doc_org: Optional[str], user: dict) -> None:
+    """Enforce tenant isolation between authenticated caller and document organization."""
+    user_org = user.get("organization_id")
+    if doc_org and user_org and doc_org != user_org:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Document belongs to a different organization",
+        )
+
+
+def _lookup_document_org(document_id: str, storage: DocumentStorage, db: Optional[Session]) -> Optional[str]:
+    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                return json.load(f).get("organization_id")
+        except Exception:
+            pass
+    if db is not None:
+        try:
+            from app.models.document import Document
+
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if doc is not None:
+                return doc.organization_id
+        except Exception:
+            pass
+    return None
+
+
 @router.get("/{document_id}/file")
-async def get_document_file(document_id: str):
+async def get_document_file(
+    document_id: str,
+    user: Annotated[dict, Depends(require_authenticated_user)],
+    db: Annotated[Session | None, Depends(get_db)] = None,
+):
     storage = DocumentStorage()
     try:
         file_path = storage.resolve(document_id)
     except DocumentNotFoundError:
         raise HTTPException(status_code=404, detail="Document file not found")
+
+    _assert_document_org_access(_lookup_document_org(document_id, storage, db), user)
 
     ext = file_path.suffix.lower()
     media_types = {
@@ -104,6 +140,7 @@ async def get_document_file(document_id: str):
 @router.get("/{document_id}")
 async def get_document(
     document_id: str,
+    user: Annotated[dict, Depends(require_authenticated_user)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     storage = DocumentStorage()
@@ -113,9 +150,11 @@ async def get_document(
     if metadata_path.exists():
         try:
             with open(metadata_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                metadata = json.load(f)
         except Exception:
             raise HTTPException(status_code=500, detail="Could not read metadata")
+        _assert_document_org_access(metadata.get("organization_id"), user)
+        return metadata
 
     # DB fallback if metadata JSON file is absent
     if db is not None:
@@ -123,6 +162,7 @@ async def get_document(
             from app.models.document import Document
             doc = db.query(Document).filter(Document.id == document_id).first()
             if doc is not None:
+                _assert_document_org_access(doc.organization_id, user)
                 data = {
                     "document_id": doc.id,
                     "filename": doc.filename,
@@ -143,6 +183,8 @@ async def get_document(
                     data["extracted_confidence"] = {e.field_name: e.confidence for e in extractions}
                     data["status"] = "EXTRACTED"
                 return data
+        except HTTPException:
+            raise
         except Exception as e:
             logger.debug("DB document lookup fallback for %s: %s", document_id, e)
 
@@ -179,6 +221,8 @@ async def correct_classification(
             metadata = json.load(f)
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    _assert_document_org_access(metadata.get("organization_id"), user)
 
     previous_category = metadata.get("category")
     previous_confidence = metadata.get("confidence")
@@ -315,6 +359,8 @@ async def get_extraction_results(
     if not metadata and not doc_type:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    _assert_document_org_access(metadata.get("organization_id") or _lookup_document_org(document_id, storage, db), user)
+
     extraction_status = "EXTRACTED" if fields else metadata.get("status", "UPLOADED")
 
     return {
@@ -347,6 +393,8 @@ async def run_extraction(
             metadata = json.load(f)
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    _assert_document_org_access(metadata.get("organization_id"), user)
 
     try:
         text = await run_in_threadpool(extract_text, document_id, storage)
@@ -461,6 +509,7 @@ async def run_extraction(
 @router.post("/{document_id}/classify")
 async def reclassify_document(
     document_id: str,
+    user: Annotated[dict, Depends(require_authenticated_user)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     storage = DocumentStorage()
@@ -472,6 +521,8 @@ async def reclassify_document(
             metadata = json.load(f)
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
+
+    _assert_document_org_access(metadata.get("organization_id"), user)
 
     try:
         text = extract_text(document_id, storage)
@@ -577,9 +628,8 @@ async def validate_document_endpoint(
         raise HTTPException(status_code=500, detail="Could not read metadata")
 
     doc_org = metadata.get("organization_id")
-    user_org = user.get("organization_id", "dev_org")
-    if doc_org and user_org and doc_org != user_org:
-        raise HTTPException(status_code=403, detail="Forbidden: Document belongs to a different organization")
+    user_org = user["organization_id"]
+    _assert_document_org_access(doc_org, user)
 
     category = metadata.get("category", "financial")
     fields = metadata.get("extracted_fields") or {}
@@ -609,14 +659,13 @@ async def get_document_validation_endpoint(
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ):
     """BE-09: Fetch persisted validation result for document with organization isolation."""
-    user_org = user.get("organization_id", "dev_org")
+    user_org = user["organization_id"]
 
     if db is not None:
         try:
             raw_record = get_validation_result(db, document_id=document_id)
             if raw_record:
-                if raw_record.organization_id != user_org:
-                    raise HTTPException(status_code=403, detail="Forbidden: Document belongs to a different organization")
+                _assert_document_org_access(raw_record.organization_id, user)
                 return raw_record
         except HTTPException:
             raise
@@ -635,9 +684,7 @@ async def get_document_validation_endpoint(
     except Exception:
         raise HTTPException(status_code=500, detail="Could not read metadata")
 
-    doc_org = metadata.get("organization_id")
-    if doc_org and user_org and doc_org != user_org:
-        raise HTTPException(status_code=403, detail="Forbidden: Document belongs to a different organization")
+    _assert_document_org_access(metadata.get("organization_id"), user)
 
     if "validation" not in metadata:
         raise HTTPException(status_code=404, detail="Document has not been validated yet")

@@ -132,14 +132,14 @@ class TestAuthErrors:
         )
         assert resp.status_code == 401
 
-    def test_dev_mode_allows_unauthenticated_upload(
+    def test_missing_credentials_returns_401(
         self, unauthenticated_client, sample_pdf
     ):
         resp = unauthenticated_client.post(
             "/api/documents",
             files={"file": ("test.pdf", sample_pdf, "application/pdf")},
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 401
 
     def test_submitter_cannot_correct_classification(self, client, sample_pdf):
         """Submitters cannot correct document classifications (403)."""

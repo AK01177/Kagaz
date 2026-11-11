@@ -191,9 +191,14 @@ def api_client(monkeypatch, tmp_path):
         lambda text: ClassificationResult(category=DocumentCategory.FINANCIAL, confidence=0.95),
     )
 
+    from app.db.session import get_db
     from main import app
-    with TestClient(app) as client:
-        yield client, tmp_path
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app) as client:
+            yield client, tmp_path
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 def test_get_extract_returns_404_for_unknown_document(api_client):
@@ -208,10 +213,11 @@ def test_get_extract_returns_404_for_unknown_document(api_client):
 def test_get_extract_returns_empty_fields_when_not_yet_extracted(api_client):
     client, tmp_path = api_client
 
-    # Upload a document (no auth needed in dev mode for POST)
+    # Upload a document with submitter token
     pdf = _pdf_bytes()
     upload_res = client.post(
         "/api/documents",
+        headers={"Authorization": f"Bearer {_token(sub='sub_1', role='SUBMITTER')}"},
         files={"file": ("invoice.pdf", pdf, "application/pdf")},
     )
     assert upload_res.status_code == 201
@@ -235,8 +241,10 @@ def test_get_extract_returns_fields_when_metadata_has_extractions(api_client):
     pdf = _pdf_bytes()
     upload_res = client.post(
         "/api/documents",
+        headers={"Authorization": f"Bearer {_token(sub='sub_1', role='SUBMITTER')}"},
         files={"file": ("invoice.pdf", pdf, "application/pdf")},
     )
+    assert upload_res.status_code == 201
     doc_id = upload_res.json()["document_id"]
 
     # Manually inject extraction data into the JSON metadata
@@ -263,7 +271,12 @@ def test_get_extract_requires_reviewer_role(api_client):
     client, tmp_path = api_client
 
     pdf = _pdf_bytes()
-    upload_res = client.post("/api/documents", files={"file": ("invoice.pdf", pdf, "application/pdf")})
+    upload_res = client.post(
+        "/api/documents",
+        headers={"Authorization": f"Bearer {_token(sub='sub_1', role='SUBMITTER')}"},
+        files={"file": ("invoice.pdf", pdf, "application/pdf")},
+    )
+    assert upload_res.status_code == 201
     doc_id = upload_res.json()["document_id"]
 
     # Submitter token should be rejected

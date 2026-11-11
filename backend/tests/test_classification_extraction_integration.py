@@ -105,14 +105,19 @@ def test_env(tmp_path, monkeypatch):
     submitter_headers = {"Authorization": f"Bearer {_make_token(role='SUBMITTER')}"}
     reviewer_headers = {"Authorization": f"Bearer {_make_token(role='REVIEWER')}"}
 
-    with TestClient(app) as client:
-        yield {
-            "client": client,
-            "tmp_path": tmp_path,
-            "submitter_headers": submitter_headers,
-            "reviewer_headers": reviewer_headers,
-            "storage": DocumentStorage(base_dir=tmp_path),
-        }
+    from app.db.session import get_db
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app) as client:
+            yield {
+                "client": client,
+                "tmp_path": tmp_path,
+                "submitter_headers": submitter_headers,
+                "reviewer_headers": reviewer_headers,
+                "storage": DocumentStorage(base_dir=tmp_path),
+            }
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------

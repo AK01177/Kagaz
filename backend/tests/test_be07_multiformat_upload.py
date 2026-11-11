@@ -42,9 +42,14 @@ def client(monkeypatch, tmp_path):
         lambda doc_id, storage: "sample ocr text",
     )
 
+    from app.db.session import get_db
     from main import app
-    with TestClient(app, headers={"Authorization": f"Bearer {_token()}"}) as c:
-        yield c, tmp_path
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app, headers={"Authorization": f"Bearer {_token()}"}) as c:
+            yield c, tmp_path
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 def _pdf_bytes():

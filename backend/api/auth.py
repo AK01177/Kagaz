@@ -1,156 +1,225 @@
-import base64
-import json
+"""Authentication, credential verification, and reusable identity dependencies."""
+from __future__ import annotations
+
 import os
 import time
-from typing import Annotated, Optional
+from typing import Annotated, Collection, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+try:
+    from app.db.session import get_db
+    from app.models.membership import Membership
+    from app.models.organization import Organization
+    from app.models.user import User
+    from services.password import verify_password
+except ImportError:
+    from backend.app.db.session import get_db
+    from backend.app.models.membership import Membership
+    from backend.app.models.organization import Organization
+    from backend.app.models.user import User
+    from backend.services.password import verify_password
 
 bearer = HTTPBearer(auto_error=False)
 
-# Roles that are allowed to read and correct classification/extraction results
-_REVIEWER_ROLES = {"REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN", "COMPLIANCE", "AUDITOR"}
+# Roles allowed to read and correct classification/extraction results
+_REVIEWER_ROLES = frozenset(
+    {"REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN", "COMPLIANCE", "AUDITOR"}
+)
+_MIN_JWT_SECRET_BYTES = 32
+_DEFAULT_TOKEN_TTL_SECONDS = 3600
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _extract_mock_claims(token: str) -> dict | None:
-    """Decode simulated development mock token (kgz_jwt_<base64>) if present."""
-    if not token.startswith("kgz_jwt_"):
-        return None
-    try:
-        raw_b64 = token[len("kgz_jwt_"):]
-        # Fix padding if needed
-        padding = 4 - (len(raw_b64) % 4)
-        if padding != 4:
-            raw_b64 += "=" * padding
-        payload = json.loads(base64.b64decode(raw_b64).decode("utf-8"))
-        role = payload.get("role", "REVIEWER")
-        # If email suggests reviewer/auditor, ensure reviewer privileges
-        email = payload.get("email", "")
-        if any(term in email.lower() for term in ("reviewer", "auditor", "admin", "approver")):
-            role = "REVIEWER"
-        return {
-            "sub": str(payload.get("sub") or "dev_user"),
-            "organization_id": str(payload.get("organization_id") or "dev_org"),
-            "role": role,
-            "active": bool(payload.get("active", True)),
-        }
-    except Exception:
-        return None
+def _unauthenticated(message: str = "A valid bearer token is required.") -> HTTPException:
+    return HTTPException(
+        status_code=401,
+        detail={"code": "UNAUTHENTICATED", "message": message},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _require_jwt_secret(*, for_request: bool) -> str:
+    secret = os.environ.get("JWT_SECRET", "")
+    if len(secret.encode("utf-8")) < _MIN_JWT_SECRET_BYTES:
+        if for_request:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "AUTH_NOT_CONFIGURED",
+                    "message": "Authentication is not configured.",
+                },
+            )
+        raise RuntimeError("JWT_SECRET must be configured with at least 32 bytes")
+    return secret
+
+
+def _get_jwt_issuer() -> str:
+    return os.environ.get("JWT_ISSUER", "kagaz").strip() or "kagaz"
+
+
+def _get_jwt_audience() -> str:
+    return os.environ.get("JWT_AUDIENCE", "kagaz-api").strip() or "kagaz-api"
 
 
 def create_access_token(
     user_id: str,
     role: str = "SUBMITTER",
     organization_id: str = "org_kagaz_primary",
-    expires_in_seconds: int = 86400,
+    expires_in_seconds: Optional[int] = None,
 ) -> str:
-    """Generate a valid HS256 JWT matching the Kagaz platform specification."""
-    secret = os.environ.get("JWT_SECRET", "")
-    if len(secret.encode("utf-8")) < 32:
-        raise RuntimeError("JWT_SECRET must be configured with at least 32 bytes")
+    """Generate a signed, expiring HS256 JWT using environment-configured secrets."""
+    secret = _require_jwt_secret(for_request=False)
+    ttl = (
+        expires_in_seconds
+        if expires_in_seconds is not None
+        else int(os.environ.get("JWT_EXPIRES_IN_SECONDS", _DEFAULT_TOKEN_TTL_SECONDS))
+    )
+    if ttl <= 0:
+        raise ValueError("expires_in_seconds must be positive")
     now = int(time.time())
     payload = {
         "sub": user_id,
         "role": role,
         "organization_id": organization_id,
         "active": True,
-        "iss": os.environ.get("JWT_ISSUER", "kagaz"),
-        "aud": os.environ.get("JWT_AUDIENCE", "kagaz-api"),
+        "iss": _get_jwt_issuer(),
+        "aud": _get_jwt_audience(),
         "iat": now,
-        "exp": now + expires_in_seconds,
+        "exp": now + ttl,
     }
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
 class LoginRequest(BaseModel):
     email: str
-    password: Optional[str] = "password"
+    password: str
+    organization_id: Optional[str] = None
+    # Accepted only so caller-supplied privilege fields are ignored instead of 422,
+    # never trusted when determining authorization.
     role: Optional[str] = None
 
 
-def get_auth_db():
-    """Optional database session dependency for authentication."""
+def get_auth_db(
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+):
+    """Yield the configured database session for identity resolution."""
+    yield db
+
+
+def _resolve_active_membership(
+    db: Session,
+    *,
+    user_id: str,
+    organization_id: Optional[str] = None,
+) -> Optional[Membership]:
+    query = (
+        db.query(Membership)
+        .join(Organization, Organization.id == Membership.organization_id)
+        .filter(
+            Membership.user_id == user_id,
+            Membership.is_active.is_(True),
+            Organization.is_active.is_(True),
+        )
+    )
+    if organization_id is not None:
+        query = query.filter(Membership.organization_id == organization_id)
+    else:
+        query = query.order_by(Membership.created_at.asc(), Membership.id.asc())
+    return query.first()
+
+
+def _decode_bearer_token(raw_token: str) -> dict:
+    secret = _require_jwt_secret(for_request=True)
     try:
-        from backend.app.db.session import SessionLocal
-        db = SessionLocal()
-        try:
-            yield db
-        finally:
-            db.close()
-    except Exception:
-        yield None
+        claims = jwt.decode(
+            raw_token,
+            secret,
+            algorithms=["HS256"],
+            issuer=_get_jwt_issuer(),
+            audience=_get_jwt_audience(),
+            options={
+                "require": [
+                    "sub",
+                    "exp",
+                    "iat",
+                    "iss",
+                    "aud",
+                    "role",
+                    "organization_id",
+                    "active",
+                ]
+            },
+        )
+        for key in ("sub", "organization_id", "role"):
+            if not isinstance(claims[key], str) or not claims[key].strip():
+                raise jwt.InvalidTokenError("Invalid identity claim")
+        if not isinstance(claims["active"], bool):
+            raise jwt.InvalidTokenError("Invalid active claim")
+    except jwt.InvalidTokenError as exc:
+        raise _unauthenticated() from exc
+    return claims
 
 
 @router.post("/login")
 async def login(
     payload: LoginRequest,
-    db: Optional[Session] = Depends(get_auth_db),
+    db: Annotated[Optional[Session], Depends(get_auth_db)] = None,
 ):
-    """Authenticate and issue an archival access JWT token.
-    
-    Conforms to docs/api-design.md Section 5.2 and DB-02 security requirements:
-    Roles must not be accepted from caller-supplied login data.
-    Roles and organization memberships are resolved from the persistent database.
-    """
+    """Verify persistent user credentials and issue a signed expiring JWT."""
     email_clean = payload.email.strip().lower()
-    if not email_clean:
-        raise HTTPException(status_code=400, detail="Email is required.")
+    if not email_clean or not payload.password:
+        raise _unauthenticated("Valid email and password credentials are required.")
 
-    # DB-02 Security: Caller-supplied payload.role is explicitly ignored.
-    persisted_role: Optional[str] = None
-    persisted_org_id: Optional[str] = None
-    user_id = f"usr_{email_clean.split('@')[0].replace('.', '_')}"
-    user_name = email_clean.split("@")[0].replace(".", " ").title()
+    if db is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "AUTH_DATABASE_UNAVAILABLE",
+                "message": "Authentication requires an active database connection.",
+            },
+        )
 
-    if db is not None:
-        try:
-            try:
-                from app.models.user import User
-                from app.models.membership import Membership
-            except ImportError:
-                from backend.app.models.user import User
-                from backend.app.models.membership import Membership
+    db_user = db.query(User).filter(User.email == email_clean).first()
+    stored_hash = db_user.password_hash if db_user is not None else None
+    if db_user is None or not verify_password(payload.password, stored_hash):
+        raise _unauthenticated("Invalid email or password.")
 
-            db_user = db.query(User).filter(User.email == email_clean).first()
-            if db_user:
-                user_id = db_user.id
-                if db_user.full_name:
-                    user_name = db_user.full_name
-                membership = (
-                    db.query(Membership)
-                    .filter(
-                        Membership.user_id == db_user.id,
-                        Membership.is_active == True,
-                    )
-                    .first()
-                )
-                if membership:
-                    # membership.role is either enum or str
-                    role_val = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
-                    persisted_role = role_val
-                    persisted_org_id = membership.organization_id
-        except Exception:
-            pass
+    if not db_user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "ACCOUNT_INACTIVE", "message": "An active user account is required."},
+        )
 
-    if persisted_role:
-        assigned_role = persisted_role
-        organization_id = persisted_org_id or "org_kagaz_primary"
-    elif any(term in email_clean for term in ("reviewer", "auditor", "admin", "approver")):
-        assigned_role = "REVIEWER"
-        organization_id = "org_kagaz_primary"
-    else:
-        assigned_role = "SUBMITTER"
-        organization_id = "org_kagaz_primary"
+    target_org = payload.organization_id.strip() if payload.organization_id else None
+    membership = _resolve_active_membership(
+        db,
+        user_id=db_user.id,
+        organization_id=target_org,
+    )
+    if membership is None:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "MEMBERSHIP_REQUIRED",
+                "message": "An active organization membership is required.",
+            },
+        )
+
+    _require_jwt_secret(for_request=True)
+    assigned_role = (
+        membership.role.value if hasattr(membership.role, "value") else str(membership.role)
+    )
+    organization_id = membership.organization_id
+    user_name = db_user.full_name or email_clean.split("@")[0].replace(".", " ").title()
 
     token = create_access_token(
-        user_id=user_id,
+        user_id=db_user.id,
         role=assigned_role,
         organization_id=organization_id,
     )
@@ -159,173 +228,150 @@ async def login(
         "access_token": token,
         "token_type": "bearer",
         "user": {
-            "user_id": user_id,
+            "user_id": db_user.id,
             "name": user_name,
-            "email": email_clean,
+            "email": db_user.email,
             "role": assigned_role,
             "organization_id": organization_id,
         },
     }
 
 
-def require_submitter(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+def get_current_user(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer)],
+    db: Annotated[Optional[Session], Depends(get_auth_db)] = None,
 ) -> dict:
-    if credentials is None or credentials.credentials in ("undefined", "null", ""):
-        return {"sub": "dev_user", "organization_id": "dev_org", "role": "SUBMITTER", "active": True}
-
-    raw_token = credentials.credentials.strip()
-
-    # Check for frontend simulated mock token
-    mock_claims = _extract_mock_claims(raw_token) if os.environ.get("APP_ENV", "").lower() == "development" else None
-    if mock_claims is not None:
-        if not mock_claims.get("active"):
-            raise HTTPException(403, detail={"code": "UPLOAD_FORBIDDEN", "message": "An active submitter account is required."})
-        return mock_claims
-
-    secret = os.environ.get("JWT_SECRET", "")
-    if len(secret.encode("utf-8")) < 32:
-        raise HTTPException(503, detail={
-            "code": "AUTH_NOT_CONFIGURED", "message": "Authentication is not configured.",
-        })
-    try:
-        claims = jwt.decode(
-            raw_token,
-            secret,
-            algorithms=["HS256"],
-            issuer=os.environ.get("JWT_ISSUER", "kagaz"),
-            audience=os.environ.get("JWT_AUDIENCE", "kagaz-api"),
-            options={"require": ["sub", "exp", "iat", "iss", "aud", "role", "organization_id", "active"]},
-        )
-        for key in ("sub", "organization_id", "role"):
-            if not isinstance(claims[key], str) or not claims[key].strip():
-                raise jwt.InvalidTokenError("Invalid identity claim")
-    except jwt.InvalidTokenError as exc:
-        raise _unauthenticated() from exc
-    if claims["active"] is not True or claims["role"] != "SUBMITTER":
-        raise HTTPException(403, detail={
-            "code": "UPLOAD_FORBIDDEN", "message": "An active submitter account is required.",
-        })
-    return claims
-
-
-def require_reviewer(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
-) -> dict:
-    """BE-04 / BE-06: Allow REVIEWER and higher roles to access correction and extraction endpoints."""
-    if credentials is None or credentials.credentials in ("undefined", "null", ""):
-        return {"sub": "dev_reviewer", "organization_id": "dev_org", "role": "REVIEWER", "active": True}
-
-    raw_token = credentials.credentials.strip()
-
-    # Check for frontend simulated mock token
-    mock_claims = _extract_mock_claims(raw_token) if os.environ.get("APP_ENV", "").lower() == "development" else None
-    if mock_claims is not None:
-        if not mock_claims.get("active") or mock_claims.get("role") not in _REVIEWER_ROLES:
-            raise HTTPException(403, detail={
-                "code": "REVIEW_FORBIDDEN",
-                "message": "An active reviewer account is required.",
-            })
-        return mock_claims
-
-    secret = os.environ.get("JWT_SECRET", "")
-    if len(secret.encode("utf-8")) < 32:
-        raise HTTPException(503, detail={
-            "code": "AUTH_NOT_CONFIGURED", "message": "Authentication is not configured.",
-        })
-    try:
-        claims = jwt.decode(
-            raw_token,
-            secret,
-            algorithms=["HS256"],
-            issuer=os.environ.get("JWT_ISSUER", "kagaz"),
-            audience=os.environ.get("JWT_AUDIENCE", "kagaz-api"),
-            options={"require": ["sub", "exp", "iat", "iss", "aud", "role", "organization_id", "active"]},
-        )
-        for key in ("sub", "organization_id", "role"):
-            if not isinstance(claims[key], str) or not claims[key].strip():
-                raise jwt.InvalidTokenError("Invalid identity claim")
-    except jwt.InvalidTokenError as exc:
-        raise _unauthenticated() from exc
-    if claims["active"] is not True or claims["role"] not in _REVIEWER_ROLES:
-        raise HTTPException(403, detail={
-            "code": "REVIEW_FORBIDDEN",
-            "message": "An active reviewer account is required.",
-        })
-    return claims
-
-
-def _authenticate_bearer(
-    credentials: HTTPAuthorizationCredentials | None,
-    *,
-    forbidden_code: str,
-) -> dict:
-    """Decode strict JWT claims, allowing dev fallback only when APP_ENV=development."""
-    if credentials is None or credentials.credentials in ("undefined", "null", ""):
-        if os.environ.get("APP_ENV", "").lower() == "development":
-            return {"sub": "dev_reviewer", "organization_id": "dev_org", "role": "REVIEWER", "active": True}
+    """Verify bearer JWT and resolve server-side identity, organization, and role."""
+    if credentials is None or credentials.scheme.lower() != "bearer":
         raise _unauthenticated()
 
     raw_token = credentials.credentials.strip()
-    mock_claims = _extract_mock_claims(raw_token)
-    if mock_claims is not None:
-        if os.environ.get("APP_ENV", "").lower() != "development":
-            raise _unauthenticated()
-        if not mock_claims.get("active"):
-            raise HTTPException(403, detail={"code": forbidden_code, "message": "An active account is required."})
-        return mock_claims
+    if not raw_token or raw_token in ("undefined", "null"):
+        raise _unauthenticated()
 
-    secret = os.environ.get("JWT_SECRET", "")
-    if len(secret.encode("utf-8")) < 32:
-        raise HTTPException(status_code=503, detail={
-            "code": "AUTH_NOT_CONFIGURED", "message": "Authentication is not configured.",
-        })
-    try:
-        claims = jwt.decode(
-            raw_token,
-            secret,
-            algorithms=["HS256"],
-            issuer=os.environ.get("JWT_ISSUER", "kagaz"),
-            audience=os.environ.get("JWT_AUDIENCE", "kagaz-api"),
-            options={"require": ["sub", "exp", "iat", "iss", "aud", "role", "organization_id", "active"]},
-        )
-        for key in ("sub", "organization_id", "role"):
-            if not isinstance(claims[key], str) or not claims[key].strip():
-                raise jwt.InvalidTokenError("Invalid identity claim")
-    except jwt.InvalidTokenError as exc:
-        raise _unauthenticated() from exc
+    claims = _decode_bearer_token(raw_token)
     if claims["active"] is not True:
-        raise HTTPException(403, detail={"code": forbidden_code, "message": "An active account is required."})
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "ACCOUNT_INACTIVE", "message": "An active account is required."},
+        )
+
+    if db is not None:
+        db_user = db.query(User).filter(User.id == claims["sub"]).first()
+        if db_user is None:
+            raise _unauthenticated("Authenticated identity is not registered.")
+        if not db_user.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "ACCOUNT_INACTIVE", "message": "An active account is required."},
+            )
+        membership = _resolve_active_membership(
+            db,
+            user_id=db_user.id,
+            organization_id=claims["organization_id"],
+        )
+        if membership is None:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "MEMBERSHIP_REQUIRED",
+                    "message": "An active organization membership is required.",
+                },
+            )
+        resolved_role = (
+            membership.role.value if hasattr(membership.role, "value") else str(membership.role)
+        )
+        return {
+            **claims,
+            "sub": db_user.id,
+            "email": db_user.email,
+            "name": db_user.full_name,
+            "organization_id": membership.organization_id,
+            "role": resolved_role,
+            "active": True,
+        }
+
     return claims
 
 
-def require_policy_reader(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+require_authenticated_user = get_current_user
+
+
+@router.get("/me")
+def get_authenticated_profile(
+    identity: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
-    """Authenticate policy readers, allowing the development fallback only explicitly."""
-    return _authenticate_bearer(credentials, forbidden_code="POLICY_FORBIDDEN")
+    """Return the server-resolved identity for the currently authenticated caller."""
+    return {
+        "user_id": identity["sub"],
+        "email": identity.get("email"),
+        "name": identity.get("name"),
+        "role": identity["role"],
+        "organization_id": identity["organization_id"],
+        "active": identity["active"],
+    }
 
 
-def require_workflow_actor(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+def _require_role_access(
+    identity: dict,
+    allowed_roles: Collection[str],
+    *,
+    forbidden_code: str,
+    message: str,
 ) -> dict:
-    """Authenticate an active workflow actor via strict JWT verification."""
-    return _authenticate_bearer(credentials, forbidden_code="WORKFLOW_FORBIDDEN")
-
-
-def require_policy_admin(
-    identity: Annotated[dict, Depends(require_policy_reader)],
-) -> dict:
-    """Allow organization admins to manage policy knowledge for their tenant."""
-    if identity.get("role") != "ORG_ADMIN":
-        raise HTTPException(403, detail={
-            "code": "POLICY_ADMIN_REQUIRED",
-            "message": "An active organization admin account is required.",
-        })
+    if identity.get("role") not in allowed_roles:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": forbidden_code, "message": message},
+        )
     return identity
 
 
-def _unauthenticated() -> HTTPException:
-    return HTTPException(401, detail={
-        "code": "UNAUTHENTICATED", "message": "A valid bearer token is required.",
-    }, headers={"WWW-Authenticate": "Bearer"})
+def require_submitter(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Require an active authenticated submitter."""
+    return _require_role_access(
+        identity,
+        ("SUBMITTER",),
+        forbidden_code="UPLOAD_FORBIDDEN",
+        message="An active submitter account is required.",
+    )
+
+
+def require_reviewer(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Allow REVIEWER and higher roles to access correction and extraction endpoints."""
+    return _require_role_access(
+        identity,
+        _REVIEWER_ROLES,
+        forbidden_code="REVIEW_FORBIDDEN",
+        message="An active reviewer account is required.",
+    )
+
+
+def require_policy_reader(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Require an active authenticated user for tenant-scoped policy access."""
+    return identity
+
+
+def require_workflow_actor(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Require an active authenticated user for workflow endpoints."""
+    return identity
+
+
+def require_policy_admin(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Allow organization admins to manage policy knowledge for their tenant."""
+    return _require_role_access(
+        identity,
+        ("ORG_ADMIN",),
+        forbidden_code="POLICY_ADMIN_REQUIRED",
+        message="An active organization admin account is required.",
+    )
