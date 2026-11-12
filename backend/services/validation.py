@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.crud.policy import list_policies
 from app.crud.validation import get_validation_result, save_validation_result
+from app.models.document import Document
 from app.models.policy import Policy
 from storage.document_storage import DocumentStorage
 
@@ -56,6 +57,18 @@ def validate_document(
     storage: Optional[DocumentStorage] = None,
 ) -> Dict[str, Any]:
     """Evaluate document extraction fields against domain policy and record verdict."""
+    if not isinstance(organization_id, str) or not organization_id.strip():
+        raise ValueError("organization_id is required for document validation.")
+    normalized_org = organization_id.strip()
+
+    if policy is not None and policy.organization_id != normalized_org:
+        raise PermissionError("Forbidden: Policy belongs to a different organization.")
+
+    if db is not None:
+        db_doc = db.query(Document).filter(Document.id == document_id).first()
+        if db_doc is not None and db_doc.organization_id != normalized_org:
+            raise PermissionError("Forbidden: Document belongs to a different organization.")
+
     fields = extracted_fields or {}
     confidences = extracted_confidence or {}
     domain_key = (domain or "financial").lower()
@@ -64,7 +77,7 @@ def validate_document(
 
     # 1. Fetch active policy if not provided
     if policy is None and db is not None:
-        policies = list_policies(db, organization_id=organization_id, domain=domain_key, is_active=True)
+        policies = list_policies(db, organization_id=normalized_org, domain=domain_key, is_active=True)
         if policies:
             policy = policies[0]
 

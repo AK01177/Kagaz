@@ -455,9 +455,11 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture()
 def test_app_with_document(tmp_path, monkeypatch):
-    """Provide a TestClient wired to a temp storage directory containing one document."""
-    # Point DocumentStorage at a temp directory so tests are isolated
+    """Provide an authenticated reviewer TestClient wired to temp storage containing one document."""
     monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setenv("JWT_SECRET", "test-classification-secret-key-32-bytes")
+    monkeypatch.setenv("JWT_ISSUER", "kagaz")
+    monkeypatch.setenv("JWT_AUDIENCE", "kagaz-api")
 
     # Create the metadata subdirectory and seed a document metadata file
     metadata_dir = tmp_path / "metadata"
@@ -470,15 +472,28 @@ def test_app_with_document(tmp_path, monkeypatch):
         "category": "financial",
         "confidence": 0.82,
         "status": "CLASSIFIED",
+        "organization_id": "org_cls_test",
         "is_manually_corrected": False,
         "classification_history": [],
     }
     with open(metadata_dir / f"{doc_id}.json", "w") as f:
         json.dump(initial_metadata, f)
 
+    from api.auth import create_access_token
+    from app.db.session import get_db
     from main import app
-    client = TestClient(app)
-    return client, doc_id
+
+    token = create_access_token(
+        user_id="reviewer_cls_1",
+        role="REVIEWER",
+        organization_id="org_cls_test",
+    )
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as client:
+            yield client, doc_id
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 def test_manual_correction_valid_category(test_app_with_document):

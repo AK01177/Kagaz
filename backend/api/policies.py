@@ -97,4 +97,4 @@ async def get_policy_versions_endpoint(
     policy = get_policy(db, policy_id=policy_id, organization_id=user["organization_id"])
     if not policy:
         raise HTTPException(status_code=404, detail={"code": "POLICY_NOT_FOUND", "message": f"Policy '{policy_id}' not found."})
-    return list_policy_versions(db, policy_id=policy_id)
+    return list_policy_versions(db, policy_id=policy_id, organization_id=user["organization_id"])

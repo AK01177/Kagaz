@@ -2,20 +2,27 @@
 DB-02: Test and Development Seed Data.
 Seeds at least two isolated organizations with distinct users, provider mappings, and roles.
 """
-from typing import Any, Dict
+import os
+from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 
 try:
     from app.models.membership import Membership, MembershipRole
     from app.models.organization import Organization
     from app.models.user import User, UserProviderMapping
+    from services.password import hash_password
 except ImportError:
     from backend.app.models.membership import Membership, MembershipRole
     from backend.app.models.organization import Organization
     from backend.app.models.user import User, UserProviderMapping
+    from backend.services.password import hash_password
 
 
-def seed_two_organizations(db: Session) -> Dict[str, Any]:
+def seed_two_organizations(
+    db: Session,
+    *,
+    default_password: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Seed at least two isolated organizations into the database.
     
@@ -242,6 +249,11 @@ def seed_two_organizations(db: Session) -> Dict[str, Any]:
         )
         db.add(mem_frank_b)
 
+    if default_password:
+        for seeded_user in (user_alice, user_bob, user_charlie, user_david, user_eve, user_frank):
+            if not seeded_user.password_hash:
+                seeded_user.password_hash = hash_password(default_password)
+
     db.commit()
 
     return {
@@ -258,7 +270,10 @@ if __name__ == "__main__":
     from app.db.session import SessionLocal
     db = SessionLocal()
     try:
-        result = seed_two_organizations(db)
+        result = seed_two_organizations(
+            db,
+            default_password=os.environ.get("SEED_DEFAULT_PASSWORD"),
+        )
         print(f"Seeded {result['org_a'].name} and {result['org_b'].name} successfully.")
     finally:
         db.close()

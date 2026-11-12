@@ -11,7 +11,10 @@ from sqlalchemy.orm import sessionmaker
 from app.db.base import Base
 from app.db.session import get_db
 from app.models.document import Document, DocumentStatus
+from app.models.membership import Membership, MembershipRole
+from app.models.organization import Organization
 from app.models.policy import Policy, PolicyVersion, PolicyVersionStatus
+from app.models.user import User
 from main import app
 
 
@@ -22,7 +25,7 @@ def _token(organization_id: str, role: str = "ORG_ADMIN") -> str:
     now = int(time.time())
     return jwt.encode(
         {
-            "sub": f"admin-{organization_id}",
+            "sub": f"{role.lower()}-{organization_id}",
             "role": role,
             "organization_id": organization_id,
             "active": True,
@@ -55,6 +58,17 @@ def policy_client(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'policy.db'}")
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
+    org_a = Organization(id="org-a", name="Org A", slug="org-a", is_active=True)
+    org_b = Organization(id="org-b", name="Org B", slug="org-b", is_active=True)
+    adm_a = User(id="org_admin-org-a", email="admin@org-a.test", is_active=True)
+    rev_a = User(id="reviewer-org-a", email="reviewer@org-a.test", is_active=True)
+    session.add_all([org_a, org_b, adm_a, rev_a])
+    session.flush()
+    session.add_all([
+        Membership(organization_id="org-a", user_id=adm_a.id, role=MembershipRole.ORG_ADMIN, is_active=True),
+        Membership(organization_id="org-a", user_id=rev_a.id, role=MembershipRole.REVIEWER, is_active=True),
+    ])
+    session.commit()
     app.dependency_overrides[get_db] = lambda: session
     with TestClient(app) as client:
         yield client, session

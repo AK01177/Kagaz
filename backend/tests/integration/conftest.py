@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
+from app.db.session import get_db
 from main import app
 
 # Ensure both module paths resolve to the exact same module in sys.modules
@@ -188,8 +189,12 @@ def client(monkeypatch, storage_dir):
     monkeypatch.setattr(httpx, "post", _OpenRouterMock.handler)
     _OpenRouterMock.reset()
 
-    with TestClient(app, headers={"Authorization": f"Bearer {make_token()}"}) as tc:
-        yield tc
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app, headers={"Authorization": f"Bearer {make_token()}"}) as tc:
+            yield tc
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture()
@@ -210,13 +215,17 @@ def reviewer_client(monkeypatch, storage_dir):
     monkeypatch.setattr(httpx, "post", _OpenRouterMock.handler)
     _OpenRouterMock.reset()
 
-    with TestClient(app, headers={"Authorization": f"Bearer {make_reviewer_token()}"}) as tc:
-        yield tc
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app, headers={"Authorization": f"Bearer {make_reviewer_token()}"}) as tc:
+            yield tc
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture()
 def unauthenticated_client(monkeypatch, storage_dir):
-    """TestClient without any Authorization header (dev-mode fallback)."""
+    """TestClient without any Authorization header."""
     monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(storage_dir))
     monkeypatch.setenv("JWT_SECRET", JWT_SECRET)
     monkeypatch.setenv("JWT_ISSUER", "kagaz")
@@ -224,8 +233,12 @@ def unauthenticated_client(monkeypatch, storage_dir):
     monkeypatch.setenv("OPENROUTER_API_KEY", "fake-integration-test-key")
     monkeypatch.setattr(httpx, "post", _OpenRouterMock.handler)
     _OpenRouterMock.reset()
-    with TestClient(app) as tc:
-        yield tc
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        with TestClient(app) as tc:
+            yield tc
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture()

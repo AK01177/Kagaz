@@ -226,21 +226,28 @@ def test_foreign_key_enforcement_and_cascade_delete(db_session):
 # 3. Security: Caller-Supplied Role Rejection (Acceptance Criterion 3)
 # ==============================================================================
 
-def test_roles_must_not_be_accepted_from_caller_supplied_login(db_session):
+def test_roles_must_not_be_accepted_from_caller_supplied_login(db_session, monkeypatch):
     """
     CRITICAL ACCEPTANCE CRITERIA 3:
     Roles must not be accepted from caller-supplied login data.
     Even if an attacker sends {"role": "ORG_ADMIN"}, the role issued in the JWT
     must reflect the persisted Membership role in the database.
     """
+    from services.password import hash_password
+
+    monkeypatch.setenv("JWT_SECRET", "db02-test-secret-key-at-least-32-bytes")
     app.dependency_overrides[get_auth_db] = lambda: db_session
 
     try:
         client = TestClient(app)
 
-        # 1. Setup user in DB with persisted SUBMITTER role
+        # 1. Setup user in DB with persisted SUBMITTER role and hashed password
         org = Organization(name="Secure Org", slug="secure-org")
-        user = User(email="victim@secure.com", full_name="Victim Submitter")
+        user = User(
+            email="victim@secure.com",
+            full_name="Victim Submitter",
+            password_hash=hash_password("VictimPass!23"),
+        )
         db_session.add_all([org, user])
         db_session.commit()
 
@@ -258,7 +265,7 @@ def test_roles_must_not_be_accepted_from_caller_supplied_login(db_session):
             "/api/auth/login",
             json={
                 "email": "victim@secure.com",
-                "password": "any_password",
+                "password": "VictimPass!23",
                 "role": "ORG_ADMIN",  # ATTACK: caller supplied role
             },
         )
@@ -280,8 +287,9 @@ def test_roles_must_not_be_accepted_from_caller_supplied_login(db_session):
         app.dependency_overrides.pop(get_auth_db, None)
 
 
-def test_caller_cannot_elevate_unpersisted_user(db_session):
-    """An unpersisted caller cannot grant themselves ORG_ADMIN."""
+def test_caller_cannot_elevate_unpersisted_user(db_session, monkeypatch):
+    """An unpersisted caller cannot log in or grant themselves ORG_ADMIN."""
+    monkeypatch.setenv("JWT_SECRET", "db02-test-secret-key-at-least-32-bytes")
     app.dependency_overrides[get_auth_db] = lambda: db_session
     try:
         client = TestClient(app)
@@ -289,12 +297,11 @@ def test_caller_cannot_elevate_unpersisted_user(db_session):
             "/api/auth/login",
             json={
                 "email": "newbie@external.com",
+                "password": "SomePassword!1",
                 "role": "SYSTEM_ADMIN",
             },
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["user"]["role"] == "SUBMITTER"
+        assert response.status_code == 401
     finally:
         app.dependency_overrides.pop(get_auth_db, None)
 

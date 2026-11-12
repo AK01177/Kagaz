@@ -14,6 +14,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     id: Optional[str] = None
     is_active: bool = True
+    password: Optional[str] = Field(None, min_length=1, description="Plaintext password hashed before storage")
     provider: Optional[str] = Field(None, description="External identity provider name (e.g. google, azure_ad)")
     provider_subject: Optional[str] = Field(None, description="Subject ID within the identity provider")
 
@@ -21,6 +22,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     is_active: Optional[bool] = None
+    password: Optional[str] = Field(None, min_length=1, description="New plaintext password hashed before storage")
     provider: Optional[str] = None
     provider_subject: Optional[str] = None
 

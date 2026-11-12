@@ -346,13 +346,24 @@ export default function DocumentDetailsPage(props: {
 
       // 2. Fetch from backend API
       try {
-        const res = await fetch(`${API_URL}/api/documents/${documentId}`);
+        const token =
+          typeof window !== "undefined"
+            ? localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token")
+            : null;
+        const authHeaders: Record<string, string> = token
+          ? { Authorization: `Bearer ${token}` }
+          : {};
+        const res = await fetch(`${API_URL}/api/documents/${documentId}`, {
+          headers: authHeaders,
+        });
         if (res.ok && !ignore) {
           const data = await res.json();
           setDocument(data);
           if (data.status === "REVIEWER_VERIFIED") setCertified(true);
         }
-        const extRes = await fetch(`${API_URL}/api/documents/${documentId}/extract`);
+        const extRes = await fetch(`${API_URL}/api/documents/${documentId}/extract`, {
+          headers: authHeaders,
+        });
         if (extRes.ok && !ignore) {
           const extData = await extRes.json();
           setExtraction(extData);

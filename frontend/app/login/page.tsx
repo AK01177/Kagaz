@@ -15,52 +15,68 @@ interface AuthUser {
   organization_id: string;
 }
 
+function clearStoredSession(): void {
+  for (const key of ["kagaz_token", "kagaz_user_email", "kagaz_user_role", "kagaz_user_name"]) {
+    localStorage.removeItem(key);
+    sessionStorage.removeItem(key);
+  }
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const [activeUser, setActiveUser] = useState<AuthUser | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("REVIEWER");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        const storedEmail =
-          localStorage.getItem("kagaz_user_email") ||
-          sessionStorage.getItem("kagaz_user_email");
-        const storedRole =
-          localStorage.getItem("kagaz_user_role") ||
-          sessionStorage.getItem("kagaz_user_role") || "REVIEWER";
-        const storedName =
-          localStorage.getItem("kagaz_user_name") ||
-          sessionStorage.getItem("kagaz_user_name") || "Soham Doshi";
+    let ignore = false;
 
-        if (storedEmail) {
+    async function verifyStoredSession() {
+      try {
+        const token =
+          localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token");
+        if (!token || token === "undefined" || token === "null" || !token.includes(".")) {
+          clearStoredSession();
+          return;
+        }
+        const res = await fetch(`${API_URL}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          clearStoredSession();
+          return;
+        }
+        const profile = await res.json();
+        if (!ignore) {
           setActiveUser({
-            user_id: `usr_${storedEmail.split("@")[0]}`,
-            name: storedName,
-            email: storedEmail,
-            role: storedRole,
-            organization_id: "org_kagaz_primary",
+            user_id: profile.user_id,
+            name: profile.name || profile.email,
+            email: profile.email || "",
+            role: profile.role,
+            organization_id: profile.organization_id,
           });
         }
-      } catch {}
-    }, 0);
-    return () => clearTimeout(timer);
+      } catch {
+        // Leave existing activeUser unset if backend is unreachable
+      }
+    }
+
+    verifyStoredSession();
+    return () => {
+      ignore = true;
+    };
   }, []);
 
-  async function handleLogin(e?: React.FormEvent, customEmail?: string, customRole?: string) {
-    if (e) e.preventDefault();
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
     setLoading(true);
     setNotice(null);
 
-    const loginEmail = (customEmail || email).trim().toLowerCase();
-    const loginRole = (customRole || role).toUpperCase();
-
-    if (!loginEmail) {
-      setNotice({ type: "error", message: "Please provide a valid email address." });
+    const loginEmail = email.trim().toLowerCase();
+    if (!loginEmail || !password) {
+      setNotice({ type: "error", message: "Email and password are required." });
       setLoading(false);
       return;
     }
@@ -69,16 +85,20 @@ export default function LoginPage() {
       const res = await fetch(`${API_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail, role: loginRole }),
+        body: JSON.stringify({ email: loginEmail, password }),
       });
 
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error("Authentication rejected by backend.");
+        const serverMessage =
+          data?.error?.message || data?.detail?.message || "Invalid email or password.";
+        setNotice({ type: "error", message: serverMessage });
+        setLoading(false);
+        return;
       }
 
-      const data = await res.json();
       const token = data.access_token;
-      const user = data.user;
+      const user: AuthUser = data.user;
 
       localStorage.setItem("kagaz_token", token);
       sessionStorage.setItem("kagaz_token", token);
@@ -90,33 +110,18 @@ export default function LoginPage() {
       sessionStorage.setItem("kagaz_user_name", user.name);
 
       setActiveUser(user);
+      setPassword("");
       setNotice({
         type: "success",
-        message: `Authenticated as ${user.name} (${user.role}). JWT token anchored.`,
+        message: `Authenticated as ${user.name} (${user.role}).`,
       });
       setTimeout(() => {
         router.push("/documents");
-      }, 800);
+      }, 600);
     } catch {
-      // Local fallback token generation if backend is temporarily unreachable
-      const mockToken = `kgz_jwt_${btoa(JSON.stringify({ sub: `usr_${loginEmail.split("@")[0]}`, email: loginEmail, role: loginRole, active: true, iat: Date.now() }))}`;
-      localStorage.setItem("kagaz_token", mockToken);
-      sessionStorage.setItem("kagaz_token", mockToken);
-      localStorage.setItem("kagaz_user_email", loginEmail);
-      localStorage.setItem("kagaz_user_role", loginRole);
-      localStorage.setItem("kagaz_user_name", loginEmail.split("@")[0].replace(".", " ").replace(/\b\w/g, (c) => c.toUpperCase()));
-
-      setActiveUser({
-        user_id: `usr_${loginEmail.split("@")[0]}`,
-        name: loginEmail.split("@")[0].replace(".", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-        email: loginEmail,
-        role: loginRole,
-        organization_id: "org_kagaz_primary",
-      });
-
       setNotice({
-        type: "success",
-        message: `Offline session initialized as ${loginRole}. Session active.`,
+        type: "error",
+        message: "Unable to reach the authentication service.",
       });
     } finally {
       setLoading(false);
@@ -124,14 +129,7 @@ export default function LoginPage() {
   }
 
   function handleLogout() {
-    localStorage.removeItem("kagaz_token");
-    sessionStorage.removeItem("kagaz_token");
-    localStorage.removeItem("kagaz_user_email");
-    sessionStorage.removeItem("kagaz_user_email");
-    localStorage.removeItem("kagaz_user_role");
-    sessionStorage.removeItem("kagaz_user_role");
-    localStorage.removeItem("kagaz_user_name");
-    sessionStorage.removeItem("kagaz_user_name");
+    clearStoredSession();
     setActiveUser(null);
     setNotice({ type: "success", message: "Signed out successfully." });
   }
@@ -142,13 +140,13 @@ export default function LoginPage() {
         <div className="crumb">
           <Icon name="book" size={14} /> Workspace <span>/</span> Access &amp; Authentication
           <div className="sync">
-            <span className="brand-dot" /> Synced just now
+            <span className="brand-dot" /> Identity Verified
           </div>
         </div>
         <div className="head-main">
           <div>
             <h1>Session &amp; Credentials</h1>
-            <p className="subline">ROLE-BASED GOVERNANCE · JWT AUTHORIZATION</p>
+            <p className="subline">ROLE-BASED GOVERNANCE · SIGNED JWT AUTHORIZATION</p>
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
             <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>
@@ -161,7 +159,7 @@ export default function LoginPage() {
         </div>
       </header>
 
-      <div className="intake-body" style={{ maxWidth: "860px" }}>
+      <div className="intake-body" style={{ maxWidth: "720px" }}>
         {notice && (
           <div
             style={{
@@ -174,11 +172,11 @@ export default function LoginPage() {
               fontSize: "12px",
             }}
           >
-            <b>{notice.type === "success" ? "Session Updated:" : "Notice:"}</b> {notice.message}
+            <b>{notice.type === "success" ? "Session Updated:" : "Authentication Failed:"}</b>{" "}
+            {notice.message}
           </div>
         )}
 
-        {/* Current Active Identity Card */}
         {activeUser ? (
           <div
             className="library-card"
@@ -195,7 +193,7 @@ export default function LoginPage() {
                 </p>
               </div>
               <Badge tone={activeUser.role === "REVIEWER" ? "green" : "violet"}>
-                {activeUser.role} PRIVILEGES
+                {activeUser.role}
               </Badge>
             </div>
 
@@ -216,8 +214,8 @@ export default function LoginPage() {
                 <b>{activeUser.organization_id}</b>
               </div>
               <div>
-                <span style={{ color: "var(--muted)", display: "block" }}>Allowed Actions</span>
-                <b>{activeUser.role === "REVIEWER" ? "Upload, Review & Stamp" : activeUser.role === "ORG_ADMIN" ? "All Permissions" : "Upload Documents"}</b>
+                <span style={{ color: "var(--muted)", display: "block" }}>Membership Role</span>
+                <b>{activeUser.role}</b>
               </div>
               <div>
                 <span style={{ color: "var(--muted)", display: "block" }}>Auth Mechanism</span>
@@ -233,90 +231,10 @@ export default function LoginPage() {
           </div>
         ) : null}
 
-        {/* Quick Demo Role Switcher */}
-        <div className="library-card" style={{ marginTop: 0, padding: "24px", marginBottom: "24px" }}>
-          <span className="eyebrow">INSTANT PERSONA SWITCHER</span>
-          <h2 style={{ margin: "6px 0 16px", font: "20px 'Newsreader', serif" }}>
-            Switch Platform Roles
-          </h2>
-          <p style={{ color: "var(--muted)", fontSize: "11px", margin: "0 0 16px" }}>
-            Test Kagaz permissions by switching between authorized role profiles:
-          </p>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px" }}>
-            <div
-              style={{
-                border: "1px solid var(--line2)",
-                borderRadius: "6px",
-                padding: "16px",
-                background: "white",
-                cursor: "pointer",
-              }}
-              onClick={() => handleLogin(undefined, "soham.reviewer@kagaz.ai", "REVIEWER")}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <b>Soham Doshi</b>
-                <Badge tone="green">REVIEWER</Badge>
-              </div>
-              <p style={{ margin: "0 0 12px", fontSize: "10px", color: "var(--muted)" }}>
-                Auditor access: Inspect low-confidence files, override categories, and stamp certifications.
-              </p>
-              <Button variant="secondary" icon="stamp">
-                Sign In as Reviewer
-              </Button>
-            </div>
-
-            <div
-              style={{
-                border: "1px solid var(--line2)",
-                borderRadius: "6px",
-                padding: "16px",
-                background: "white",
-                cursor: "pointer",
-              }}
-              onClick={() => handleLogin(undefined, "jane.submitter@kagaz.ai", "SUBMITTER")}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <b>Jane Submitter</b>
-                <Badge tone="violet">SUBMITTER</Badge>
-              </div>
-              <p style={{ margin: "0 0 12px", fontSize: "10px", color: "var(--muted)" }}>
-                Intake access: Deposit multi-format invoices, receipts, and candidate records.
-              </p>
-              <Button variant="secondary" icon="inbox">
-                Sign In as Submitter
-              </Button>
-            </div>
-
-            <div
-              style={{
-                border: "1px solid var(--line2)",
-                borderRadius: "6px",
-                padding: "16px",
-                background: "white",
-                cursor: "pointer",
-              }}
-              onClick={() => handleLogin(undefined, "admin@kagaz.ai", "ORG_ADMIN")}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                <b>System Admin</b>
-                <Badge tone="amber">ORG_ADMIN</Badge>
-              </div>
-              <p style={{ margin: "0 0 12px", fontSize: "10px", color: "var(--muted)" }}>
-                Administrator access: Manage user permissions, system health, and org policy documents.
-              </p>
-              <Button variant="secondary" icon="settings">
-                Sign In as Admin
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {/* Custom Login Form */}
         <div className="library-card" style={{ marginTop: 0, padding: "24px" }}>
-          <span className="eyebrow">CUSTOM CREDENTIALS</span>
+          <span className="eyebrow">REGISTERED CREDENTIALS</span>
           <h2 style={{ margin: "6px 0 16px", font: "20px 'Newsreader', serif" }}>
-            Enter Custom Account
+            Sign In to Kagaz
           </h2>
 
           <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -342,51 +260,26 @@ export default function LoginPage() {
               />
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>
-                  Password
-                </label>
-                <input
-                  type="password"
-                  placeholder="••••••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  style={{
-                    width: "100%",
-                    height: "36px",
-                    border: "1px solid var(--line2)",
-                    borderRadius: "5px",
-                    padding: "0 12px",
-                    background: "white",
-                    fontSize: "12px",
-                  }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>
-                  Request Role
-                </label>
-                <select
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  style={{
-                    width: "100%",
-                    height: "36px",
-                    border: "1px solid var(--line2)",
-                    borderRadius: "5px",
-                    padding: "0 12px",
-                    background: "white",
-                    fontSize: "12px",
-                  }}
-                >
-                  <option value="REVIEWER">Reviewer / Auditor</option>
-                  <option value="SUBMITTER">Submitter</option>
-                  <option value="APPROVER">Approver</option>
-                  <option value="ORG_ADMIN">Organization Admin</option>
-                </select>
-              </div>
+            <div>
+              <label style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>
+                Password
+              </label>
+              <input
+                type="password"
+                required
+                placeholder="••••••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{
+                  width: "100%",
+                  height: "36px",
+                  border: "1px solid var(--line2)",
+                  borderRadius: "5px",
+                  padding: "0 12px",
+                  background: "white",
+                  fontSize: "12px",
+                }}
+              />
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
