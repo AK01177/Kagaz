@@ -21,10 +21,14 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from api.auth import (
-    require_authenticated_user,
+    require_classifier,
+    require_document_reader,
+    require_extraction_reader,
+    require_extraction_runner,
     require_organization_membership,
     require_reviewer,
     require_submitter,
+    require_validator,
 )
 from api.upload_limit import UploadLimitRoute
 from app.db.session import get_db
@@ -91,6 +95,46 @@ def _assert_document_org_access(doc_org: Optional[str], user: dict) -> str:
     )
 
 
+def _lookup_document_owner(document_id: str, storage: DocumentStorage, db: Optional[Session]) -> Optional[str]:
+    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                owner = json.load(f).get("submitter_id")
+                if isinstance(owner, str) and owner.strip():
+                    return owner.strip()
+        except Exception:
+            pass
+    if db is not None:
+        try:
+            from app.models.document import Document
+
+            doc = db.query(Document).filter(Document.id == document_id).first()
+            if doc is not None and isinstance(doc.uploaded_by, str) and doc.uploaded_by.strip():
+                return doc.uploaded_by.strip()
+        except Exception:
+            pass
+    return None
+
+
+def _assert_submitter_document_owner(
+    user: dict,
+    owner_id: Optional[str],
+) -> None:
+    """Ensure SUBMITTER users can only read/validate their own uploaded documents."""
+    if str(user.get("role") or "").strip().upper() != "SUBMITTER":
+        return
+    actor_id = str(user.get("sub") or "").strip()
+    if isinstance(owner_id, str) and owner_id.strip() and owner_id.strip() != actor_id:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "DOCUMENT_ACCESS_FORBIDDEN",
+                "message": "Submitters may only access documents they uploaded.",
+            },
+        )
+
+
 def _authorize_document_metadata(
     document_id: str,
     metadata: dict,
@@ -100,9 +144,15 @@ def _authorize_document_metadata(
 ) -> str:
     """Verify document ownership from metadata JSON or backing DB record, failing closed."""
     meta_org = metadata.get("organization_id")
-    if isinstance(meta_org, str) and meta_org.strip():
-        return _assert_document_org_access(meta_org.strip(), user)
-    return _assert_document_org_access(_lookup_document_org(document_id, storage, db), user)
+    resolved_org = (
+        meta_org.strip()
+        if isinstance(meta_org, str) and meta_org.strip()
+        else _lookup_document_org(document_id, storage, db)
+    )
+    verified_org = _assert_document_org_access(resolved_org, user)
+    owner = metadata.get("submitter_id") or _lookup_document_owner(document_id, storage, db)
+    _assert_submitter_document_owner(user, owner)
+    return verified_org
 
 
 def _lookup_document_org(document_id: str, storage: DocumentStorage, db: Optional[Session]) -> Optional[str]:
@@ -130,7 +180,7 @@ def _lookup_document_org(document_id: str, storage: DocumentStorage, db: Optiona
 @router.get("/{document_id}/file")
 async def get_document_file(
     document_id: str,
-    user: Annotated[dict, Depends(require_authenticated_user)],
+    user: Annotated[dict, Depends(require_document_reader)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     storage = DocumentStorage()
@@ -140,6 +190,7 @@ async def get_document_file(
         raise HTTPException(status_code=404, detail="Document file not found")
 
     _assert_document_org_access(_lookup_document_org(document_id, storage, db), user)
+    _assert_submitter_document_owner(user, _lookup_document_owner(document_id, storage, db))
 
     ext = file_path.suffix.lower()
     media_types = {
@@ -160,7 +211,7 @@ async def get_document_file(
 @router.get("/{document_id}")
 async def get_document(
     document_id: str,
-    user: Annotated[dict, Depends(require_authenticated_user)],
+    user: Annotated[dict, Depends(require_document_reader)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     storage = DocumentStorage()
@@ -183,6 +234,7 @@ async def get_document(
             doc = db.query(Document).filter(Document.id == document_id).first()
             if doc is not None:
                 _assert_document_org_access(doc.organization_id, user)
+                _assert_submitter_document_owner(user, doc.uploaded_by)
                 data = {
                     "document_id": doc.id,
                     "filename": doc.filename,
@@ -360,7 +412,7 @@ async def correct_classification(
 @router.get("/{document_id}/extract")
 async def get_extraction_results(
     document_id: str,
-    user: Annotated[dict, Depends(require_reviewer)],
+    user: Annotated[dict, Depends(require_extraction_reader)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     """Return stored structured extraction fields for a document."""
@@ -423,7 +475,7 @@ async def get_extraction_results(
 @router.post("/{document_id}/extract")
 async def run_extraction(
     document_id: str,
-    user: Annotated[dict, Depends(require_reviewer)],
+    user: Annotated[dict, Depends(require_extraction_runner)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     """Re-run structured field extraction for an already-classified document."""
@@ -572,7 +624,7 @@ async def run_extraction(
 @router.post("/{document_id}/classify")
 async def reclassify_document(
     document_id: str,
-    user: Annotated[dict, Depends(require_authenticated_user)],
+    user: Annotated[dict, Depends(require_classifier)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     storage = DocumentStorage()
@@ -687,7 +739,7 @@ async def reclassify_document(
 @router.post("/{document_id}/validate", response_model=ValidationResultResponse)
 async def validate_document_endpoint(
     document_id: str,
-    user: Annotated[dict, Depends(require_submitter)],
+    user: Annotated[dict, Depends(require_validator)],
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ):
     """BE-09: Validate extracted fields against domain policies and record audit results."""
@@ -728,7 +780,7 @@ async def validate_document_endpoint(
 @router.get("/{document_id}/validate", response_model=ValidationResultResponse)
 async def get_document_validation_endpoint(
     document_id: str,
-    user: Annotated[dict, Depends(require_submitter)],
+    user: Annotated[dict, Depends(require_document_reader)],
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ):
     """BE-09: Fetch persisted validation result for document with organization isolation."""
@@ -739,6 +791,8 @@ async def get_document_validation_endpoint(
             raw_record = get_validation_result(db, document_id=document_id)
             if raw_record is not None:
                 _assert_document_org_access(raw_record.organization_id, user)
+                owner = _lookup_document_owner(document_id, DocumentStorage(), db)
+                _assert_submitter_document_owner(user, owner)
                 return raw_record
         except HTTPException:
             raise

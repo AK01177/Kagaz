@@ -71,8 +71,8 @@ class TestInvalidDocumentIdErrors:
     def test_get_nonexistent_document(self, client):
         assert client.get("/api/documents/doc_fake_123").status_code == 404
 
-    def test_classify_nonexistent_document(self, client):
-        assert client.post("/api/documents/doc_fake_123/classify").status_code == 404
+    def test_classify_nonexistent_document(self, client, reviewer_headers):
+        assert client.post("/api/documents/doc_fake_123/classify", headers=reviewer_headers).status_code == 404
 
     def test_correct_nonexistent_document(self, client, reviewer_headers):
         resp = client.patch(
@@ -160,7 +160,7 @@ class TestReclassifyProviderErrors:
     the classification or extraction step fails."""
 
     def test_reclassify_with_provider_failure_returns_error(
-        self, client, sample_pdf, monkeypatch
+        self, client, sample_pdf, monkeypatch, reviewer_headers
     ):
         doc_id = upload_document(client, sample_pdf)["body"]["document_id"]
 
@@ -168,7 +168,7 @@ class TestReclassifyProviderErrors:
         _OpenRouterMock.inject_failure(
             httpx.RequestError("Simulated provider timeout")
         )
-        resp = client.post(f"/api/documents/{doc_id}/classify")
+        resp = client.post(f"/api/documents/{doc_id}/classify", headers=reviewer_headers)
         # The endpoint wraps ExtractionError/ClassificationError as 422
         # and other exceptions as 500.
         assert resp.status_code in (422, 500)

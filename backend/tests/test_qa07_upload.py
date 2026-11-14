@@ -51,11 +51,12 @@ def expected():
 def client(monkeypatch, tmp_path):
     # The endpoint's existing dependency is replaced only for test identities.
     # Production authentication is not changed.
-    from api.auth import require_submitter, require_reviewer
+    from api.auth import require_submitter, require_reviewer, require_extraction_reader
     identity = {"sub": "qa07", "organization_id": "qa07-org", "role": "SUBMITTER"}
     saved = app.dependency_overrides.copy()
     app.dependency_overrides[require_submitter] = lambda: identity
     app.dependency_overrides[require_reviewer] = lambda: {**identity, "role": "REVIEWER"}
+    app.dependency_overrides[require_extraction_reader] = lambda: {**identity, "role": "REVIEWER"}
     monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(tmp_path))
     try:
         with TestClient(app) as test_client:

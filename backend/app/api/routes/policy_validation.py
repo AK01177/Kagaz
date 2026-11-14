@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from api.auth import require_policy_reader
+from api.auth import Permission, require_permission
 from app.db.session import get_db
 from app.models.document import Document
 from app.schemas.policy_validation import PolicyValidationRunResponse
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/documents", tags=["policy-validation"])
 @router.post("/{document_id}/validate-policy", response_model=PolicyValidationRunResponse)
 def validate_document_policy(
     document_id: str,
-    identity: dict = Depends(require_policy_reader),
+    identity: dict = Depends(require_permission(Permission.DOCUMENTS_VALIDATE_POLICY)),
     db: Session = Depends(get_db),
 ):
     if db is None:

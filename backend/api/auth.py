@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Annotated, Collection, Optional
+from typing import Annotated, Callable, Collection, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -12,12 +12,28 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 try:
+    from app.core.permissions import (
+        PERMISSION_ERROR_DETAILS,
+        ROLE_PERMISSIONS,
+        Permission,
+        get_permissions_for_role,
+        identity_has_permission,
+        roles_with_permission,
+    )
     from app.db.session import get_db
     from app.models.membership import Membership
     from app.models.organization import Organization
     from app.models.user import User
     from services.password import verify_password
 except ImportError:
+    from backend.app.core.permissions import (
+        PERMISSION_ERROR_DETAILS,
+        ROLE_PERMISSIONS,
+        Permission,
+        get_permissions_for_role,
+        identity_has_permission,
+        roles_with_permission,
+    )
     from backend.app.db.session import get_db
     from backend.app.models.membership import Membership
     from backend.app.models.organization import Organization
@@ -26,10 +42,8 @@ except ImportError:
 
 bearer = HTTPBearer(auto_error=False)
 
-# Roles allowed to read and correct classification/extraction results
-_REVIEWER_ROLES = frozenset(
-    {"REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN", "COMPLIANCE", "AUDITOR"}
-)
+# Roles allowed to perform document classification/extraction review mutations
+_REVIEWER_ROLES = roles_with_permission(Permission.DOCUMENTS_CORRECT_CLASSIFICATION)
 _MIN_JWT_SECRET_BYTES = 32
 _DEFAULT_TOKEN_TTL_SECONDS = 3600
 
@@ -72,6 +86,7 @@ def create_access_token(
     role: str = "SUBMITTER",
     organization_id: str = "org_kagaz_primary",
     expires_in_seconds: Optional[int] = None,
+    permissions: Optional[Collection[str]] = None,
 ) -> str:
     """Generate a signed, expiring HS256 JWT using environment-configured secrets."""
     secret = _require_jwt_secret(for_request=False)
@@ -83,7 +98,7 @@ def create_access_token(
     if ttl <= 0:
         raise ValueError("expires_in_seconds must be positive")
     now = int(time.time())
-    payload = {
+    payload: dict = {
         "sub": user_id,
         "role": role,
         "organization_id": organization_id,
@@ -93,6 +108,8 @@ def create_access_token(
         "iat": now,
         "exp": now + ttl,
     }
+    if permissions is not None:
+        payload["permissions"] = sorted({str(p).strip() for p in permissions if str(p).strip()})
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
@@ -322,6 +339,7 @@ def get_current_user(
             "name": db_user.full_name,
             "organization_id": membership.organization_id,
             "role": resolved_role,
+            "permissions": sorted(p.value for p in get_permissions_for_role(resolved_role)),
             "active": True,
             "memberships": _list_active_memberships(db, user_id=db_user.id),
         }
@@ -335,8 +353,14 @@ def get_current_user(
             },
         )
 
+    role_perms = {p.value for p in get_permissions_for_role(claims["role"])}
+    extra_perms = claims.get("permissions") or ()
+    if isinstance(extra_perms, (list, tuple, set, frozenset)):
+        role_perms.update(str(item).strip() for item in extra_perms if str(item).strip())
+
     return {
         **claims,
+        "permissions": sorted(role_perms),
         "memberships": claims.get("memberships")
         or [{"organization_id": claims["organization_id"], "role": claims["role"]}],
     }
@@ -365,6 +389,7 @@ def require_organization_membership(
     identity: dict,
     target_organization_id: Optional[str],
     *,
+    forbidden_code: str = "TENANT_ACCESS_DENIED",
     forbidden_message: str = "Forbidden: Resource belongs to a different organization",
 ) -> str:
     """Fail closed unless the caller's active organization matches target_organization_id."""
@@ -378,9 +403,15 @@ def require_organization_membership(
             },
         )
     if not isinstance(target_organization_id, str) or not target_organization_id.strip():
-        raise HTTPException(status_code=403, detail=forbidden_message)
+        raise HTTPException(
+            status_code=403,
+            detail={"code": forbidden_code, "message": forbidden_message},
+        )
     if target_organization_id.strip() != user_org.strip():
-        raise HTTPException(status_code=403, detail=forbidden_message)
+        raise HTTPException(
+            status_code=403,
+            detail={"code": forbidden_code, "message": forbidden_message},
+        )
     return user_org.strip()
 
 
@@ -414,6 +445,51 @@ def list_authenticated_memberships(
     }
 
 
+def _require_permission_access(
+    identity: dict,
+    permission: Permission | str,
+    *,
+    forbidden_code: Optional[str] = None,
+    message: Optional[str] = None,
+) -> dict:
+    perm = permission if isinstance(permission, Permission) else Permission(permission)
+    if not identity_has_permission(identity, perm):
+        default_code, default_message = PERMISSION_ERROR_DETAILS.get(
+            perm,
+            ("FORBIDDEN", "You do not have permission to perform this action."),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": forbidden_code or default_code,
+                "message": message or default_message,
+            },
+        )
+    return identity
+
+
+def require_permission(
+    permission: Permission | str,
+    *,
+    forbidden_code: Optional[str] = None,
+    message: Optional[str] = None,
+) -> Callable[..., dict]:
+    """Build a reusable FastAPI dependency enforcing a single matrix permission."""
+    perm = permission if isinstance(permission, Permission) else Permission(permission)
+
+    def _dependency(
+        identity: Annotated[dict, Depends(get_current_user)],
+    ) -> dict:
+        return _require_permission_access(
+            identity,
+            perm,
+            forbidden_code=forbidden_code,
+            message=message,
+        )
+
+    return _dependency
+
+
 def _require_role_access(
     identity: dict,
     allowed_roles: Collection[str],
@@ -432,32 +508,73 @@ def _require_role_access(
 def require_submitter(
     identity: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
-    """Require an active authenticated submitter."""
-    return _require_role_access(
+    """Require permission to upload/submit documents."""
+    return _require_permission_access(
         identity,
-        ("SUBMITTER",),
+        Permission.DOCUMENTS_UPLOAD,
         forbidden_code="UPLOAD_FORBIDDEN",
-        message="An active submitter account is required.",
+        message="An active submitter or admin account is required.",
     )
 
 
 def require_reviewer(
     identity: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
-    """Allow REVIEWER and higher roles to access correction and extraction endpoints."""
-    return _require_role_access(
+    """Require permission to perform reviewer classification/extraction updates."""
+    return _require_permission_access(
         identity,
-        _REVIEWER_ROLES,
+        Permission.DOCUMENTS_CORRECT_CLASSIFICATION,
         forbidden_code="REVIEW_FORBIDDEN",
         message="An active reviewer account is required.",
+    )
+
+
+def require_extraction_reader(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Require permission to read structured document extraction records."""
+    return _require_permission_access(
+        identity,
+        Permission.DOCUMENTS_READ_EXTRACTION,
+        forbidden_code="EXTRACTION_READ_FORBIDDEN",
+        message="You do not have permission to inspect extracted document fields.",
+    )
+
+
+def require_approver(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Require permission to issue final document approval or rejection decisions."""
+    return _require_permission_access(
+        identity,
+        Permission.WORKFLOW_DECIDE,
+        forbidden_code="APPROVAL_FORBIDDEN",
+        message="An authorized approver role is required to decide documents.",
+    )
+
+
+def require_org_admin(
+    identity: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Require organization administrator permission for tenant user/org management."""
+    return _require_permission_access(
+        identity,
+        Permission.ADMIN_USERS_MANAGE,
+        forbidden_code="ADMIN_FORBIDDEN",
+        message="An active organization administrator account is required.",
     )
 
 
 def require_policy_reader(
     identity: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
-    """Require an active authenticated user for tenant-scoped policy access."""
-    return identity
+    """Require permission to inspect organization policy knowledge."""
+    return _require_permission_access(
+        identity,
+        Permission.POLICIES_READ,
+        forbidden_code="POLICY_READ_FORBIDDEN",
+        message="You do not have permission to read organization policies.",
+    )
 
 
 def require_workflow_actor(
@@ -471,9 +588,16 @@ def require_policy_admin(
     identity: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     """Allow organization admins to manage policy knowledge for their tenant."""
-    return _require_role_access(
+    return _require_permission_access(
         identity,
-        ("ORG_ADMIN",),
+        Permission.POLICIES_ADMIN,
         forbidden_code="POLICY_ADMIN_REQUIRED",
         message="An active organization admin account is required.",
     )
+
+
+require_document_reader = require_permission(Permission.DOCUMENTS_READ)
+require_classifier = require_permission(Permission.DOCUMENTS_CLASSIFY)
+require_extraction_runner = require_permission(Permission.DOCUMENTS_RUN_EXTRACTION)
+require_validator = require_permission(Permission.DOCUMENTS_VALIDATE)
+require_audit_reader = require_permission(Permission.AUDIT_READ)

@@ -378,7 +378,7 @@ class TestAuthorizationAndIsolation:
         # Reviewer cannot submit
         r = client.post(f"/api/documents/{doc.id}/submit", json={}, headers=rev1_hdr)
         assert r.status_code == 403
-        assert r.json()["error"]["code"] == "WORKFLOW_FORBIDDEN"
+        assert r.json()["error"]["code"] == "WORKFLOW_SUBMIT_FORBIDDEN"
 
         # Submitter submits to rev1
         assert client.post(

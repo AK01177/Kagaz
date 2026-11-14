@@ -11,7 +11,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from api.auth import require_workflow_actor
+from api.auth import Permission, require_permission
 from app.db.session import get_db
 from app.schemas.notification import (
     MarkReadResponse,
@@ -41,7 +41,7 @@ def _require_db(db: Optional[Session]) -> Session:
 
 @router.get("", response_model=NotificationListResponse)
 def get_user_notifications(
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.NOTIFICATIONS_READ))],
     unread_only: bool = Query(default=False, description="Filter for unread notifications only"),
     limit: int = Query(default=50, ge=1, le=100, description="Page limit"),
     offset: int = Query(default=0, ge=0, description="Page offset"),
@@ -72,7 +72,7 @@ def get_user_notifications(
 @router.post("/{notification_id}/read", response_model=MarkReadResponse)
 def mark_read_endpoint(
     notification_id: str,
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.NOTIFICATIONS_READ))],
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> MarkReadResponse:
     """Mark a specific notification as read."""
@@ -104,7 +104,7 @@ def mark_read_endpoint(
 
 @router.post("/read-all", response_model=MarkReadResponse)
 def mark_all_read_endpoint(
-    actor: Annotated[dict, Depends(require_workflow_actor)],
+    actor: Annotated[dict, Depends(require_permission(Permission.NOTIFICATIONS_READ))],
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ) -> MarkReadResponse:
     """Mark all unread notifications for the caller as read."""

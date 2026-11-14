@@ -197,7 +197,7 @@ class TestFullAuditLifecycleAndChronology:
             assert client.post(
                 f"/api/documents/{doc_id}/assign",
                 json={"reviewer_id": actors["rev_1"]},
-                headers=app_hdr,
+                headers=rev1_hdr,
             ).status_code == 200
             assert client.post(
                 f"/api/documents/{doc_id}/comments",

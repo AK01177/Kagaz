@@ -11,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from api.auth import get_active_organization_id
+from api.auth import Permission, require_permission
 from app.crud.document import get_document_metadata
 from app.db.session import get_db
 from app.schemas.document import DocumentMetadataResponse
@@ -22,10 +22,11 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 @router.get("/{document_id}", response_model=DocumentMetadataResponse)
 def read_document_metadata(
     document_id: uuid.UUID,
-    organization_id: Annotated[str, Depends(get_active_organization_id)],
+    user: Annotated[dict, Depends(require_permission(Permission.DOCUMENTS_READ))],
     db: Session = Depends(get_db),
 ):
     """Retrieve metadata for a single uploaded document, scoped to the caller's active organization."""
+    organization_id = str(user["organization_id"])
     document = get_document_metadata(db, str(document_id), organization_id)
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
