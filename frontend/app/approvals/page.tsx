@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { AppShell, Button, Badge, Icon } from "../components/AppShell";
+import { ProtectedRoute } from "../components/ProtectedRoute";
+import { useAuth } from "../context/AuthContext";
 
 interface ApprovalItem {
   id: string;
@@ -38,9 +40,12 @@ const DEFAULT_APPROVALS: ApprovalItem[] = [
   },
 ];
 
-export default function ApprovalsPage() {
+function ApprovalsContent() {
+  const { user, activeOrgId } = useAuth();
   const [items] = useState<ApprovalItem[]>(DEFAULT_APPROVALS);
   const [decisions, setDecisions] = useState<Record<string, "approved" | "rejected">>({});
+
+  const currentOrg = activeOrgId || user?.organization_id || "ACME GLOBAL ENTERPRISE";
 
   function handleDecision(id: string, decision: "approved" | "rejected") {
     setDecisions((prev) => ({ ...prev, [id]: decision }));
@@ -52,13 +57,15 @@ export default function ApprovalsPage() {
         <div className="crumb">
           <Icon name="check" size={14} /> Workspace <span>/</span> Approval Ledger
           <div className="sync">
-            <span className="brand-dot" /> Synced just now
+            <span className="brand-dot" /> Verified Authority
           </div>
         </div>
         <div className="head-main">
           <div>
             <h1>Managerial Approval Ledger</h1>
-            <p className="subline">AUTHORIZED GOVERNANCE · {items.length} FILES AWAITING DECISION</p>
+            <p className="subline">
+              {currentOrg.toUpperCase()} · AUTHORIZED GOVERNANCE · {items.length} FILES AWAITING DECISION
+            </p>
           </div>
           <Button icon="sliders">Approval policies</Button>
         </div>
@@ -158,5 +165,13 @@ export default function ApprovalsPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+export default function ApprovalsPage() {
+  return (
+    <ProtectedRoute allowedRoles={["APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"]}>
+      <ApprovalsContent />
+    </ProtectedRoute>
   );
 }

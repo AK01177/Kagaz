@@ -1,73 +1,58 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell, Button, Badge, Icon } from "../components/AppShell";
+import { useAuth } from "../context/AuthContext";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-
-interface AuthUser {
-  user_id: string;
-  name: string;
-  email: string;
-  role: string;
-  organization_id: string;
-}
-
-function clearStoredSession(): void {
-  for (const key of ["kagaz_token", "kagaz_user_email", "kagaz_user_role", "kagaz_user_name"]) {
-    localStorage.removeItem(key);
-    sessionStorage.removeItem(key);
-  }
-}
-
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
-  const [activeUser, setActiveUser] = useState<AuthUser | null>(null);
+  const searchParams = useSearchParams();
+  const {
+    user,
+    activeOrgId,
+    memberships,
+    isAuthenticated,
+    sessionExpired,
+    login,
+    logout,
+    switchOrganization,
+    clearSessionExpiredNotice,
+  } = useAuth();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [orgInput, setOrgInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [notice, setNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const redirectPath = searchParams.get("redirect") || "/documents";
+  const wasExpired = searchParams.get("session_expired") === "true" || sessionExpired;
+
+  const [notice, setNotice] = useState<{
+    type: "success" | "error" | "warning";
+    message: string;
+  } | null>(() =>
+    wasExpired
+      ? {
+          type: "warning",
+          message:
+            "Your session has expired or is invalid. Please sign in again to continue working in your organization workspace.",
+        }
+      : null
+  );
 
   useEffect(() => {
-    let ignore = false;
-
-    async function verifyStoredSession() {
-      try {
-        const token =
-          localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token");
-        if (!token || token === "undefined" || token === "null" || !token.includes(".")) {
-          clearStoredSession();
-          return;
-        }
-        const res = await fetch(`${API_URL}/api/auth/me`, {
-          headers: { Authorization: `Bearer ${token}` },
+    if (sessionExpired) {
+      const timer = setTimeout(() => {
+        setNotice({
+          type: "warning",
+          message:
+            "Your session has expired or is invalid. Please sign in again to continue working in your organization workspace.",
         });
-        if (!res.ok) {
-          clearStoredSession();
-          return;
-        }
-        const profile = await res.json();
-        if (!ignore) {
-          setActiveUser({
-            user_id: profile.user_id,
-            name: profile.name || profile.email,
-            email: profile.email || "",
-            role: profile.role,
-            organization_id: profile.organization_id,
-          });
-        }
-      } catch {
-        // Leave existing activeUser unset if backend is unreachable
-      }
+      }, 0);
+      return () => clearTimeout(timer);
     }
-
-    verifyStoredSession();
-    return () => {
-      ignore = true;
-    };
-  }, []);
+  }, [sessionExpired]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -81,59 +66,345 @@ export default function LoginPage() {
       return;
     }
 
-    try {
-      const res = await fetch(`${API_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loginEmail, password }),
-      });
+    const result = await login(loginEmail, password, orgInput || undefined);
+    setLoading(false);
 
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        const serverMessage =
-          data?.error?.message || data?.detail?.message || "Invalid email or password.";
-        setNotice({ type: "error", message: serverMessage });
-        setLoading(false);
-        return;
-      }
-
-      const token = data.access_token;
-      const user: AuthUser = data.user;
-
-      localStorage.setItem("kagaz_token", token);
-      sessionStorage.setItem("kagaz_token", token);
-      localStorage.setItem("kagaz_user_email", user.email);
-      sessionStorage.setItem("kagaz_user_email", user.email);
-      localStorage.setItem("kagaz_user_role", user.role);
-      sessionStorage.setItem("kagaz_user_role", user.role);
-      localStorage.setItem("kagaz_user_name", user.name);
-      sessionStorage.setItem("kagaz_user_name", user.name);
-
-      setActiveUser(user);
-      setPassword("");
-      setNotice({
-        type: "success",
-        message: `Authenticated as ${user.name} (${user.role}).`,
-      });
-      setTimeout(() => {
-        router.push("/documents");
-      }, 600);
-    } catch {
+    if (!result.success) {
       setNotice({
         type: "error",
-        message: "Unable to reach the authentication service.",
+        message: result.error || "Authentication failed. Please verify your credentials.",
       });
-    } finally {
-      setLoading(false);
+      return;
+    }
+
+    clearSessionExpiredNotice();
+    setPassword("");
+    setNotice({
+      type: "success",
+      message: "Authentication successful! Redirecting to workspace...",
+    });
+
+    setTimeout(() => {
+      router.push(redirectPath);
+    }, 600);
+  }
+
+  async function handleOrgSwitch(targetOrgId: string) {
+    setNotice(null);
+    const result = await switchOrganization(targetOrgId);
+    if (!result.success) {
+      setNotice({
+        type: "error",
+        message: result.error || "Failed to switch active organization.",
+      });
+    } else {
+      setNotice({
+        type: "success",
+        message: `Active organization context switched to ${targetOrgId}.`,
+      });
     }
   }
 
   function handleLogout() {
-    clearStoredSession();
-    setActiveUser(null);
+    logout();
     setNotice({ type: "success", message: "Signed out successfully." });
   }
 
+  const roleColor = (role?: string) => {
+    switch (role) {
+      case "SYSTEM_ADMIN":
+      case "ORG_ADMIN":
+        return "violet";
+      case "APPROVER":
+      case "REVIEWER":
+        return "green";
+      case "COMPLIANCE":
+      case "AUDITOR":
+        return "amber";
+      default:
+        return "green";
+    }
+  };
+
+  return (
+    <div className="intake-body" style={{ maxWidth: "720px" }}>
+      {notice && (
+        <div
+          style={{
+            padding: "12px 16px",
+            background:
+              notice.type === "success"
+                ? "var(--green-bg, #f0fdf4)"
+                : notice.type === "warning"
+                ? "var(--amber-bg, #fffbeb)"
+                : "var(--red-bg, #fef2f2)",
+            border: `1px solid ${
+              notice.type === "success"
+                ? "var(--green, #15803d)"
+                : notice.type === "warning"
+                ? "var(--amber, #b45309)"
+                : "var(--red, #dc2626)"
+            }`,
+            color:
+              notice.type === "success"
+                ? "var(--green, #15803d)"
+                : notice.type === "warning"
+                ? "var(--amber, #b45309)"
+                : "var(--red, #dc2626)",
+            borderRadius: "6px",
+            marginBottom: "20px",
+            fontSize: "12px",
+            lineHeight: 1.5,
+          }}
+        >
+          <b>
+            {notice.type === "success"
+              ? "Session Updated:"
+              : notice.type === "warning"
+              ? "Session Notification:"
+              : "Authentication Failed:"}
+          </b>{" "}
+          {notice.message}
+        </div>
+      )}
+
+      {isAuthenticated && user ? (
+        <div
+          className="library-card"
+          style={{ marginTop: 0, padding: "24px", marginBottom: "24px" }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              flexWrap: "wrap",
+              gap: "12px",
+            }}
+          >
+            <div>
+              <span className="eyebrow">ACTIVE CREDENTIALS</span>
+              <h2 style={{ margin: "6px 0 2px", font: "22px 'Newsreader', serif" }}>
+                {user.name}
+              </h2>
+              <p style={{ margin: 0, color: "var(--muted)", fontSize: "11px" }}>
+                <code>{user.email}</code> · User ID: <code>{user.user_id}</code>
+              </p>
+            </div>
+            <Badge tone={roleColor(user.role)}>{user.role}</Badge>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: "12px",
+              margin: "20px 0",
+              padding: "14px",
+              background: "var(--side, #f8f7f4)",
+              borderRadius: "6px",
+              fontSize: "11px",
+            }}
+          >
+            <div>
+              <span style={{ color: "var(--muted)", display: "block" }}>Active Organization</span>
+              <b>{activeOrgId || user.organization_id}</b>
+            </div>
+            <div>
+              <span style={{ color: "var(--muted)", display: "block" }}>Membership Role</span>
+              <b>{user.role}</b>
+            </div>
+            <div>
+              <span style={{ color: "var(--muted)", display: "block" }}>Auth Mechanism</span>
+              <b>Signed JWT Bearer Token</b>
+            </div>
+          </div>
+
+          {/* Multi-Organization Switcher if user has multiple memberships */}
+          {memberships.length > 1 && (
+            <div
+              style={{
+                marginBottom: "20px",
+                padding: "16px",
+                border: "1px solid var(--line2, #e0ddd5)",
+                borderRadius: "6px",
+                background: "white",
+              }}
+            >
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  marginBottom: "6px",
+                  color: "var(--ink)",
+                }}
+              >
+                Switch Active Organization Context ({memberships.length} available)
+              </label>
+              <p style={{ fontSize: "11px", color: "var(--muted)", margin: "0 0 10px" }}>
+                Select an organization you belong to. The backend strictly validates membership before granting access.
+              </p>
+              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                <select
+                  value={activeOrgId || user.organization_id}
+                  onChange={(e) => handleOrgSwitch(e.target.value)}
+                  style={{
+                    height: "36px",
+                    padding: "0 12px",
+                    fontSize: "12px",
+                    border: "1px solid var(--line2, #e0ddd5)",
+                    borderRadius: "5px",
+                    background: "white",
+                    minWidth: "260px",
+                    cursor: "pointer",
+                  }}
+                  aria-label="Select organization"
+                >
+                  {memberships.map((m) => (
+                    <option key={m.organization_id} value={m.organization_id}>
+                      {m.organization_id} — Role: {m.role}
+                    </option>
+                  ))}
+                </select>
+                <span style={{ fontSize: "11px", color: "var(--muted)" }}>
+                  Current active context: <b>{activeOrgId || user.organization_id}</b>
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              gap: "10px",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <Button variant="secondary" onClick={handleLogout}>
+              Sign Out of Workspace
+            </Button>
+            <Link
+              href={redirectPath}
+              className="btn primary"
+              style={{ textDecoration: "none", fontSize: "12px" }}
+            >
+              Continue to Workspace →
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="library-card" style={{ marginTop: 0, padding: "24px" }}>
+        <span className="eyebrow">ENTERPRISE AUTHENTICATION</span>
+        <h2 style={{ margin: "6px 0 16px", font: "20px 'Newsreader', serif" }}>
+          {isAuthenticated ? "Sign in with a different account" : "Sign In to Kagaz"}
+        </h2>
+
+        <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div>
+            <label
+              htmlFor="email-input"
+              style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}
+            >
+              Work Email Address
+            </label>
+            <input
+              id="email-input"
+              type="email"
+              required
+              placeholder="user@organization.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{
+                width: "100%",
+                height: "36px",
+                border: "1px solid var(--line2, #e0ddd5)",
+                borderRadius: "5px",
+                padding: "0 12px",
+                background: "white",
+                fontSize: "12px",
+              }}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="password-input"
+              style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}
+            >
+              Password
+            </label>
+            <input
+              id="password-input"
+              type="password"
+              required
+              placeholder="••••••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                width: "100%",
+                height: "36px",
+                border: "1px solid var(--line2, #e0ddd5)",
+                borderRadius: "5px",
+                padding: "0 12px",
+                background: "white",
+                fontSize: "12px",
+              }}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="org-input"
+              style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}
+            >
+              Target Organization ID <span style={{ color: "var(--muted)", fontWeight: "normal" }}>(Optional)</span>
+            </label>
+            <input
+              id="org-input"
+              type="text"
+              placeholder="e.g. org_kagaz_primary or leave blank for primary"
+              value={orgInput}
+              onChange={(e) => setOrgInput(e.target.value)}
+              style={{
+                width: "100%",
+                height: "36px",
+                border: "1px solid var(--line2, #e0ddd5)",
+                borderRadius: "5px",
+                padding: "0 12px",
+                background: "white",
+                fontSize: "12px",
+              }}
+            />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginTop: "8px",
+              flexWrap: "wrap",
+              gap: "12px",
+            }}
+          >
+            <span style={{ fontSize: "11px", color: "var(--muted)" }}>
+              Backend strictly validates organization tenant isolation.
+            </span>
+            <Button type="submit" variant="primary" icon="check" disabled={loading}>
+              {loading ? "Authenticating..." : "Authenticate Session →"}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export default function LoginPage() {
   return (
     <AppShell>
       <header className="page-head">
@@ -159,137 +430,9 @@ export default function LoginPage() {
         </div>
       </header>
 
-      <div className="intake-body" style={{ maxWidth: "720px" }}>
-        {notice && (
-          <div
-            style={{
-              padding: "12px 16px",
-              background: notice.type === "success" ? "var(--green-bg)" : "var(--red-bg)",
-              border: `1px solid ${notice.type === "success" ? "var(--green)" : "var(--red)"}`,
-              color: notice.type === "success" ? "var(--green)" : "var(--red)",
-              borderRadius: "6px",
-              marginBottom: "20px",
-              fontSize: "12px",
-            }}
-          >
-            <b>{notice.type === "success" ? "Session Updated:" : "Authentication Failed:"}</b>{" "}
-            {notice.message}
-          </div>
-        )}
-
-        {activeUser ? (
-          <div
-            className="library-card"
-            style={{ marginTop: 0, padding: "24px", marginBottom: "24px" }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <span className="eyebrow">ACTIVE CREDENTIALS</span>
-                <h2 style={{ margin: "6px 0 2px", font: "22px 'Newsreader', serif" }}>
-                  {activeUser.name}
-                </h2>
-                <p style={{ margin: 0, color: "var(--muted)", fontSize: "11px" }}>
-                  <code>{activeUser.email}</code> · User ID: <code>{activeUser.user_id}</code>
-                </p>
-              </div>
-              <Badge tone={activeUser.role === "REVIEWER" ? "green" : "violet"}>
-                {activeUser.role}
-              </Badge>
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                gap: "12px",
-                margin: "20px 0",
-                padding: "14px",
-                background: "var(--side)",
-                borderRadius: "6px",
-                fontSize: "11px",
-              }}
-            >
-              <div>
-                <span style={{ color: "var(--muted)", display: "block" }}>Organization</span>
-                <b>{activeUser.organization_id}</b>
-              </div>
-              <div>
-                <span style={{ color: "var(--muted)", display: "block" }}>Membership Role</span>
-                <b>{activeUser.role}</b>
-              </div>
-              <div>
-                <span style={{ color: "var(--muted)", display: "block" }}>Auth Mechanism</span>
-                <b>HS256 Bearer Token</b>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
-              <Button variant="secondary" onClick={handleLogout}>
-                Sign Out of Workspace
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="library-card" style={{ marginTop: 0, padding: "24px" }}>
-          <span className="eyebrow">REGISTERED CREDENTIALS</span>
-          <h2 style={{ margin: "6px 0 16px", font: "20px 'Newsreader', serif" }}>
-            Sign In to Kagaz
-          </h2>
-
-          <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <div>
-              <label style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>
-                Work Email Address
-              </label>
-              <input
-                type="email"
-                required
-                placeholder="name@enterprise.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                style={{
-                  width: "100%",
-                  height: "36px",
-                  border: "1px solid var(--line2)",
-                  borderRadius: "5px",
-                  padding: "0 12px",
-                  background: "white",
-                  fontSize: "12px",
-                }}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>
-                Password
-              </label>
-              <input
-                type="password"
-                required
-                placeholder="••••••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{
-                  width: "100%",
-                  height: "36px",
-                  border: "1px solid var(--line2)",
-                  borderRadius: "5px",
-                  padding: "0 12px",
-                  background: "white",
-                  fontSize: "12px",
-                }}
-              />
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
-              <Button type="submit" variant="primary" icon="check" disabled={loading}>
-                {loading ? "Authenticating..." : "Authenticate Session →"}
-              </Button>
-            </div>
-          </form>
-        </div>
-      </div>
+      <Suspense fallback={<div style={{ padding: "32px", fontSize: "12px" }}>Loading session form...</div>}>
+        <LoginForm />
+      </Suspense>
     </AppShell>
   );
 }

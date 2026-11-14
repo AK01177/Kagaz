@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { AppShell, Button, Badge, Icon, IconName } from "../components/AppShell";
+import { ProtectedRoute } from "../components/ProtectedRoute";
+import { useAuth } from "../context/AuthContext";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -253,7 +255,8 @@ function EmptyQueueView({ onReset }: { onReset: () => void }) {
   );
 }
 
-export default function ReviewPage() {
+function ReviewContent() {
+  const { fetchWithAuth } = useAuth();
   const [queue, setQueue] = useState<QueueItem[]>(DEFAULT_QUEUE_DOCS);
   const [active, setActive] = useState(0);
   const [filter, setFilter] = useState<"all" | "review" | "low" | "verified">("all");
@@ -317,13 +320,10 @@ export default function ReviewPage() {
     // Call backend API or persist to sessionStorage if real document
     if (activeDoc && activeDoc.id && !activeDoc.id.startsWith("doc_demo")) {
       try {
-        const token =
-          localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token");
-        fetch(`${API_URL}/api/documents/${activeDoc.id}/classification`, {
+        fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/classification`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({ category: activeDoc.fields[1]?.val || "Commercial Invoice", notes: "Verified in review desk" }),
         }).catch(() => {});
@@ -355,7 +355,7 @@ export default function ReviewPage() {
         setShowEmpty(true);
       }
     }, 600);
-  }, [active, queue, activeDoc]);
+  }, [active, queue, activeDoc, fetchWithAuth]);
 
   // Keyboard shortcut listener (Cmd+Enter / Ctrl+Enter)
   useEffect(() => {
@@ -602,5 +602,22 @@ export default function ReviewPage() {
         </section>
       </div>
     </AppShell>
+  );
+}
+
+export default function ReviewPage() {
+  return (
+    <ProtectedRoute
+      allowedRoles={[
+        "REVIEWER",
+        "APPROVER",
+        "ORG_ADMIN",
+        "SYSTEM_ADMIN",
+        "COMPLIANCE",
+        "AUDITOR",
+      ]}
+    >
+      <ReviewContent />
+    </ProtectedRoute>
   );
 }

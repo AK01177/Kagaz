@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "./context/AuthContext";
 
 interface HeaderProps {
   queueCount?: number;
@@ -10,30 +10,14 @@ interface HeaderProps {
 
 export function Header({ queueCount = 4 }: HeaderProps) {
   const pathname = usePathname();
+  const { user, isAuthenticated, activeOrgId } = useAuth();
+
   const isHome = pathname === "/";
   const isIntake = pathname === "/documents";
   const isReview = pathname.startsWith("/review");
   const isLogin = pathname === "/login";
 
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-
-  useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    try {
-      const email =
-        localStorage.getItem("kagaz_user_email") ||
-        sessionStorage.getItem("kagaz_user_email") ||
-        null;
-      if (email) {
-        timeoutId = setTimeout(() => {
-          setUserEmail(email);
-        }, 0);
-      }
-    } catch {}
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, []);
+  const displayName = user?.name || user?.email?.split("@")[0];
 
   return (
     <header className="header">
@@ -67,16 +51,17 @@ export function Header({ queueCount = 4 }: HeaderProps) {
           className={isLogin ? "active" : ""}
           style={isLogin ? { color: "var(--ink)", fontWeight: 600 } : undefined}
         >
-          {userEmail ? "Account" : "Sign In"}
+          {isAuthenticated ? "Workspace" : "Sign In"}
         </Link>
       </nav>
       <Link
         href="/login"
         className="session"
         style={{ textDecoration: "none" }}
-        title="View session credentials"
+        title={isAuthenticated ? `Active in ${activeOrgId || user?.organization_id}` : "Sign in to workspace"}
       >
-        <i /> {userEmail ? userEmail.split("@")[0] : "Session Active"}
+        <i style={isAuthenticated ? { background: "var(--green)" } : undefined} />{" "}
+        {isAuthenticated && displayName ? displayName : "Sign In"}
       </Link>
     </header>
   );

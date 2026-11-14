@@ -3,6 +3,8 @@
 import { use, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { useAuth } from "../../context/AuthContext";
 import {
   DocumentRecord,
   VALID_DOCUMENT_TYPES,
@@ -204,11 +206,13 @@ function OverrideSheet({
   currentCategory,
   onClose,
   onSaved,
+  fetchWithAuth,
 }: {
   documentId: string;
   currentCategory: string;
   onClose: () => void;
   onSaved: (category: string) => void;
+  fetchWithAuth: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }) {
   const [rationale, setRationale] = useState("");
   const [type, setType] = useState("Legal Contract");
@@ -217,15 +221,10 @@ function OverrideSheet({
   async function handleSave() {
     setSubmitting(true);
     try {
-      const token =
-        typeof window !== "undefined"
-          ? localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token")
-          : null;
-      await fetch(`${API_URL}/api/documents/${documentId}/classification`, {
+      await fetchWithAuth(`${API_URL}/api/documents/${documentId}/classification`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ category: type, notes: rationale }),
       });
@@ -306,13 +305,14 @@ function OverrideSheet({
   );
 }
 
-export default function DocumentDetailsPage(props: {
+function DocumentDetailsContent(props: {
   params: Promise<{ id: string }>;
 }) {
   const unwrapped = use(props.params);
   const routeParams = useParams();
   const documentId = unwrapped?.id || (routeParams?.id as string) || "doc_demo_8823f9";
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
+  const { fetchWithAuth } = useAuth();
 
   const [document, setDocument] = useState<DocumentRecord | null>(() => getDemoDocument(documentId));
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null);
@@ -346,24 +346,13 @@ export default function DocumentDetailsPage(props: {
 
       // 2. Fetch from backend API
       try {
-        const token =
-          typeof window !== "undefined"
-            ? localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token")
-            : null;
-        const authHeaders: Record<string, string> = token
-          ? { Authorization: `Bearer ${token}` }
-          : {};
-        const res = await fetch(`${API_URL}/api/documents/${documentId}`, {
-          headers: authHeaders,
-        });
+        const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}`);
         if (res.ok && !ignore) {
           const data = await res.json();
           setDocument(data);
           if (data.status === "REVIEWER_VERIFIED") setCertified(true);
         }
-        const extRes = await fetch(`${API_URL}/api/documents/${documentId}/extract`, {
-          headers: authHeaders,
-        });
+        const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
         if (extRes.ok && !ignore) {
           const extData = await extRes.json();
           setExtraction(extData);
@@ -379,18 +368,13 @@ export default function DocumentDetailsPage(props: {
       ignore = true;
       clearTimeout(timer);
     };
-  }, [documentId]);
+  }, [documentId, fetchWithAuth]);
 
   async function rerunExtraction() {
     setRerunning(true);
     try {
-      const token =
-        typeof window !== "undefined"
-          ? localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token")
-          : null;
-      const res = await fetch(`${API_URL}/api/documents/${documentId}/extract`, {
+      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (res.ok) {
         const data = await res.json();
@@ -690,6 +674,7 @@ export default function DocumentDetailsPage(props: {
         <OverrideSheet
           documentId={documentId}
           currentCategory={categoryName}
+          fetchWithAuth={fetchWithAuth}
           onClose={() => setShowOverride(false)}
           onSaved={(newCategory) => {
             setDocument((prev) => (prev ? { ...prev, category: newCategory, confidence: 1.0 } : null));
@@ -708,5 +693,15 @@ export default function DocumentDetailsPage(props: {
         />
       )}
     </AppShell>
+  );
+}
+
+export default function DocumentDetailsPage(props: {
+  params: Promise<{ id: string }>;
+}) {
+  return (
+    <ProtectedRoute>
+      <DocumentDetailsContent {...props} />
+    </ProtectedRoute>
   );
 }
