@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "./context/AuthContext";
+import { NotificationCenter } from "./components/NotificationCenter";
 
 interface HeaderProps {
   queueCount?: number;
@@ -54,15 +55,18 @@ export function Header({ queueCount = 4 }: HeaderProps) {
           {isAuthenticated ? "Workspace" : "Sign In"}
         </Link>
       </nav>
-      <Link
-        href="/login"
-        className="session"
-        style={{ textDecoration: "none" }}
-        title={isAuthenticated ? `Active in ${activeOrgId || user?.organization_id}` : "Sign in to workspace"}
-      >
-        <i style={isAuthenticated ? { background: "var(--green)" } : undefined} />{" "}
-        {isAuthenticated && displayName ? displayName : "Sign In"}
-      </Link>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        {isAuthenticated && <NotificationCenter />}
+        <Link
+          href="/login"
+          className="session"
+          style={{ textDecoration: "none" }}
+          title={isAuthenticated ? `Active in ${activeOrgId || user?.organization_id}` : "Sign in to workspace"}
+        >
+          <i style={isAuthenticated ? { background: "var(--green)" } : undefined} />{" "}
+          {isAuthenticated && displayName ? displayName : "Sign In"}
+        </Link>
+      </div>
     </header>
   );
 }

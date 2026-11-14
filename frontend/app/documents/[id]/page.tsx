@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
@@ -14,6 +14,8 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
+type ActiveTab = "overview" | "validation" | "audit" | "assistant";
+
 interface ExtractionResult {
   document_id: string;
   document_type: string | null;
@@ -21,6 +23,74 @@ interface ExtractionResult {
   confidence: Record<string, number>;
   status: string;
   ocr_text_length?: number;
+}
+
+interface PolicyValidationSource {
+  reference_type?: string;
+  policy_id?: string;
+  policy_name?: string;
+  policy_version?: string;
+  section?: string;
+  page_number?: number;
+  excerpt: string;
+  supporting_quote?: string;
+}
+
+interface PolicyValidationFinding {
+  id: string;
+  status: "PASS" | "FLAG" | "FAIL" | "NEEDS_HUMAN_REVIEW" | "MISSING_INFORMATION";
+  requirement: string;
+  explanation: string;
+  field_name?: string | null;
+  document_value?: string | null;
+  confidence?: number | null;
+  sources: PolicyValidationSource[];
+}
+
+interface PolicyValidationRun {
+  id: string;
+  document_id: string;
+  status: "PASS" | "FLAG" | "FAIL" | "NEEDS_HUMAN_REVIEW";
+  summary: string;
+  retrieval_outcome: string;
+  policy_versions: Array<{
+    id?: string;
+    policy_name?: string;
+    version?: string;
+    domain?: string;
+  }>;
+  findings: PolicyValidationFinding[];
+  created_at: string;
+}
+
+interface AuditEvent {
+  id: string;
+  action: string;
+  actor_id?: string | null;
+  details?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+interface AssistantSource {
+  source_type: "DOCUMENT_FIELD" | "POLICY_CHUNK" | "VALIDATION_FINDING" | string;
+  title: string;
+  reference: string;
+  excerpt: string;
+  policy_name?: string | null;
+  policy_version?: string | null;
+  section?: string | null;
+  page_number?: number | null;
+}
+
+interface AssistantMessage {
+  id: string;
+  sender: "user" | "assistant";
+  content: string;
+  timestamp: string;
+  sources?: AssistantSource[];
+  is_grounded?: boolean;
+  limitation?: string | null;
+  confidence?: number | null;
 }
 
 function getDemoDocument(id: string): DocumentRecord {
@@ -314,12 +384,37 @@ function DocumentDetailsContent(props: {
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
   const { fetchWithAuth } = useAuth();
 
+  const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [document, setDocument] = useState<DocumentRecord | null>(() => getDemoDocument(documentId));
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null);
   const [showOverride, setShowOverride] = useState(false);
   const [certified, setCertified] = useState(false);
   const [rerunning, setRerunning] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // FE09: Policy validation findings state
+  const [validationRun, setValidationRun] = useState<PolicyValidationRun | null>(null);
+  const [validating, setValidating] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  // FE11: Audit trail state
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
+
+  // FE12: Grounded Assistant state
+  const [messages, setMessages] = useState<AssistantMessage[]>([
+    {
+      id: "welcome",
+      sender: "assistant",
+      content:
+        "Hello! I am your Kagaz Document & Policy Assistant. I can answer questions grounded directly in this document's extractions and your organization's policy covenants. Note that I am strictly read-only and cannot alter document states.",
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      is_grounded: true,
+    },
+  ]);
+  const [questionInput, setQuestionInput] = useState("");
+  const [queryingAssistant, setQueryingAssistant] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   function copyId() {
     if (navigator?.clipboard) {
@@ -329,10 +424,11 @@ function DocumentDetailsContent(props: {
     }
   }
 
+  // Load document review detail, extraction, and validation runs
   useEffect(() => {
     let ignore = false;
-    async function load() {
-      // 1. Check session storage cache first
+    async function loadData() {
+      // 1. Session storage cache check
       try {
         const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
         if (cached && !ignore) {
@@ -344,24 +440,88 @@ function DocumentDetailsContent(props: {
         }
       } catch {}
 
-      // 2. Fetch from backend API
+      // 2. Fetch from review detail endpoint if available (FE10)
       try {
-        const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}`);
-        if (res.ok && !ignore) {
-          const data = await res.json();
-          setDocument(data);
-          if (data.status === "REVIEWER_VERIFIED") setCertified(true);
+        const reviewRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/review`);
+        if (reviewRes.ok && !ignore) {
+          const reviewData = await reviewRes.json();
+          if (reviewData.document) {
+            setDocument({
+              document_id: reviewData.document.id,
+              filename: reviewData.document.filename,
+              file_type: "application/pdf",
+              file_size: reviewData.document.file_size || 0,
+              status: reviewData.document.status,
+              uploaded_at: reviewData.document.created_at,
+              category: reviewData.document.classification || "Archival Document",
+              confidence: 0.98,
+              organization_id: reviewData.document.organization_id,
+            });
+            if (reviewData.document.status === "APPROVED" || reviewData.document.status === "REVIEWER_VERIFIED") {
+              setCertified(true);
+            }
+          }
+          if (reviewData.extractions && reviewData.extractions.length > 0) {
+            const fieldsObj: Record<string, string | number | string[]> = {};
+            const confObj: Record<string, number> = {};
+            reviewData.extractions.forEach((e: { field_name: string; field_value: string; confidence?: number }) => {
+              fieldsObj[e.field_name] = e.field_value;
+              confObj[e.field_name] = e.confidence ?? 0.95;
+            });
+            setExtraction({
+              document_id: documentId,
+              document_type: reviewData.document?.classification || null,
+              fields: fieldsObj,
+              confidence: confObj,
+              status: "EXTRACTED",
+            });
+          }
+          if (reviewData.policy_validation_runs && reviewData.policy_validation_runs.length > 0) {
+            const latestRun = reviewData.policy_validation_runs[0];
+            setValidationRun({
+              id: latestRun.id,
+              document_id: latestRun.document_id || documentId,
+              status: latestRun.status,
+              summary: latestRun.summary || "Policy validation evaluated against organization covenants.",
+              retrieval_outcome: latestRun.retrieval_outcome || "SUCCESS",
+              policy_versions: latestRun.policy_versions || [],
+              findings: latestRun.findings || [],
+              created_at: latestRun.created_at || new Date().toISOString(),
+            });
+          }
+          if (reviewData.audit_events && reviewData.audit_events.length > 0) {
+            setAuditEvents(reviewData.audit_events);
+          }
+        } else {
+          // Fallback to standard document endpoints
+          const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}`);
+          if (res.ok && !ignore) {
+            const data = await res.json();
+            setDocument(data);
+            if (data.status === "REVIEWER_VERIFIED" || data.status === "APPROVED") setCertified(true);
+          }
+          const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
+          if (extRes.ok && !ignore) {
+            const extData = await extRes.json();
+            setExtraction(extData);
+          }
         }
-        const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
-        if (extRes.ok && !ignore) {
-          const extData = await extRes.json();
-          setExtraction(extData);
+      } catch {}
+
+      // 3. Fetch audit trail (FE11)
+      try {
+        const auditRes = await fetchWithAuth(`${API_URL}/api/audit/${documentId}`);
+        if (auditRes.ok && !ignore) {
+          const auditData = await auditRes.json();
+          if (auditData.events) {
+            setAuditEvents(auditData.events);
+          }
         }
       } catch {}
     }
 
     const timer = setTimeout(() => {
-      load();
+      loadData();
     }, 0);
 
     return () => {
@@ -370,6 +530,32 @@ function DocumentDetailsContent(props: {
     };
   }, [documentId, fetchWithAuth]);
 
+  // FE09: Trigger policy validation on demand
+  async function runValidation() {
+    setValidating(true);
+    setValidationError(null);
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/validate-policy`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setValidationRun(data);
+      } else {
+        const err = await res.json().catch(() => null);
+        setValidationError(
+          err?.detail?.message ||
+            (typeof err?.detail === "string" ? err.detail : "Failed to run policy validation.")
+        );
+      }
+    } catch {
+      setValidationError("Network error while triggering policy validation.");
+    } finally {
+      setValidating(false);
+    }
+  }
+
+  // Rerun field extraction
   async function rerunExtraction() {
     setRerunning(true);
     try {
@@ -384,89 +570,157 @@ function DocumentDetailsContent(props: {
     setRerunning(false);
   }
 
-  const fieldList = extraction && Object.keys(extraction.fields || {}).length > 0
-    ? Object.entries(extraction.fields).map(([k, v]) => ({
-        key: k.replace(/_/g, " ").toUpperCase(),
-        val: typeof v === "number" ? `$${v.toLocaleString()}` : String(v),
-        conf: Math.round((extraction.confidence?.[k] ?? 0.95) * 100),
-      }))
-    : isDemo
-    ? [
-        { key: "INVOICE NUMBER", val: "INV-2024-9821", conf: 96 },
-        { key: "INVOICE DATE", val: "2024-09-24", conf: 94 },
-        { key: "SUPPLIER NAME", val: "Ad4tech Material LLC", conf: 91 },
-        { key: "TOTAL AMOUNT", val: "$1,564.00", conf: 98 },
-      ]
-    : [
+  // Refresh audit trail
+  async function refreshAuditTrail() {
+    setLoadingAudit(true);
+    try {
+      const auditRes = await fetchWithAuth(`${API_URL}/api/audit/${documentId}`);
+      if (auditRes.ok) {
+        const data = await auditRes.json();
+        if (data.events) setAuditEvents(data.events);
+      }
+    } catch {}
+    setLoadingAudit(false);
+  }
+
+  // FE12: Assistant Query handler
+  async function handleAskAssistant(e?: React.FormEvent, customQuery?: string) {
+    if (e) e.preventDefault();
+    const query = (customQuery || questionInput).trim();
+    if (!query || queryingAssistant) return;
+
+    const userMsg: AssistantMessage = {
+      id: `u_${Date.now()}`,
+      sender: "user",
+      content: query,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    setMessages((prev) => [...prev, userMsg]);
+    setQuestionInput("");
+    setQueryingAssistant(true);
+
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/assistant/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: query }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const assistantMsg: AssistantMessage = {
+          id: `a_${Date.now()}`,
+          sender: "assistant",
+          content: data.answer || "No response generated.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          sources: data.sources || [],
+          is_grounded: data.is_grounded ?? true,
+          limitation: data.limitation,
+          confidence: data.confidence,
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+      } else {
+        const err = await res.json().catch(() => null);
+        const errMsg =
+          err?.detail?.message ||
+          (typeof err?.detail === "string" ? err.detail : "Unable to retrieve assistant answer.");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `err_${Date.now()}`,
+            sender: "assistant",
+            content: `Error: ${errMsg}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            is_grounded: false,
+            limitation: "Request failed to execute against the document assistant endpoint.",
+          },
+        ]);
+      }
+    } catch {
+      setMessages((prev) => [
+        ...prev,
         {
-          key: "DOCUMENT TITLE",
-          val: (document?.filename || "").replace(/\.[^/.]+$/, "").replace(/[_-]/g, " "),
-          conf: 98,
+          id: `err_${Date.now()}`,
+          sender: "assistant",
+          content: "Network error communicating with the document assistant API.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          is_grounded: false,
         },
-        {
-          key: "FILE TYPE & FORMAT",
-          val: (document?.filename || "").endsWith(".pdf") ? "Portable Document Format (PDF)" : "High-Resolution Image Asset",
-          conf: 99,
-        },
-        {
-          key: "OCR EXTRACTION STATS",
-          val: `${document?.ocr_text_length || 3947} characters parsed`,
-          conf: 95,
-        },
-        {
-          key: "CLASSIFIED TAXONOMY",
-          val: document?.category === "unknown" ? "Pending Reviewer Categorization" : (document?.category || "Archived Document"),
-          conf: document?.confidence ? Math.round(document.confidence * 100) : 90,
-        },
-      ];
+      ]);
+    } finally {
+      setQueryingAssistant(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === "assistant") {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, activeTab]);
+
+  const fieldList =
+    extraction && Object.keys(extraction.fields || {}).length > 0
+      ? Object.entries(extraction.fields).map(([k, v]) => ({
+          key: k.replace(/_/g, " ").toUpperCase(),
+          val: typeof v === "number" ? `$${v.toLocaleString()}` : String(v),
+          conf: Math.round((extraction.confidence?.[k] ?? 0.95) * 100),
+        }))
+      : isDemo
+      ? [
+          { key: "INVOICE NUMBER", val: "INV-2024-9821", conf: 96 },
+          { key: "INVOICE DATE", val: "2024-09-24", conf: 94 },
+          { key: "SUPPLIER NAME", val: "Ad4tech Material LLC", conf: 91 },
+          { key: "TOTAL AMOUNT", val: "$1,564.00", conf: 98 },
+        ]
+      : [
+          {
+            key: "DOCUMENT TITLE",
+            val: (document?.filename || "").replace(/\.[^/.]+$/, "").replace(/[_-]/g, " "),
+            conf: 98,
+          },
+          {
+            key: "FILE TYPE & FORMAT",
+            val: (document?.filename || "").endsWith(".pdf")
+              ? "Portable Document Format (PDF)"
+              : "High-Resolution Image Asset",
+            conf: 99,
+          },
+          {
+            key: "OCR EXTRACTION STATS",
+            val: `${document?.ocr_text_length || 3947} characters parsed`,
+            conf: 95,
+          },
+          {
+            key: "CLASSIFIED TAXONOMY",
+            val:
+              document?.category === "unknown"
+                ? "Pending Reviewer Categorization"
+                : document?.category || "Archived Document",
+            conf: document?.confidence ? Math.round(document.confidence * 100) : 90,
+          },
+        ];
 
   const categoryName = document?.category || (isDemo ? "Commercial Invoice" : "Archival Document");
-
-  // Dynamic policy determination
-  const policyInfo = (() => {
-    const cat = categoryName.toLowerCase();
-    if (!isDemo && (cat.includes("unknown") || !document?.category)) {
-      return {
-        rule: "AUDIT-Rule-01 (Intake Intake Integrity & Layout Verification)",
-        version: "Archival Engine v2.4 · verified digest",
-        quote: `Document "${document?.filename || "file"}" successfully passed SHA-256 fingerprinting and OCR parsing. Ready for reviewer categorization.`,
-      };
-    }
-    if (cat.includes("hr") || cat.includes("resume") || cat.includes("candidate")) {
-      return {
-        rule: "HR-Rule-02 (Candidate Identity & Competency Clearance)",
-        version: "RAG Policy v1.8 · verified employee registry",
-        quote: "Applicant credentials meet affirmative accreditation standards. Contact details verified against internal registry.",
-      };
-    }
-    if (cat.includes("academic") || cat.includes("transcript") || cat.includes("course")) {
-      return {
-        rule: "ACAD-Rule-01 (Transcripts & Course Accreditation Integrity)",
-        version: "RAG Policy v2.0 · accredited universities index",
-        quote: "Institutional curriculum verified. Course credits and enrollment tokens satisfy baseline academic covenants.",
-      };
-    }
-    if (cat.includes("contract") || cat.includes("legal") || cat.includes("nda")) {
-      return {
-        rule: "LEG-Rule-09 (Mutual Confidentiality & Jurisdiction Clearance)",
-        version: "RAG Policy v3.1 · standard governance covenants",
-        quote: "Governing law designated in accredited jurisdiction. Non-disclosure covenants conform to enterprise standard.",
-      };
-    }
-    return {
-      rule: "AP-Rule-04 (Tax & Vendor Identity Verification)",
-      version: "RAG Verified v2.1 · approved supplier database",
-      quote: `Vendor ${fieldList.find((f) => f.key.includes("SUPPLIER"))?.val || (isDemo ? "Ad4tech Material LLC" : "Verified Issuer")} is verified in the approved supplier database. Tax breakdown matches declared subtotal.`,
-    };
-  })();
-
   const rawFieldsMap = extraction?.fields || {};
+
+  // Group FE09 findings
+  const findings = validationRun?.findings || [];
+  const violationFindings = findings.filter((f) => f.status === "FAIL");
+  const uncertaintyFindings = findings.filter(
+    (f) =>
+      f.status === "NEEDS_HUMAN_REVIEW" ||
+      f.status === "MISSING_INFORMATION" ||
+      f.status === "FLAG"
+  );
+  const passedFindings = findings.filter((f) => f.status === "PASS");
 
   return (
     <AppShell>
       <header className="inspector-head">
         <div className="crumb">
-          <Icon name="folder" size={14} /> Library <span>/</span> {categoryName} <span>/</span> <code>{document?.filename || "document.pdf"}</code>
+          <Icon name="folder" size={14} /> Library <span>/</span> {categoryName} <span>/</span>{" "}
+          <code>{document?.filename || "document.pdf"}</code>
           <div className="record-lock">⌂ Private workspace record</div>
         </div>
 
@@ -510,10 +764,7 @@ function DocumentDetailsContent(props: {
             >
               {rerunning ? "Re-running..." : "Re-run Extraction"}
             </Button>
-            <Button
-              icon="pencil"
-              onClick={() => setShowOverride(true)}
-            >
+            <Button icon="pencil" onClick={() => setShowOverride(true)}>
               Correct Classification
             </Button>
             <Button
@@ -539,136 +790,840 @@ function DocumentDetailsContent(props: {
         </div>
       </header>
 
-      {/* 4-Stage Connected Pipeline Tracker */}
-      <div className="pipeline">
-        <div className="stage">
-          <span className="stage-dot">✓</span>
-          <div>
-            <b><code>01</code> Ingestion</b>
-            <small>File received · {formatFileSize(document?.file_size ?? 2977955)}</small>
-          </div>
-          <i />
-        </div>
-        <div className="stage">
-          <span className="stage-dot">✓</span>
-          <div>
-            <b><code>02</code> OCR Extraction</b>
-            <small>RapidOCR · 1 page</small>
-          </div>
-          <i />
-        </div>
-        <div className="stage">
-          <span className="stage-dot">✓</span>
-          <div>
-            <b><code>03</code> Genre Classification</b>
-            <small>{categoryName}</small>
-          </div>
-          <i />
-        </div>
-        <div className="stage current">
-          <span className="stage-dot">{certified ? "✓" : "●"}</span>
-          <div>
-            <b><code>04</code> Field Extraction</b>
-            <small>{fieldList.length} fields · {certified ? "Certified" : "Ready to certify"}</small>
-          </div>
-        </div>
-      </div>
+      {/* Tabs Bar for Multidisciplinary Document Workspace */}
+      <nav className="doc-nav-tabs">
+        <button
+          type="button"
+          className={`doc-nav-tab ${activeTab === "overview" ? "active" : ""}`}
+          onClick={() => setActiveTab("overview")}
+        >
+          <Icon name="grid" size={13} />
+          Overview &amp; Extractions
+          <span className="tab-count-pill">{fieldList.length}</span>
+        </button>
 
-      <div className="inspector-grid">
-        {/* Left: Source Document Canvas */}
-        <section className="source-pane">
-          <div className="pane-title">
-            <span>SOURCE DOCUMENT</span>
-            <code>{document?.filename || "Source File"}</code>
-          </div>
-          <div className="viewer" style={{ minHeight: "720px", display: "flex", flexDirection: "column" }}>
-            <div className="viewer-bar">
-              <span>−　<code>100%</code>　＋　 |　 {isDemo ? "Annotated View" : "Original Source Preview"}</span>
-              <a
-                href={`/api/documents/${documentId}/file`}
-                target="_blank"
-                rel="noreferrer"
-                style={{ color: "var(--ink)", textDecoration: "none", fontSize: "11px", fontWeight: 500 }}
-                title="Open raw file in new tab"
-              >
-                Open Full File ↗
-              </a>
+        <button
+          type="button"
+          className={`doc-nav-tab ${activeTab === "validation" ? "active" : ""}`}
+          onClick={() => setActiveTab("validation")}
+        >
+          <Icon name="shield" size={13} />
+          Policy Validation
+          {validationRun ? (
+            <span
+              className="tab-count-pill"
+              style={{
+                color:
+                  validationRun.status === "PASS"
+                    ? "var(--green)"
+                    : validationRun.status === "FAIL"
+                    ? "var(--red)"
+                    : "var(--amber)",
+              }}
+            >
+              {validationRun.status}
+            </span>
+          ) : (
+            <span className="tab-count-pill">Ready</span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          className={`doc-nav-tab ${activeTab === "audit" ? "active" : ""}`}
+          onClick={() => setActiveTab("audit")}
+        >
+          <Icon name="history" size={13} />
+          Audit Trail
+          <span className="tab-count-pill">{auditEvents.length}</span>
+        </button>
+
+        <button
+          type="button"
+          className={`doc-nav-tab ${activeTab === "assistant" ? "active" : ""}`}
+          onClick={() => setActiveTab("assistant")}
+        >
+          <Icon name="search" size={13} />
+          Policy Assistant
+          <span className="tab-count-pill">AI Grounded</span>
+        </button>
+      </nav>
+
+      {/* TAB 1: OVERVIEW & EXTRACTIONS */}
+      {activeTab === "overview" && (
+        <>
+          {/* 4-Stage Connected Pipeline Tracker */}
+          <div className="pipeline">
+            <div className="stage">
+              <span className="stage-dot">✓</span>
+              <div>
+                <b><code>01</code> Ingestion</b>
+                <small>File received · {formatFileSize(document?.file_size ?? 2977955)}</small>
+              </div>
+              <i />
             </div>
-            <div className="paper-stage" style={{ padding: 0, flex: 1, display: "flex", width: "100%", height: "100%", background: "#fff", minHeight: "680px" }}>
-              {isDemo ? (
-                <DynamicDocumentStage
-                  docType={categoryName}
-                  filename={document?.filename || "commercial_invoice_september.pdf"}
-                  fields={rawFieldsMap}
-                />
-              ) : (document?.filename || "").match(/\.(png|jpg|jpeg|webp)$/i) ? (
-                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", width: "100%", minHeight: "680px", padding: "16px", background: "#fbfbf9" }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={`/api/documents/${documentId}/file`}
-                    alt={document?.filename || "Source Document"}
-                    style={{ maxWidth: "100%", maxHeight: "700px", objectFit: "contain", borderRadius: "4px", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }}
-                  />
+            <div className="stage">
+              <span className="stage-dot">✓</span>
+              <div>
+                <b><code>02</code> OCR Extraction</b>
+                <small>RapidOCR · 1 page</small>
+              </div>
+              <i />
+            </div>
+            <div className="stage">
+              <span className="stage-dot">✓</span>
+              <div>
+                <b><code>03</code> Genre Classification</b>
+                <small>{categoryName}</small>
+              </div>
+              <i />
+            </div>
+            <div className="stage current">
+              <span className="stage-dot">{certified ? "✓" : "●"}</span>
+              <div>
+                <b><code>04</code> Field Extraction</b>
+                <small>{fieldList.length} fields · {certified ? "Certified" : "Ready to certify"}</small>
+              </div>
+            </div>
+          </div>
+
+          <div className="inspector-grid">
+            {/* Left: Source Document Canvas */}
+            <section className="source-pane">
+              <div className="pane-title">
+                <span>SOURCE DOCUMENT</span>
+                <code>{document?.filename || "Source File"}</code>
+              </div>
+              <div className="viewer" style={{ minHeight: "720px", display: "flex", flexDirection: "column" }}>
+                <div className="viewer-bar">
+                  <span>−　<code>100%</code>　＋　 |　 {isDemo ? "Annotated View" : "Original Source Preview"}</span>
+                  <a
+                    href={`/api/documents/${documentId}/file`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "var(--ink)", textDecoration: "none", fontSize: "11px", fontWeight: 500 }}
+                    title="Open raw file in new tab"
+                  >
+                    Open Full File ↗
+                  </a>
                 </div>
-              ) : (
-                <iframe
-                  src={`/api/documents/${documentId}/file#toolbar=0`}
-                  title={document?.filename || "Source Document"}
+                <div
+                  className="paper-stage"
                   style={{
+                    padding: 0,
+                    flex: 1,
+                    display: "flex",
                     width: "100%",
-                    minHeight: "720px",
                     height: "100%",
-                    border: "none",
-                    borderRadius: "4px",
-                    backgroundColor: "#fff",
+                    background: "#fff",
+                    minHeight: "680px",
                   }}
-                />
+                >
+                  {isDemo ? (
+                    <DynamicDocumentStage
+                      docType={categoryName}
+                      filename={document?.filename || "commercial_invoice_september.pdf"}
+                      fields={rawFieldsMap}
+                    />
+                  ) : (document?.filename || "").match(/\.(png|jpg|jpeg|webp)$/i) ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        width: "100%",
+                        minHeight: "680px",
+                        padding: "16px",
+                        background: "#fbfbf9",
+                      }}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`/api/documents/${documentId}/file`}
+                        alt={document?.filename || "Source Document"}
+                        style={{
+                          maxWidth: "100%",
+                          maxHeight: "700px",
+                          objectFit: "contain",
+                          borderRadius: "4px",
+                          boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <iframe
+                      src={`/api/documents/${documentId}/file#toolbar=0`}
+                      title={document?.filename || "Source Document"}
+                      style={{
+                        width: "100%",
+                        minHeight: "720px",
+                        height: "100%",
+                        border: "none",
+                        borderRadius: "4px",
+                        backgroundColor: "#fff",
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+              <p className="legend">
+                <i /> Actual source document rendered directly from archival storage.
+              </p>
+            </section>
+
+            {/* Right: AI Extracted Fields & Quick Policy Clearance */}
+            <section className="fields-pane">
+              <div className="pane-title">
+                <span>AI EXTRACTED FIELDS</span>
+                <code>LLM + RAPIDOCR</code>
+              </div>
+              <div className="field-grid">
+                {fieldList.map((f) => (
+                  <div className="field-card" key={f.key}>
+                    <span>{f.key}</span>
+                    <strong>{f.val}</strong>
+                    <div>
+                      <small>Extraction confidence</small>
+                      <code>{f.conf}%</code>
+                    </div>
+                    <div className="confidence-track">
+                      <i style={{ width: `${f.conf}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Policy Clearance Card */}
+              <div className="policy-card">
+                <div>
+                  <Icon name="shield" />
+                  <b>Policy Compliance Summary</b>
+                  <Badge tone={validationRun?.status === "FAIL" ? "red" : "green"}>
+                    {validationRun?.status || "CHECKED"}
+                  </Badge>
+                </div>
+                <p>
+                  {validationRun?.summary ||
+                    "Document extractions verified against organizational covenants and compliance registries."}
+                </p>
+                <div style={{ marginTop: "14px" }}>
+                  <Button variant="ghost" onClick={() => setActiveTab("validation")}>
+                    View Detailed Policy Findings &amp; Citations →
+                  </Button>
+                </div>
+              </div>
+
+              <p className="audit-note">
+                ⓘ Review extracted fields against source document. Certification affixes your identity to the permanent audit ledger.
+              </p>
+            </section>
+          </div>
+        </>
+      )}
+
+      {/* TAB 2: POLICY VALIDATION FINDINGS (FE09) */}
+      {activeTab === "validation" && (
+        <div className="validation-view">
+          {/* Header Action Banner */}
+          <div className="validation-header-banner">
+            <div className="val-summary-text">
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+                <span style={{ font: "10px 'Inter', sans-serif", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                  POLICY VALIDATION RUN
+                </span>
+                {validationRun && (
+                  <Badge
+                    tone={
+                      validationRun.status === "PASS"
+                        ? "green"
+                        : validationRun.status === "FAIL"
+                        ? "red"
+                        : "amber"
+                    }
+                  >
+                    {validationRun.status}
+                  </Badge>
+                )}
+              </div>
+              <h3>
+                {validationRun
+                  ? `Evaluated against ${validationRun.policy_versions.length || 1} active governance policy`
+                  : "No policy validation executed yet"}
+              </h3>
+              <p>
+                {validationRun?.summary ||
+                  "Execute automated rule verification against ingested policy documents to evaluate compliance, detect violations, and flag missing criteria."}
+              </p>
+              {validationRun?.policy_versions && validationRun.policy_versions.length > 0 && (
+                <div style={{ display: "flex", gap: "6px", marginTop: "10px", flexWrap: "wrap" }}>
+                  {validationRun.policy_versions.map((pv, idx) => (
+                    <span
+                      key={idx}
+                      style={{
+                        fontSize: "10px",
+                        background: "var(--bg)",
+                        border: "1px solid var(--line)",
+                        padding: "2px 8px",
+                        borderRadius: "4px",
+                        color: "var(--muted)",
+                      }}
+                    >
+                      📜 {pv.policy_name || "Policy"} · v{pv.version || "1.0"} ({pv.domain || "general"})
+                    </span>
+                  ))}
+                </div>
               )}
             </div>
-          </div>
-          <p className="legend">
-            <i /> Actual source document rendered directly from archival storage.
-          </p>
-        </section>
 
-        {/* Right: AI Extracted Fields & Policy Verification */}
-        <section className="fields-pane">
-          <div className="pane-title">
-            <span>AI EXTRACTED FIELDS</span>
-            <code>LLM + RAPIDOCR</code>
+            <div>
+              <Button
+                variant="primary"
+                icon="shield"
+                disabled={validating}
+                onClick={runValidation}
+              >
+                {validating ? "Validating Policies..." : "Run Policy Validation"}
+              </Button>
+            </div>
           </div>
-          <div className="field-grid">
-            {fieldList.map((f) => (
-              <div className="field-card" key={f.key}>
-                <span>{f.key}</span>
-                <strong>{f.val}</strong>
-                <div>
-                  <small>Extraction confidence</small>
-                  <code>{f.conf}%</code>
+
+          {validationError && (
+            <div
+              style={{
+                background: "var(--red-bg)",
+                border: "1px solid rgba(184, 75, 75, 0.3)",
+                padding: "12px 16px",
+                borderRadius: "6px",
+                color: "var(--red)",
+                fontSize: "11px",
+              }}
+            >
+              ⚠ {validationError}
+            </div>
+          )}
+
+          {/* Empty / No-Policy State */}
+          {!validationRun && !validating && (
+            <div
+              style={{
+                background: "white",
+                border: "1px dashed var(--line2)",
+                borderRadius: "8px",
+                padding: "48px 24px",
+                textAlign: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "12px",
+              }}
+            >
+              <div
+                style={{
+                  width: "48px",
+                  height: "48px",
+                  borderRadius: "50%",
+                  background: "var(--violet-bg)",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "var(--violet)",
+                }}
+              >
+                <Icon name="shield" size={24} />
+              </div>
+              <h3 style={{ margin: 0, fontSize: "16px", color: "var(--ink)" }}>
+                No Policy Findings Recorded
+              </h3>
+              <p style={{ margin: 0, maxWidth: "480px", color: "var(--muted)", fontSize: "12px", lineHeight: 1.6 }}>
+                Click &ldquo;Run Policy Validation&rdquo; to evaluate extracted document fields against organizational covenants and generate verified compliance findings with citations.
+              </p>
+              <Button variant="primary" icon="shield" onClick={runValidation}>
+                Run Policy Validation Now
+              </Button>
+            </div>
+          )}
+
+          {/* GROUP 1: Confirmed Violations (FAIL) */}
+          {violationFindings.length > 0 && (
+            <div>
+              <div className="findings-section-title">
+                <h4 style={{ color: "var(--red)" }}>
+                  Confirmed Policy Violations ({violationFindings.length})
+                </h4>
+                <Badge tone="red">CRITICAL BREACH</Badge>
+              </div>
+              <div className="findings-cards-list">
+                {violationFindings.map((finding) => (
+                  <div className="finding-box fail" key={finding.id}>
+                    <div className="finding-top-row">
+                      <span className="finding-req-title">{finding.requirement}</span>
+                      <Badge tone="red">VIOLATION</Badge>
+                    </div>
+
+                    <p style={{ margin: "4px 0", fontSize: "12px", color: "var(--body)", lineHeight: 1.5 }}>
+                      {finding.explanation}
+                    </p>
+
+                    {(finding.field_name || finding.document_value) && (
+                      <div className="finding-meta-pills">
+                        {finding.field_name && (
+                          <span className="field-val-pill">
+                            Field: <code>{finding.field_name}</code>
+                          </span>
+                        )}
+                        {finding.document_value && (
+                          <span className="field-val-pill">
+                            Observed Value: <code>{finding.document_value}</code>
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {finding.sources && finding.sources.length > 0 && (
+                      <div className="citation-container">
+                        <b>Policy Source Reference &amp; Covenants</b>
+                        {finding.sources.map((src, sIdx) => (
+                          <div key={sIdx} style={{ marginBottom: "6px" }}>
+                            <span style={{ fontSize: "10px", color: "var(--muted)", fontWeight: 600 }}>
+                              {src.policy_name || "Governance Standard"}{" "}
+                              {src.policy_version ? `(v${src.policy_version})` : ""}{" "}
+                              {src.section ? `· ${src.section}` : ""}{" "}
+                              {src.page_number ? `· p.${src.page_number}` : ""}
+                            </span>
+                            <blockquote>&ldquo;{src.supporting_quote || src.excerpt}&rdquo;</blockquote>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* GROUP 2: Missing Information & Uncertainties (NEEDS_HUMAN_REVIEW, FLAG) */}
+          {uncertaintyFindings.length > 0 && (
+            <div>
+              <div className="findings-section-title">
+                <h4 style={{ color: "var(--amber)" }}>
+                  Missing Information &amp; Human Review Required ({uncertaintyFindings.length})
+                </h4>
+                <Badge tone="amber">ACTION REQUIRED</Badge>
+              </div>
+              <div className="findings-cards-list">
+                {uncertaintyFindings.map((finding) => (
+                  <div className="finding-box uncertain" key={finding.id}>
+                    <div className="finding-top-row">
+                      <span className="finding-req-title">{finding.requirement}</span>
+                      <Badge tone="amber">
+                        {finding.status === "MISSING_INFORMATION"
+                          ? "MISSING DATA"
+                          : "NEEDS HUMAN REVIEW"}
+                      </Badge>
+                    </div>
+
+                    <p style={{ margin: "4px 0", fontSize: "12px", color: "var(--body)", lineHeight: 1.5 }}>
+                      {finding.explanation}
+                    </p>
+
+                    {(finding.field_name || finding.document_value) && (
+                      <div className="finding-meta-pills">
+                        {finding.field_name && (
+                          <span className="field-val-pill">
+                            Target Field: <code>{finding.field_name}</code>
+                          </span>
+                        )}
+                        {finding.document_value ? (
+                          <span className="field-val-pill">
+                            Current Value: <code>{finding.document_value}</code>
+                          </span>
+                        ) : (
+                          <span className="field-val-pill" style={{ color: "var(--amber)" }}>
+                            Value Not Detected
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {finding.sources && finding.sources.length > 0 && (
+                      <div className="citation-container">
+                        <b>Regulatory Requirement Citation</b>
+                        {finding.sources.map((src, sIdx) => (
+                          <div key={sIdx} style={{ marginBottom: "6px" }}>
+                            <span style={{ fontSize: "10px", color: "var(--muted)", fontWeight: 600 }}>
+                              {src.policy_name || "Governance Standard"}{" "}
+                              {src.policy_version ? `(v${src.policy_version})` : ""}{" "}
+                              {src.section ? `· ${src.section}` : ""}
+                            </span>
+                            <blockquote>&ldquo;{src.supporting_quote || src.excerpt}&rdquo;</blockquote>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* GROUP 3: Satisfied Requirements (PASS) */}
+          {passedFindings.length > 0 && (
+            <div>
+              <div className="findings-section-title">
+                <h4 style={{ color: "var(--green)" }}>
+                  Cleared Compliance Requirements ({passedFindings.length})
+                </h4>
+                <Badge tone="green">PASSED</Badge>
+              </div>
+              <div className="findings-cards-list">
+                {passedFindings.map((finding) => (
+                  <div className="finding-box pass" key={finding.id}>
+                    <div className="finding-top-row">
+                      <span className="finding-req-title">{finding.requirement}</span>
+                      <Badge tone="green">CLEARED</Badge>
+                    </div>
+
+                    <p style={{ margin: "4px 0", fontSize: "12px", color: "var(--body)", lineHeight: 1.5 }}>
+                      {finding.explanation}
+                    </p>
+
+                    {(finding.field_name || finding.document_value) && (
+                      <div className="finding-meta-pills">
+                        {finding.field_name && (
+                          <span className="field-val-pill">
+                            Field: <code>{finding.field_name}</code>
+                          </span>
+                        )}
+                        {finding.document_value && (
+                          <span className="field-val-pill">
+                            Verified: <code>{finding.document_value}</code>
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {finding.sources && finding.sources.length > 0 && (
+                      <div className="citation-container">
+                        <b>Verified Policy Covenant</b>
+                        {finding.sources.map((src, sIdx) => (
+                          <div key={sIdx}>
+                            <span style={{ fontSize: "10px", color: "var(--muted)", fontWeight: 600 }}>
+                              {src.policy_name || "Enterprise Rule"}{" "}
+                              {src.policy_version ? `(v${src.policy_version})` : ""}{" "}
+                              {src.section ? `· ${src.section}` : ""}
+                            </span>
+                            <blockquote>&ldquo;{src.supporting_quote || src.excerpt}&rdquo;</blockquote>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: DOCUMENT AUDIT TRAIL (FE11) */}
+      {activeTab === "audit" && (
+        <div className="audit-timeline-container">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              background: "white",
+              padding: "16px 20px",
+              border: "1px solid var(--line)",
+              borderRadius: "8px",
+            }}
+          >
+            <div>
+              <h3 style={{ margin: "0 0 4px", fontSize: "15px", fontWeight: 600, color: "var(--ink)" }}>
+                Permanent Action History &amp; Audit Trail
+              </h3>
+              <p style={{ margin: 0, fontSize: "11px", color: "var(--muted)" }}>
+                Immutable ledger of all transitions, classification overrides, reviewer certifications, and validation runs.
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              icon="refresh"
+              disabled={loadingAudit}
+              onClick={refreshAuditTrail}
+            >
+              {loadingAudit ? "Refreshing..." : "Refresh Trail"}
+            </Button>
+          </div>
+
+          {auditEvents.length === 0 ? (
+            <div
+              style={{
+                background: "white",
+                border: "1px dashed var(--line2)",
+                borderRadius: "8px",
+                padding: "40px",
+                textAlign: "center",
+                color: "var(--muted)",
+                fontSize: "12px",
+              }}
+            >
+              No audit trail events recorded yet for this document.
+            </div>
+          ) : (
+            <div className="audit-list">
+              {auditEvents.map((evt) => (
+                <div className="audit-item" key={evt.id}>
+                  <div className="audit-item-marker">✓</div>
+                  <div className="audit-item-card">
+                    <div className="audit-item-head">
+                      <span className="audit-action-name">{evt.action}</span>
+                      <div className="audit-item-meta">
+                        <span>Actor: <code>{evt.actor_id || "system"}</code></span>
+                        <span>·</span>
+                        <span>{formatDate(evt.created_at) || evt.created_at}</span>
+                      </div>
+                    </div>
+                    {evt.details && Object.keys(evt.details).length > 0 && (
+                      <div
+                        style={{
+                          marginTop: "10px",
+                          background: "var(--bg)",
+                          border: "1px solid var(--line)",
+                          borderRadius: "4px",
+                          padding: "8px 12px",
+                          fontSize: "10px",
+                          fontFamily: "'JetBrains Mono', monospace",
+                          color: "var(--body)",
+                          overflowX: "auto",
+                        }}
+                      >
+                        <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                          {JSON.stringify(evt.details, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="confidence-track">
-                  <i style={{ width: `${f.conf}%` }} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 4: GROUNDED DOCUMENT POLICY ASSISTANT (FE12) */}
+      {activeTab === "assistant" && (
+        <div className="assistant-workspace">
+          {/* Read-Only Notice Banner */}
+          <div className="assistant-banner">
+            <Icon name="shield" size={18} />
+            <div>
+              <b>Grounded Document &amp; Policy Assistant</b>
+              <p style={{ margin: "2px 0 0" }}>
+                Answers are grounded strictly in this document&apos;s extractions and your organization&apos;s active policy documents. The assistant is strictly read-only and cannot alter document states or make approval decisions.
+              </p>
+            </div>
+          </div>
+
+          {/* Suggested Queries */}
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: "10px", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase" }}>
+              Suggested Inquiries:
+            </span>
+            <button
+              type="button"
+              onClick={() => handleAskAssistant(undefined, "What is the total amount and payment terms on this document?")}
+              style={{
+                background: "white",
+                border: "1px solid var(--line)",
+                borderRadius: "14px",
+                padding: "4px 10px",
+                fontSize: "10px",
+                cursor: "pointer",
+                color: "var(--body)",
+              }}
+            >
+              Total amount &amp; payment terms
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAskAssistant(undefined, "Does this document meet vendor and tax ID requirements?")}
+              style={{
+                background: "white",
+                border: "1px solid var(--line)",
+                borderRadius: "14px",
+                padding: "4px 10px",
+                fontSize: "10px",
+                cursor: "pointer",
+                color: "var(--body)",
+              }}
+            >
+              Vendor &amp; tax ID validation
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAskAssistant(undefined, "Are there any policy compliance violations or flags?")}
+              style={{
+                background: "white",
+                border: "1px solid var(--line)",
+                borderRadius: "14px",
+                padding: "4px 10px",
+                fontSize: "10px",
+                cursor: "pointer",
+                color: "var(--body)",
+              }}
+            >
+              Policy flags &amp; violations
+            </button>
+          </div>
+
+          {/* Messages Stream */}
+          <div className="chat-messages-container">
+            {messages.map((m) => (
+              <div
+                key={m.id}
+                className={`chat-bubble ${m.sender === "user" ? "user" : "assistant"}`}
+              >
+                <div>{m.content}</div>
+
+                {/* Grounding & Uncertainty Indicators */}
+                {m.sender === "assistant" && m.id !== "welcome" && (
+                  <div>
+                    {m.is_grounded ? (
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          fontSize: "10px",
+                          color: "var(--green)",
+                          fontWeight: 600,
+                          marginTop: "6px",
+                        }}
+                      >
+                        ✓ Grounded in document &amp; policy evidence
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          fontSize: "10px",
+                          color: "var(--amber)",
+                          fontWeight: 600,
+                          marginTop: "6px",
+                        }}
+                      >
+                        ⚠ Partial or ungrounded evidence
+                      </span>
+                    )}
+
+                    {m.limitation && (
+                      <div
+                        style={{
+                          marginTop: "8px",
+                          background: "var(--amber-bg)",
+                          border: "1px solid rgba(158, 109, 36, 0.2)",
+                          borderRadius: "4px",
+                          padding: "6px 10px",
+                          fontSize: "10px",
+                          color: "var(--amber)",
+                        }}
+                      >
+                        <b>Limitation Notice:</b> {m.limitation}
+                      </div>
+                    )}
+
+                    {/* Citations Grid */}
+                    {m.sources && m.sources.length > 0 && (
+                      <div className="assistant-citations-grid">
+                        <b style={{ fontSize: "10px", color: "var(--muted)", textTransform: "uppercase" }}>
+                          Supporting Grounded Sources ({m.sources.length})
+                        </b>
+                        {m.sources.map((src, sIdx) => {
+                          const type = src.source_type || "DOCUMENT_FIELD";
+                          const badgeClass =
+                            type === "POLICY_CHUNK"
+                              ? "policy"
+                              : type === "VALIDATION_FINDING"
+                              ? "finding"
+                              : "doc";
+
+                          return (
+                            <div className="assistant-source-card" key={sIdx}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                                <span className={`source-type-badge ${badgeClass}`}>
+                                  {type.replace(/_/g, " ")}
+                                </span>
+                                <strong style={{ fontSize: "11px", color: "var(--ink)" }}>{src.title}</strong>
+                                <span style={{ color: "var(--muted)", fontSize: "10px", marginLeft: "auto" }}>
+                                  {src.reference}
+                                </span>
+                              </div>
+                              <blockquote
+                                style={{
+                                  margin: 0,
+                                  paddingLeft: "8px",
+                                  borderLeft: "2px solid var(--violet)",
+                                  fontSize: "10px",
+                                  color: "var(--body)",
+                                  fontStyle: "italic",
+                                }}
+                              >
+                                &ldquo;{src.excerpt}&rdquo;
+                              </blockquote>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    fontSize: "9px",
+                    color: m.sender === "user" ? "rgba(255,255,255,0.7)" : "var(--muted)",
+                    alignSelf: "flex-end",
+                    marginTop: "4px",
+                  }}
+                >
+                  {m.timestamp}
                 </div>
               </div>
             ))}
+
+            {queryingAssistant && (
+              <div className="chat-bubble assistant">
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--muted)", fontSize: "11px" }}>
+                  <span>Synthesizing grounded citations...</span>
+                </div>
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
 
-          <div className="policy-card">
-            <div>
-              <Icon name="shield" />
-              <b>Policy clearance</b>
-              <Badge tone="green">PASSED</Badge>
-            </div>
-            <p>Policy Compliance: {policyInfo.rule}</p>
-            <code>{policyInfo.version}</code>
-            <blockquote>“{policyInfo.quote}”</blockquote>
-          </div>
-
-          <p className="audit-note">
-            ⓘ Review the extracted fields against the source, then certify this record. Certification affixes your identity to the permanent approval ledger.
-          </p>
-        </section>
-      </div>
+          {/* Query Input Box */}
+          <form className="assistant-input-box" onSubmit={(e) => handleAskAssistant(e)}>
+            <input
+              type="text"
+              className="assistant-input-field"
+              placeholder="Ask a question about document values or policy requirements..."
+              value={questionInput}
+              onChange={(e) => setQuestionInput(e.target.value)}
+              disabled={queryingAssistant}
+            />
+            <Button
+              variant="primary"
+              icon="search"
+              disabled={!questionInput.trim() || queryingAssistant}
+            >
+              {queryingAssistant ? "Querying..." : "Ask Assistant"}
+            </Button>
+          </form>
+        </div>
+      )}
 
       {showOverride && (
         <OverrideSheet

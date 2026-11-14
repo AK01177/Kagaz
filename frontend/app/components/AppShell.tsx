@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
+import { NotificationCenter } from "./NotificationCenter";
 
 export type IconName =
   | "grid"
@@ -141,6 +142,7 @@ export function Sidebar() {
   const isDashboard = pathname === "/dashboard";
   const isApprovals = pathname === "/approvals";
   const isAdmin = pathname.startsWith("/admin");
+  const isPolicies = pathname.startsWith("/policies");
   const isLogin = pathname === "/login";
 
   const userRole = user?.role || "GUEST";
@@ -173,9 +175,12 @@ export function Sidebar() {
           Kagaz.
         </Link>
         <span className="brand-dot" />
-        <button type="button" className="collapse" aria-label="Collapse">
-          ◫
-        </button>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
+          <NotificationCenter />
+          <button type="button" className="collapse" aria-label="Collapse">
+            ◫
+          </button>
+        </div>
       </div>
 
       <div className="org">
@@ -276,6 +281,19 @@ export function Sidebar() {
             <em>2</em>
           ) : (
             <em style={{ fontSize: "9px", opacity: 0.8 }}>Restricted</em>
+          )}
+        </Link>
+
+        <Link
+          href="/policies"
+          className={isPolicies ? "active" : ""}
+          style={!canAccessAdmin && isAuthenticated ? { opacity: 0.6 } : undefined}
+          title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : undefined}
+        >
+          <Icon name="shield" />
+          Policy Governance{" "}
+          {!canAccessAdmin && isAuthenticated && (
+            <em style={{ fontSize: "9px", opacity: 0.8 }}>Admin</em>
           )}
         </Link>
 

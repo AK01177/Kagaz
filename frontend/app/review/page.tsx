@@ -24,82 +24,16 @@ interface QueueItem {
   docType: "receipt" | "identity" | "invoice" | "contract" | "general";
   verified?: boolean;
   fields: ReviewField[];
+  submitter?: string;
 }
 
-const DEFAULT_QUEUE_DOCS: QueueItem[] = [
-  {
-    id: "doc_demo_74a2c1",
-    name: "travel_expense_aug.pdf",
-    time: "09:42",
-    score: "58.2%",
-    state: "Needs Human Review",
-    icon: "receipt",
-    docType: "receipt",
-    fields: [
-      { field: "Merchant", val: "Skyline Business Hotel", conf: "62%" },
-      { field: "Receipt date", val: "2024-08-28", conf: "54%" },
-      { field: "Total amount", val: "$286.50", conf: "48%" },
-      { field: "Currency", val: "USD", conf: "99%" },
-      { field: "Expense category", val: "Travel & Lodging", conf: "84%" },
-    ],
-  },
-  {
-    id: "doc_qr_0284f",
-    name: "identity_scan_0041.pdf",
-    time: "08:15",
-    score: "71.4%",
-    state: "Ambiguous",
-    icon: "contact",
-    docType: "identity",
-    fields: [
-      { field: "Document holder", val: "Klaus Reinhardt", conf: "74%" },
-      { field: "ID number", val: "T220001293", conf: "68%" },
-      { field: "Issuing authority", val: "Federal Republic of Germany", conf: "82%" },
-      { field: "Document type", val: "Personalausweis (ID)", conf: "71%" },
-      { field: "Validity date", val: "2031-08-14", conf: "62%" },
-    ],
-  },
-  {
-    id: "doc_qr_0384f",
-    name: "supplier_invoice_88.pdf",
-    time: "Yesterday",
-    score: "86.9%",
-    state: "Standard",
-    icon: "file",
-    docType: "invoice",
-    fields: [
-      { field: "Vendor", val: "Alpine Hardware GmbH", conf: "88%" },
-      { field: "Client", val: "Kagaz Technologies", conf: "92%" },
-      { field: "Invoice reference", val: "INV-88-2024", conf: "89%" },
-      { field: "Total VAT incl", val: "$14,950.00", conf: "86%" },
-      { field: "Payment terms", val: "Net 15", conf: "79%" },
-    ],
-  },
-  {
-    id: "doc_qr_0484f",
-    name: "nda_executed_final.pdf",
-    time: "Yesterday",
-    score: "✓ 100%",
-    state: "Certified",
-    icon: "check",
-    docType: "contract",
-    verified: true,
-    fields: [
-      { field: "Disclosing party", val: "Kagaz Systems Inc.", conf: "98%" },
-      { field: "Receiving party", val: "Apex Dynamics LLC", conf: "97%" },
-      { field: "Term length", val: "36 Months Confidentiality", conf: "95%" },
-      { field: "Governing law", val: "Frankfurt am Main, Germany", conf: "99%" },
-      { field: "Execution date", val: "2024-09-22", conf: "94%" },
-    ],
-  },
-];
+function DynamicExcerpt({ item }: { item?: QueueItem }) {
+  if (!item) return null;
 
-/* Dynamic Excerpt Canvas for the active document */
-function DynamicExcerpt({ item }: { item: QueueItem }) {
   if (item.docType === "identity") {
-    const holder = item.fields.find((f) => f.field.includes("holder"))?.val || "Klaus Reinhardt";
-    const idNum = item.fields.find((f) => f.field.includes("number"))?.val || "T220001293";
-    const auth = item.fields.find((f) => f.field.includes("authority"))?.val || "Federal Republic of Germany";
+    const holder = item.fields.find((f) => f.field.toLowerCase().includes("holder") || f.field.toLowerCase().includes("name"))?.val || "Klaus Reinhardt";
+    const idNum = item.fields.find((f) => f.field.toLowerCase().includes("number") || f.field.toLowerCase().includes("id"))?.val || "T220001293";
+    const auth = item.fields.find((f) => f.field.toLowerCase().includes("authority") || f.field.toLowerCase().includes("issuer"))?.val || "Federal Republic of Germany";
 
     return (
       <div className="receipt-paper" style={{ transform: "none", margin: "24px auto", background: "#fcfbf7" }}>
@@ -126,9 +60,9 @@ function DynamicExcerpt({ item }: { item: QueueItem }) {
   }
 
   if (item.docType === "invoice") {
-    const vendor = item.fields.find((f) => f.field.includes("Vendor"))?.val || "Alpine Hardware GmbH";
-    const total = item.fields.find((f) => f.field.includes("Total"))?.val || "$14,950.00";
-    const ref = item.fields.find((f) => f.field.includes("reference"))?.val || "INV-88-2024";
+    const vendor = item.fields.find((f) => f.field.toLowerCase().includes("vendor") || f.field.toLowerCase().includes("supplier"))?.val || "Alpine Hardware GmbH";
+    const total = item.fields.find((f) => f.field.toLowerCase().includes("total") || f.field.toLowerCase().includes("amount"))?.val || "$14,950.00";
+    const ref = item.fields.find((f) => f.field.toLowerCase().includes("reference") || f.field.toLowerCase().includes("number"))?.val || "INV-88-2024";
 
     return (
       <div className="receipt-paper" style={{ transform: "none", margin: "24px auto" }}>
@@ -150,8 +84,8 @@ function DynamicExcerpt({ item }: { item: QueueItem }) {
   }
 
   if (item.docType === "contract") {
-    const parties = item.fields.find((f) => f.field.includes("party"))?.val || "Kagaz Systems & Apex";
-    const term = item.fields.find((f) => f.field.includes("Term"))?.val || "36 Months";
+    const parties = item.fields.find((f) => f.field.toLowerCase().includes("part"))?.val || "Kagaz Systems & Enterprise Partner";
+    const term = item.fields.find((f) => f.field.toLowerCase().includes("term") || f.field.toLowerCase().includes("duration"))?.val || "36 Months";
 
     return (
       <div className="receipt-paper" style={{ transform: "none", margin: "24px auto" }}>
@@ -172,34 +106,31 @@ function DynamicExcerpt({ item }: { item: QueueItem }) {
     );
   }
 
-  // Default Receipt Excerpt
+  // Default General / Receipt Excerpt
+  const supplier = item.fields.find((f) => f.field.toLowerCase().includes("supplier") || f.field.toLowerCase().includes("merchant"))?.val || "Skyline Business Hotel";
+  const date = item.fields.find((f) => f.field.toLowerCase().includes("date"))?.val || "2024-08-28";
+  const total = item.fields.find((f) => f.field.toLowerCase().includes("total"))?.val || "$286.50";
+
   return (
     <div className="receipt-paper">
-      <b>SKYLINE</b>
+      <b>{supplier.toUpperCase()}</b>
       <small>
-        BUSINESS HOTEL<br />
-        210 N Michigan Ave, Chicago IL<br />
-        Tel: (312) 555-0198
+        ENTERPRISE EXPENSE RECEIPT<br />
+        Document ID: {item.id}
       </small>
       <hr />
       <p>
-        DATE <span>08/28/2024　07:36</span><br />
-        RECEIPT <span>SK-008298</span><br />
-        GUEST <span>SOHAM DOSHI</span><br />
-        ROOM <span>614</span>
+        DATE <span>{date}</span><br />
+        STATUS <span>{item.state.toUpperCase()}</span><br />
+        SUBMITTER <span>{item.submitter || "Enterprise User"}</span>
       </p>
       <hr />
-      <p>
-        ROOM CHARGE (1 NIGHT) <span>250.00</span><br />
-        STATE &amp; CITY TAX <span>36.50</span>
-      </p>
       <strong>
-        TOTAL USD <span>286.50</span>
+        TOTAL BALANCE <span>{total}</span>
       </strong>
       <small>
-        VISA **** 4208 · APPROVED<br />
-        <br />
-        THANK YOU FOR YOUR STAY
+        DIGITALLY ANCHORED RECORD<br />
+        Permanent Hash Stamp Verified
       </small>
       <i className="uncertain u1" />
       <i className="uncertain u2" />
@@ -207,7 +138,7 @@ function DynamicExcerpt({ item }: { item: QueueItem }) {
   );
 }
 
-function EmptyQueueView({ onReset }: { onReset: () => void }) {
+function EmptyQueueView({ onRefresh }: { onRefresh: () => void }) {
   return (
     <div className="empty-wrap">
       <div className="empty-card">
@@ -216,7 +147,7 @@ function EmptyQueueView({ onReset }: { onReset: () => void }) {
             <h2>Verification Desk</h2>
             <span>HUMAN VERIFICATION QUEUE · 0 PENDING</span>
           </div>
-          <code>● Ingestion idle.</code>
+          <code>● Review queue clear.</code>
         </div>
         <div className="empty-center">
           <div className="paper-stack">
@@ -225,29 +156,29 @@ function EmptyQueueView({ onReset }: { onReset: () => void }) {
           </div>
           <h1>All documents verified.</h1>
           <p>
-            Nothing needs your attention. New documents will appear here when they’re ready for a human review.
+            Nothing needs your attention in this queue. When new documents are uploaded or routed for review, they will appear here.
           </p>
           <div style={{ display: "flex", gap: "10px" }}>
             <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>
               Intake Dropzone →
             </Link>
-            <Button icon="check" onClick={onReset}>
-              Reset Demo Queue
+            <Button icon="refresh" onClick={onRefresh}>
+              Refresh Queue
             </Button>
           </div>
         </div>
         <div className="empty-metrics">
           <div>
-            <code>12</code>
-            <span>Certified today</span>
+            <code>✓ Clean</code>
+            <span>Queue status</span>
           </div>
           <div>
             <code>0</code>
             <span>Awaiting review</span>
           </div>
           <div>
-            <code>14:36 UTC</code>
-            <span>Last certification</span>
+            <code>Online</code>
+            <span>Workflow engine</span>
           </div>
         </div>
       </div>
@@ -256,52 +187,151 @@ function EmptyQueueView({ onReset }: { onReset: () => void }) {
 }
 
 function ReviewContent() {
-  const { fetchWithAuth } = useAuth();
-  const [queue, setQueue] = useState<QueueItem[]>(DEFAULT_QUEUE_DOCS);
+  const { fetchWithAuth, activeOrgId, user } = useAuth();
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [active, setActive] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "review" | "low" | "verified">("all");
   const [search, setSearch] = useState("");
-  const [showEmpty, setShowEmpty] = useState(false);
-  const [savedNotice, setSavedNotice] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Load newly uploaded files from sessionStorage that require review
+  // Changes Request Modal State
+  const [showChangesModal, setShowChangesModal] = useState(false);
+  const [changesComment, setChangesComment] = useState("");
+  const [submittingAction, setSubmittingAction] = useState(false);
+
+  // Comment Modal State
+  const [showCommentModal, setShowCommentModal] = useState(false);
+  const [newComment, setNewComment] = useState("");
+
+  const currentOrg = activeOrgId || user?.organization_id || "Enterprise Workspace";
+
+  const loadReviewQueue = useCallback(async () => {
+    setLoading(true);
+    setActionError(null);
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/documents/workflow/review-queue`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.detail?.message || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const rawItems = data.items || [];
+
+      const mapped: QueueItem[] = rawItems.map((item: {
+        id: string;
+        filename: string;
+        status: string;
+        classification?: string;
+        uploaded_at: string;
+        confidence?: number;
+        uploaded_by?: string;
+      }) => {
+        const confNum = item.confidence ? Math.round(item.confidence * 100) : 72;
+        const isVerified = item.status === "REVIEWER_VERIFIED";
+        const classification = (item.classification || "").toLowerCase();
+
+        let docType: "receipt" | "identity" | "invoice" | "contract" | "general" = "general";
+        let icon: IconName = "file";
+        if (classification.includes("invoice")) {
+          docType = "invoice";
+          icon = "receipt";
+        } else if (classification.includes("receipt") || classification.includes("expense")) {
+          docType = "receipt";
+          icon = "receipt";
+        } else if (classification.includes("contract") || classification.includes("legal")) {
+          docType = "contract";
+          icon = "book";
+        } else if (classification.includes("identity") || classification.includes("hr")) {
+          docType = "identity";
+          icon = "contact";
+        }
+
+        return {
+          id: item.id,
+          name: item.filename,
+          time: new Date(item.uploaded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          score: isVerified ? "✓ 100%" : `${confNum}%`,
+          state: isVerified ? "Certified" : item.status === "NEEDS_REVIEW" ? "Needs Human Review" : item.status,
+          icon,
+          docType,
+          verified: isVerified,
+          submitter: item.uploaded_by,
+          fields: [
+            { field: "Document ID", val: item.id, conf: "100%" },
+            { field: "File name", val: item.filename, conf: "100%" },
+            { field: "Classification", val: item.classification || "General Document", conf: `${confNum}%` },
+            { field: "Workflow state", val: item.status, conf: "100%" },
+          ],
+        };
+      });
+
+      setQueue(mapped);
+      setActive(0);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Failed to load review queue from server.");
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchWithAuth]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      try {
-        const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
-        const dynamicItems: QueueItem[] = [];
-        for (const k of keys) {
-          const item = JSON.parse(sessionStorage.getItem(k) || "{}");
-          if (item && item.document_id && item.filename && !DEFAULT_QUEUE_DOCS.some((d) => d.id === item.document_id)) {
-            const conf = item.confidence ? Number((item.confidence * 100).toFixed(1)) : 72.0;
-            const isVerified = item.status === "REVIEWER_VERIFIED" || item.is_manually_corrected;
-            dynamicItems.push({
-              id: item.document_id,
-              name: item.filename,
-              time: "Recently Added",
-              score: isVerified ? "✓ 100%" : `${conf}%`,
-              state: isVerified ? "Certified" : conf < 75 ? "Needs Human Review" : "Standard",
-              icon: item.category?.toLowerCase().includes("invoice") ? "file" : "receipt",
-              docType: item.category?.toLowerCase().includes("invoice") ? "invoice" : "receipt",
-              verified: isVerified,
-              fields: [
-                { field: "File name", val: item.filename, conf: "100%" },
-                { field: "Document type", val: item.category || "Classified File", conf: `${conf}%` },
-                { field: "Scope anchor", val: item.organization_id || "Acme Global Enterprise", conf: "99%" },
-                { field: "Validation status", val: isVerified ? "Certified" : "Awaiting Human Sign-off", conf: isVerified ? "100%" : "68%" },
-              ],
-            });
-          }
-        }
-        if (dynamicItems.length > 0) {
-          setQueue([...dynamicItems, ...DEFAULT_QUEUE_DOCS]);
-        }
-      } catch {}
+      loadReviewQueue();
     }, 0);
     return () => clearTimeout(timer);
-  }, []);
+  }, [loadReviewQueue]);
 
-  const activeDoc = queue[active] || queue[0];
+  // Fetch full review details for active document
+  const activeDoc = queue[active] || null;
+  const activeDocId = activeDoc?.id || null;
+  const activeDocName = activeDoc?.name || "";
+
+  useEffect(() => {
+    if (!activeDocId) return;
+    let ignore = false;
+
+    async function fetchDocReviewDetail() {
+      try {
+        const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDocId}/review`);
+        if (res.ok && !ignore) {
+          const detail = await res.json();
+          if (Array.isArray(detail.extractions) && detail.extractions.length > 0) {
+            const dynamicFields: ReviewField[] = detail.extractions.map(
+              (e: { field_name: string; field_value: unknown; confidence?: number }) => ({
+                field: e.field_name.replace(/_/g, " "),
+                val: String(e.field_value ?? ""),
+                conf: `${Math.round((e.confidence ?? 0.8) * 100)}%`,
+              })
+            );
+
+            setQueue((prev) =>
+              prev.map((item) =>
+                item.id === activeDocId
+                  ? {
+                      ...item,
+                      fields: [
+                        { field: "Document type", val: detail.document?.classification || activeDocName, conf: "95%" },
+                        ...dynamicFields,
+                      ],
+                    }
+                  : item
+              )
+            );
+          }
+        }
+      } catch {
+        // Fallback to existing fields
+      }
+    }
+
+    fetchDocReviewDetail();
+    return () => {
+      ignore = true;
+    };
+  }, [activeDocId, activeDocName, fetchWithAuth]);
 
   function handleFieldChange(fieldIndex: number, newVal: string) {
     setQueue((prev) =>
@@ -314,48 +344,130 @@ function ReviewContent() {
     );
   }
 
-  const handleConfirmNext = useCallback(() => {
-    setSavedNotice(true);
+  // 1. Confirm & Next (Verify / Certify)
+  const handleConfirmNext = useCallback(async () => {
+    if (!activeDoc) return;
+    setSubmittingAction(true);
+    setActionError(null);
 
-    // Call backend API or persist to sessionStorage if real document
-    if (activeDoc && activeDoc.id && !activeDoc.id.startsWith("doc_demo")) {
-      try {
-        fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/classification`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ category: activeDoc.fields[1]?.val || "Commercial Invoice", notes: "Verified in review desk" }),
-        }).catch(() => {});
+    try {
+      const classificationVal = activeDoc.fields.find((f) => f.field.toLowerCase().includes("type") || f.field.toLowerCase().includes("classification"))?.val || "Verified Document";
 
-        const cached = sessionStorage.getItem(`kagaz_doc_${activeDoc.id}`);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          sessionStorage.setItem(
-            `kagaz_doc_${activeDoc.id}`,
-            JSON.stringify({ ...parsed, status: "REVIEWER_VERIFIED", confidence: 1.0 })
-          );
-        }
-      } catch {}
-    }
+      const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/classification`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category: classificationVal, notes: "Verified in review desk" }),
+      });
 
-    setQueue((prev) =>
-      prev.map((item, idx) =>
-        idx === active
-          ? { ...item, score: "✓ 100%", state: "Certified", verified: true }
-          : item
-      )
-    );
-
-    setTimeout(() => {
-      setSavedNotice(false);
-      if (active < queue.length - 1) {
-        setActive(active + 1);
-      } else {
-        setShowEmpty(true);
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.detail?.message || "Failed to certify document.");
       }
-    }, 600);
-  }, [active, queue, activeDoc, fetchWithAuth]);
+
+      setSavedNotice(`Certified ${activeDoc.name} ✓`);
+
+      setQueue((prev) =>
+        prev.map((item, idx) =>
+          idx === active ? { ...item, score: "✓ 100%", state: "Certified", verified: true } : item
+        )
+      );
+
+      setTimeout(() => {
+        setSavedNotice(null);
+        if (active < queue.length - 1) {
+          setActive(active + 1);
+        }
+      }, 600);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Error during certification.");
+    } finally {
+      setSubmittingAction(false);
+    }
+  }, [active, queue.length, activeDoc, fetchWithAuth]);
+
+  // 2. Submit for Approval
+  const handleSubmitForApproval = async () => {
+    if (!activeDoc) return;
+    setSubmittingAction(true);
+    setActionError(null);
+
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/submit-for-approval`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auto_route: true, comment: "Reviewed and routed for executive sign-off" }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.detail?.message || "Failed to submit document for approval.");
+      }
+
+      setSavedNotice(`Document ${activeDoc.name} routed to Approval Ledger.`);
+      setTimeout(() => {
+        loadReviewQueue();
+      }, 700);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Submission for approval failed.");
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  // 3. Request Changes
+  const handleRequestChanges = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeDoc || !changesComment.trim()) return;
+    setSubmittingAction(true);
+    setActionError(null);
+
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/request-changes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment: changesComment.trim() }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.detail?.message || "Failed to request changes.");
+      }
+
+      setSavedNotice(`Changes requested on ${activeDoc.name}. Document returned to submitter.`);
+      setShowChangesModal(false);
+      setChangesComment("");
+      setTimeout(() => {
+        loadReviewQueue();
+      }, 700);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Failed to request changes.");
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  // 4. Add Review Comment
+  const handleAddComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeDoc || !newComment.trim()) return;
+    setSubmittingAction(true);
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment: newComment.trim() }),
+      });
+      if (res.ok) {
+        setSavedNotice("Review comment recorded to audit ledger.");
+        setShowCommentModal(false);
+        setNewComment("");
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
 
   // Keyboard shortcut listener (Cmd+Enter / Ctrl+Enter)
   useEffect(() => {
@@ -371,22 +483,27 @@ function ReviewContent() {
 
   const filteredQueue = queue.filter((doc) => {
     if (search && !doc.name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filter === "review") return doc.state.includes("Review") || doc.state.includes("Ambiguous");
+    if (filter === "review") return doc.state.includes("Review") || doc.state.includes("Ambiguous") || doc.state.includes("NEEDS");
     if (filter === "low") return parseFloat(doc.score) < 75 && !doc.verified;
     if (filter === "verified") return doc.verified;
     return true;
   });
 
-  if (showEmpty) {
+  if (loading && queue.length === 0) {
     return (
       <AppShell>
-        <EmptyQueueView
-          onReset={() => {
-            setQueue(DEFAULT_QUEUE_DOCS);
-            setActive(0);
-            setShowEmpty(false);
-          }}
-        />
+        <div style={{ padding: "60px", textAlign: "center", color: "var(--muted)" }}>
+          <p style={{ font: "20px 'Newsreader', serif", margin: "0 0 8px" }}>Loading Verification Queue...</p>
+          <small>Synchronizing permitted workflow records for {currentOrg}</small>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (queue.length === 0) {
+    return (
+      <AppShell>
+        <EmptyQueueView onRefresh={loadReviewQueue} />
       </AppShell>
     );
   }
@@ -397,19 +514,58 @@ function ReviewContent() {
         <div className="crumb">
           <Icon name="stamp" size={14} /> Workspace <span>/</span> Verification Desk
           <div className="sync">
-            <span className="brand-dot" /> Synced just now
+            <span className="brand-dot" /> Live Queue ({queue.length})
           </div>
         </div>
         <div className="head-main">
           <div>
             <h1>A human eye. A trusted record.</h1>
-            <p className="subline">HUMAN VERIFICATION QUEUE · {queue.length} files requiring certification</p>
+            <p className="subline">
+              {currentOrg.toUpperCase()} · HUMAN VERIFICATION QUEUE · {queue.length} FILES REQUIRING CERTIFICATION
+            </p>
           </div>
-          <Button icon="sliders" onClick={() => setShowEmpty(true)}>
-            Queue preferences
-          </Button>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <Button icon="refresh" variant="secondary" onClick={loadReviewQueue}>
+              Sync Queue
+            </Button>
+            <Link href="/approvals" className="btn primary" style={{ textDecoration: "none" }}>
+              Approval Ledger →
+            </Link>
+          </div>
         </div>
       </header>
+
+      {actionError && (
+        <div
+          style={{
+            margin: "0 32px 16px",
+            padding: "10px 16px",
+            background: "var(--red-bg, #fef2f2)",
+            border: "1px solid var(--red, #dc2626)",
+            color: "var(--red, #dc2626)",
+            borderRadius: "6px",
+            fontSize: "12px",
+          }}
+        >
+          <b>Review Action Notice:</b> {actionError}
+        </div>
+      )}
+
+      {savedNotice && (
+        <div
+          style={{
+            margin: "0 32px 16px",
+            padding: "10px 16px",
+            background: "var(--green-bg, #f0fdf4)",
+            border: "1px solid var(--green, #16a34a)",
+            color: "var(--green, #16a34a)",
+            borderRadius: "6px",
+            fontSize: "12px",
+          }}
+        >
+          <b>Workflow Action Success:</b> {savedNotice}
+        </div>
+      )}
 
       <div className="review-body">
         {/* Left Queue Rail */}
@@ -456,151 +612,256 @@ function ReviewContent() {
             </div>
           </div>
 
-          <div className="queue-sort">
-            <b>DOCUMENTS</b>
-            <span>Oldest first ↯</span>
-          </div>
-
-          {filteredQueue.map((d, i) => {
-            const isSelected = active === i;
-            const isAmber = parseFloat(d.score) < 75 && !d.verified;
-            return (
-              <button
-                type="button"
-                className={`queue-doc ${isSelected ? "active" : ""}`}
-                key={d.id}
-                onClick={() => setActive(i)}
-              >
-                <div>
-                  <Icon name={d.icon} />
-                  <code>{d.time}</code>
+          <div className="queue-items">
+            {filteredQueue.map((doc) => {
+              const originalIndex = queue.findIndex((q) => q.id === doc.id);
+              const isSelected = originalIndex === active;
+              return (
+                <div
+                  key={doc.id}
+                  className={`queue-item ${isSelected ? "active" : ""}`}
+                  onClick={() => setActive(originalIndex)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <div className="q-left">
+                    <Icon name={doc.icon} />
+                  </div>
+                  <div className="q-mid">
+                    <b>{doc.name}</b>
+                    <span>
+                      {doc.time} · ID: {doc.id.slice(0, 8)}…
+                    </span>
+                  </div>
+                  <div className="q-right">
+                    <span className={doc.verified ? "green-score" : parseFloat(doc.score) < 75 ? "amber-score" : ""}>
+                      {doc.score}
+                    </span>
+                    <small>{doc.state}</small>
+                  </div>
                 </div>
-                <b>{d.name}</b>
-                <p className={d.verified ? "green-text" : isAmber ? "amber-text" : "green-text"}>
-                  <code>{d.score}</code> · {d.state}
-                </p>
-              </button>
-            );
-          })}
-
-          <div className="queue-assigned">
-            ♙ Assigned to you
-            <small>All decisions are recorded in the ledger.</small>
+              );
+            })}
           </div>
         </aside>
 
-        {/* Right Active Review Pane */}
-        <section className="active-review">
-          <div className="active-head">
-            <div>
-              <h2>{activeDoc.name}</h2>
-              <p>
-                <code>{activeDoc.id}</code> · {activeDoc.docType.toUpperCase()} EXCERPT · 1 page
-              </p>
-            </div>
-            <code>
-              {active + 1} of {queue.length} &nbsp; ‹ &nbsp; ›
-            </code>
-          </div>
-
-          <div className="warning">
-            <Icon name="alert" />
-            <div>
-              <b>
-                {activeDoc.verified
-                  ? "✓ Record Verified and Certified by Reviewer."
-                  : `AI Confidence (${activeDoc.score}) requires human verification before downstream ERP export.`}
-              </b>
-              <p>
-                {activeDoc.verified
-                  ? "Permanent audit trail affixed to ledger. Classification and field extractions locked at 100%."
-                  : "Compare the OCR excerpt against detected fields. Edits are recorded in the permanent audit trail."}
-              </p>
-            </div>
-          </div>
-
-          <div className="correction-work">
-            {/* Scanned Excerpt Viewer */}
-            <div className="receipt-side">
-              <div className="pane-title">
-                <span>SCANNED EXCERPT</span>
-                <code>1 / 1</code>
+        {/* Center Workspace */}
+        {activeDoc && (
+          <section className="review-center">
+            {/* Stage Bar */}
+            <div className="stage-bar">
+              <div>
+                <h2>
+                  Review: <em>{activeDoc.name}</em>
+                </h2>
+                <span>
+                  DOCUMENT ID: <code>{activeDoc.id}</code> · AI RECOGNITION CONFIDENCE: {activeDoc.score}
+                </span>
               </div>
-              <div className="receipt-viewer">
-                <div className="viewer-bar">
-                  <span>−　100%　＋</span>
-                  <span>⛶</span>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <Link
+                  href={`/documents/${activeDoc.id}`}
+                  className="btn secondary"
+                  style={{ textDecoration: "none" }}
+                >
+                  Document View ↗
+                </Link>
+                <Button variant="secondary" onClick={() => setShowCommentModal(true)}>
+                  Add Comment +
+                </Button>
+              </div>
+            </div>
+
+            <div className="correction-work">
+              {/* Scanned Excerpt Viewer */}
+              <div className="receipt-side">
+                <div className="pane-title">
+                  <span>DOCUMENT SOURCE PREVIEW</span>
+                  <code>{activeDoc.docType.toUpperCase()}</code>
                 </div>
-                <DynamicExcerpt item={activeDoc} />
-              </div>
-              <p>Amber regions indicate uncertain OCR tokens. Compare the source before confirming.</p>
-            </div>
-
-            {/* Editable Field Correction Table */}
-            <div className="correction-side">
-              <div className="pane-title">
-                <span>REVIEW &amp; CORRECT</span>
-                <Badge tone={activeDoc.verified ? "green" : "amber"}>
-                  {activeDoc.verified ? "Verified" : `${activeDoc.fields.length} fields`}
-                </Badge>
-              </div>
-
-              <div className="edit-table">
-                <div className="edit-head">
-                  <b>FIELD / REVIEWED VALUE</b>
-                  <b>AI CONF.</b>
+                <div className="receipt-viewer">
+                  <div className="viewer-bar">
+                    <span>−　100%　＋</span>
+                    <span>⛶</span>
+                  </div>
+                  <DynamicExcerpt item={activeDoc} />
                 </div>
-                {activeDoc.fields.map((f, i) => (
-                  <label className="edit-row" key={f.field}>
-                    <div>
-                      <span>{f.field}</span>
-                      <input
-                        value={f.val}
-                        onChange={(e) => handleFieldChange(i, e.target.value)}
-                      />
-                    </div>
-                    <code className={parseInt(f.conf) < 75 && !activeDoc.verified ? "amber-text" : "green-text"}>
-                      {activeDoc.verified ? "100%" : f.conf}
-                    </code>
-                  </label>
-                ))}
+                <p>Verify extracted values against the source before recording state changes.</p>
               </div>
 
-              <p className="history">
-                <Icon name="history" size={12} /> Original values and reviewer edits are preserved in the audit trail.
-              </p>
-            </div>
-          </div>
+              {/* Editable Field Correction Table */}
+              <div className="correction-side">
+                <div className="pane-title">
+                  <span>REVIEW &amp; CORRECT EXTRACTED FIELDS</span>
+                  <Badge tone={activeDoc.verified ? "green" : "amber"}>
+                    {activeDoc.verified ? "Verified" : `${activeDoc.fields.length} fields`}
+                  </Badge>
+                </div>
 
-          {/* Review Actions Bar */}
-          <div className="review-actions">
-            <div>
-              <Button
-                variant="ghost"
-                icon="flag"
-                onClick={() => {
-                  alert(`Flagged ${activeDoc.name} for senior compliance review.`);
-                }}
-              >
-                Flag issue
-              </Button>
-              <Button onClick={() => setActive((prev) => (prev + 1) % queue.length)}>
-                Skip for now
-              </Button>
+                <div className="edit-table">
+                  <div className="edit-head">
+                    <b>FIELD / REVIEWED VALUE</b>
+                    <b>AI CONF.</b>
+                  </div>
+                  {activeDoc.fields.map((f, i) => (
+                    <label className="edit-row" key={f.field}>
+                      <div>
+                        <span>{f.field}</span>
+                        <input
+                          value={f.val}
+                          onChange={(e) => handleFieldChange(i, e.target.value)}
+                        />
+                      </div>
+                      <code className={parseInt(f.conf) < 75 && !activeDoc.verified ? "amber-text" : "green-text"}>
+                        {activeDoc.verified ? "100%" : f.conf}
+                      </code>
+                    </label>
+                  ))}
+                </div>
+
+                <p className="history">
+                  <Icon name="history" size={12} /> Original values and reviewer updates are permanently tracked in the cryptographic audit trail.
+                </p>
+              </div>
             </div>
-            <div>
-              <span>Press ⌘+Enter</span>
-              <Button
-                variant="primary"
-                icon="check"
-                onClick={handleConfirmNext}
-              >
-                {savedNotice ? "Confirmed ✓" : activeDoc.verified ? "Re-Certify" : "Confirm & Next"}
-              </Button>
+
+            {/* Review Actions Bar */}
+            <div className="review-actions">
+              <div style={{ display: "flex", gap: "8px" }}>
+                <Button
+                  variant="ghost"
+                  onClick={() => setShowChangesModal(true)}
+                  disabled={submittingAction}
+                >
+                  Request Changes ↺
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={handleSubmitForApproval}
+                  disabled={submittingAction}
+                >
+                  Submit for Approval ↥
+                </Button>
+                <Button onClick={() => setActive((prev) => (prev + 1) % queue.length)}>
+                  Skip for now
+                </Button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span>Press ⌘+Enter</span>
+                <Button
+                  variant="primary"
+                  icon="check"
+                  disabled={submittingAction}
+                  onClick={handleConfirmNext}
+                >
+                  {savedNotice ? "Confirmed ✓" : activeDoc.verified ? "Re-Certify" : "Confirm & Next"}
+                </Button>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
       </div>
+
+      {/* Request Changes Modal */}
+      {showChangesModal && activeDoc && (
+        <div className="sheet-backdrop" onMouseDown={() => setShowChangesModal(false)}>
+          <aside className="override-sheet" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="sheet-bar">
+              <span>
+                <Icon name="alert" /> REQUEST SUBMITTER CHANGES
+              </span>
+              <button type="button" onClick={() => setShowChangesModal(false)}>
+                ×
+              </button>
+            </div>
+            <form onSubmit={handleRequestChanges} className="sheet-form">
+              <div>
+                <h2>Request Corrections from Submitter</h2>
+                <p>
+                  Document <code>{activeDoc.name}</code> will be routed back to the submitter with your revision guidance.
+                </p>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  Revision Guidance / Reason *
+                </label>
+                <textarea
+                  required
+                  rows={4}
+                  placeholder="Specify what needs correction (e.g. Total tax amount discrepancy; missing itemized receipt page 2)..."
+                  value={changesComment}
+                  onChange={(e) => setChangesComment(e.target.value)}
+                  style={{
+                    width: "100%",
+                    border: "1px solid var(--line2, #e0ddd5)",
+                    borderRadius: "5px",
+                    padding: "8px 12px",
+                    fontSize: "12px",
+                    background: "white",
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "12px" }}>
+                <Button variant="secondary" onClick={() => setShowChangesModal(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" icon="alert" disabled={submittingAction}>
+                  {submittingAction ? "Routing..." : "Send Revision Request →"}
+                </Button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      )}
+
+      {/* Add Comment Modal */}
+      {showCommentModal && activeDoc && (
+        <div className="sheet-backdrop" onMouseDown={() => setShowCommentModal(false)}>
+          <aside className="override-sheet" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="sheet-bar">
+              <span>
+                <Icon name="pencil" /> ADD AUDIT COMMENT
+              </span>
+              <button type="button" onClick={() => setShowCommentModal(false)}>
+                ×
+              </button>
+            </div>
+            <form onSubmit={handleAddComment} className="sheet-form">
+              <div>
+                <h2>Affix Reviewer Note</h2>
+                <p>Record notes or observations on this document without altering its current workflow stage.</p>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  Comment Text *
+                </label>
+                <textarea
+                  required
+                  rows={4}
+                  placeholder="Reviewer observation..."
+                  value={newComment}
+                  onChange={(e) => setNewComment(e.target.value)}
+                  style={{
+                    width: "100%",
+                    border: "1px solid var(--line2, #e0ddd5)",
+                    borderRadius: "5px",
+                    padding: "8px 12px",
+                    fontSize: "12px",
+                    background: "white",
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "12px" }}>
+                <Button variant="secondary" onClick={() => setShowCommentModal(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" icon="check" disabled={submittingAction}>
+                  {submittingAction ? "Saving..." : "Record Comment"}
+                </Button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      )}
     </AppShell>
   );
 }
