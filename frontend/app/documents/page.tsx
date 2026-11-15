@@ -4,7 +4,9 @@ import { DragEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell, Button, Badge, Icon } from "../components/AppShell";
+import { ProtectedRoute } from "../components/ProtectedRoute";
 import { formatFileSize } from "../classification";
+import { useAuth } from "../context/AuthContext";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
@@ -84,8 +86,9 @@ function detectDocumentCategory(filename: string): { category: string; confidenc
   return { category: "Enterprise Document", confidence: 0.912 };
 }
 
-export default function DocumentsPage() {
+function DocumentsContent() {
   const router = useRouter();
+  const { fetchWithAuth, user, activeOrgId } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [state, setState] = useState<UploadState>("idle");
@@ -93,6 +96,8 @@ export default function DocumentsPage() {
   const [error, setError] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [files, setFiles] = useState<FileItem[]>(DEFAULT_FILES);
+
+  const currentOrg = activeOrgId || user?.organization_id || "ACME GLOBAL ENTERPRISE";
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -152,35 +157,6 @@ export default function DocumentsPage() {
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  function getAuthHeader(): Record<string, string> {
-    if (typeof window === "undefined") return {};
-    const token =
-      window.localStorage.getItem("kagaz_token") ??
-      window.sessionStorage.getItem("kagaz_token");
-    if (!token || token === "undefined" || token === "null" || token.trim() === "") {
-      return {};
-    }
-    const parts = token.split(".");
-    if (parts.length !== 3) {
-      try {
-        window.localStorage.removeItem("kagaz_token");
-        window.sessionStorage.removeItem("kagaz_token");
-      } catch {}
-      return {};
-    }
-    try {
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-      if (payload.exp && Date.now() >= payload.exp * 1000) {
-        window.localStorage.removeItem("kagaz_token");
-        window.sessionStorage.removeItem("kagaz_token");
-        return {};
-      }
-    } catch {
-      return {};
-    }
-    return { Authorization: `Bearer ${token}` };
-  }
-
   async function uploadFile() {
     if (!file) return;
     setState("uploading");
@@ -188,40 +164,32 @@ export default function DocumentsPage() {
 
     const formData = new FormData();
     formData.append("file", file);
-    const authHeaders = getAuthHeader();
 
-    let docId = "";
     const { category, confidence } = detectDocumentCategory(file.name);
+    let docId = "";
 
     try {
-      let response: Response | null = null;
-      try {
-        response = await fetch(`${API_URL}/api/documents`, {
-          method: "POST",
-          body: formData,
-          headers: Object.keys(authHeaders).length > 0 ? authHeaders : undefined,
-        });
+      const response = await fetchWithAuth(`${API_URL}/api/documents`, {
+        method: "POST",
+        body: formData,
+      });
 
-        if (response && (response.status === 401 || response.status === 403) && Object.keys(authHeaders).length > 0) {
-          try {
-            localStorage.removeItem("kagaz_token");
-            sessionStorage.removeItem("kagaz_token");
-          } catch {}
-          response = await fetch(`${API_URL}/api/documents`, {
-            method: "POST",
-            body: formData,
-          });
-        }
-      } catch (networkErr) {
-        console.warn("Direct upload fetch issue, falling back to client intake engine:", networkErr);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const serverMsg =
+          errorData?.detail?.message ||
+          errorData?.detail ||
+          errorData?.error?.message ||
+          `Upload failed with HTTP ${response.status}.`;
+        setError(serverMsg);
+        setState("error");
+        return;
       }
 
-      if (response && response.ok) {
-        const body = await response.json().catch(() => ({}));
-        docId = body.document_id || `doc_${Math.random().toString(36).substring(2, 8)}${Date.now().toString(36).substring(4)}`;
-      } else {
-        docId = `doc_${Math.random().toString(36).substring(2, 8)}${Date.now().toString(36).substring(4)}`;
-      }
+      const body = await response.json().catch(() => ({}));
+      docId =
+        body.document_id ||
+        `doc_${Math.random().toString(36).substring(2, 8)}${Date.now().toString(36).substring(4)}`;
 
       const record = {
         document_id: docId,
@@ -231,6 +199,7 @@ export default function DocumentsPage() {
         category,
         confidence,
         uploaded_at: new Date().toISOString(),
+        organization_id: currentOrg,
       };
 
       try {
@@ -254,9 +223,14 @@ export default function DocumentsPage() {
 
       setState("success");
       router.push(`/documents/${docId}`);
-    } catch {
-      const fallbackId = `doc_${Math.random().toString(36).substring(2, 8)}`;
-      router.push(`/documents/${fallbackId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Network error during upload.";
+      if (msg === "SESSION_EXPIRED") {
+        setError("Your session has expired. Redirecting to sign in...");
+      } else {
+        setError(msg);
+      }
+      setState("error");
     }
   }
 
@@ -273,13 +247,15 @@ export default function DocumentsPage() {
         <div className="crumb">
           <Icon name="inbox" size={14} /> Workspace <span>/</span> Intake &amp; Library
           <div className="sync">
-            <span className="brand-dot" /> Synced just now
+            <span className="brand-dot" /> Verified Session
           </div>
         </div>
         <div className="head-main">
           <div>
             <h1>Bring a document into focus.</h1>
-            <p className="subline">DOCUMENT INTAKE · {files.length} RECORDS IN THIS WORKSPACE</p>
+            <p className="subline">
+              {currentOrg.toUpperCase()} · {files.length} RECORDS IN THIS WORKSPACE
+            </p>
           </div>
           <Button icon="sliders">Library preferences</Button>
         </div>
@@ -290,9 +266,9 @@ export default function DocumentsPage() {
           <div
             style={{
               padding: "10px 14px",
-              background: "var(--red-bg)",
-              border: "1px solid var(--red)",
-              color: "var(--red)",
+              background: "var(--red-bg, #fef2f2)",
+              border: "1px solid var(--red, #dc2626)",
+              color: "var(--red, #dc2626)",
               borderRadius: "5px",
               marginBottom: "16px",
               fontSize: "12px",
@@ -413,5 +389,13 @@ export default function DocumentsPage() {
         </section>
       </div>
     </AppShell>
+  );
+}
+
+export default function DocumentsPage() {
+  return (
+    <ProtectedRoute>
+      <DocumentsContent />
+    </ProtectedRoute>
   );
 }

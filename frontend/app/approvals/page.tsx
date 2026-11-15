@@ -1,50 +1,133 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { AppShell, Button, Badge, Icon } from "../components/AppShell";
+import { ProtectedRoute } from "../components/ProtectedRoute";
+import { useAuth } from "../context/AuthContext";
 
-interface ApprovalItem {
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+
+interface ApprovalQueueItem {
   id: string;
-  name: string;
-  type: string;
-  amount: string;
-  policy: string;
-  policyStatus: "PASSED" | "FLAGGED";
-  submitter: string;
-  date: string;
+  organization_id: string;
+  uploaded_by: string;
+  filename: string;
+  file_type?: string;
+  file_size?: number;
+  status: string;
+  classification?: string;
+  confidence?: number;
+  uploaded_at: string;
+  assigned_reviewer_id?: string | null;
+  assigned_approver_id?: string | null;
 }
 
-const DEFAULT_APPROVALS: ApprovalItem[] = [
-  {
-    id: "doc_demo_8823f9",
-    name: "commercial_invoice_september.pdf",
-    type: "Commercial Invoice",
-    amount: "$1,564.00",
-    policy: "AP-Rule-04 (Tax Verification)",
-    policyStatus: "PASSED",
-    submitter: "usr_2098b7 (Procurement)",
-    date: "Today · 14:32",
-  },
-  {
-    id: "doc_demo_74a2c1",
-    name: "travel_expense_aug.pdf",
-    type: "Travel & Expense",
-    amount: "$286.50",
-    policy: "EXP-Rule-12 (Lodging Ceiling)",
-    policyStatus: "PASSED",
-    submitter: "usr_soham (Engineering)",
-    date: "Today · 09:42",
-  },
-];
+function ApprovalsContent() {
+  const { fetchWithAuth, user, activeOrgId } = useAuth();
+  const [items, setItems] = useState<ApprovalQueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
-export default function ApprovalsPage() {
-  const [items] = useState<ApprovalItem[]>(DEFAULT_APPROVALS);
-  const [decisions, setDecisions] = useState<Record<string, "approved" | "rejected">>({});
+  // Decision Modal State
+  const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [decisionType, setDecisionType] = useState<"approve" | "reject" | null>(null);
+  const [reasonInput, setReasonInput] = useState("");
+  const [commentInput, setCommentInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleDecision(id: string, decision: "approved" | "rejected") {
-    setDecisions((prev) => ({ ...prev, [id]: decision }));
-  }
+  const currentOrg = activeOrgId || user?.organization_id || "Enterprise Workspace";
+
+  const loadApprovalQueue = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/documents/workflow/approval-queue`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail?.message || data?.error?.message || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setItems(data.items || []);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load approval queue.");
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchWithAuth]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadApprovalQueue();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [loadApprovalQueue]);
+
+  const openDecisionModal = (docId: string, type: "approve" | "reject") => {
+    setSelectedDocId(docId);
+    setDecisionType(type);
+    setReasonInput(type === "approve" ? "Approved in accordance with enterprise policy limits" : "");
+    setCommentInput("");
+  };
+
+  const closeDecisionModal = () => {
+    setSelectedDocId(null);
+    setDecisionType(null);
+    setReasonInput("");
+    setCommentInput("");
+  };
+
+  const submitDecision = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDocId || !decisionType) return;
+    if (decisionType === "reject" && !reasonInput.trim()) {
+      setError("A rejection reason is strictly required by the audit governance protocol.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    setSuccessNotice(null);
+
+    const endpoint =
+      decisionType === "approve"
+        ? `${API_URL}/api/documents/${selectedDocId}/approve`
+        : `${API_URL}/api/documents/${selectedDocId}/reject`;
+
+    try {
+      const res = await fetchWithAuth(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: reasonInput.trim() || undefined,
+          comment: commentInput.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const msg =
+          data?.detail?.message ||
+          data?.error?.message ||
+          `Decision failed with status ${res.status}`;
+        throw new Error(msg);
+      }
+
+      setSuccessNotice(
+        `Document ${selectedDocId} has been successfully ${
+          decisionType === "approve" ? "approved & stamped" : "rejected"
+        }. Permanent audit transition recorded.`
+      );
+      closeDecisionModal();
+      await loadApprovalQueue();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to record approval decision.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <AppShell>
@@ -52,111 +135,262 @@ export default function ApprovalsPage() {
         <div className="crumb">
           <Icon name="check" size={14} /> Workspace <span>/</span> Approval Ledger
           <div className="sync">
-            <span className="brand-dot" /> Synced just now
+            <span className="brand-dot" /> Verified Authority
           </div>
         </div>
         <div className="head-main">
           <div>
             <h1>Managerial Approval Ledger</h1>
-            <p className="subline">AUTHORIZED GOVERNANCE · {items.length} FILES AWAITING DECISION</p>
+            <p className="subline">
+              {currentOrg.toUpperCase()} · AUTHORIZED GOVERNANCE · {items.length} FILES AWAITING DECISION
+            </p>
           </div>
-          <Button icon="sliders">Approval policies</Button>
+          <Button variant="secondary" icon="refresh" onClick={loadApprovalQueue}>
+            Refresh Ledger
+          </Button>
         </div>
       </header>
 
       <div className="intake-body">
+        {error && (
+          <div
+            style={{
+              padding: "12px 16px",
+              background: "var(--red-bg, #fef2f2)",
+              border: "1px solid var(--red, #dc2626)",
+              color: "var(--red, #dc2626)",
+              borderRadius: "6px",
+              marginBottom: "20px",
+              fontSize: "12px",
+            }}
+          >
+            <b>Authorization Notice:</b> {error}
+          </div>
+        )}
+
+        {successNotice && (
+          <div
+            style={{
+              padding: "12px 16px",
+              background: "var(--green-bg, #f0fdf4)",
+              border: "1px solid var(--green, #16a34a)",
+              color: "var(--green, #16a34a)",
+              borderRadius: "6px",
+              marginBottom: "20px",
+              fontSize: "12px",
+            }}
+          >
+            <b>Decision Recorded:</b> {successNotice}
+          </div>
+        )}
+
         <div className="library-card" style={{ marginTop: 0 }}>
           <div className="library-toolbar">
             <div>
               <span className="eyebrow">PENDING SIGN-OFF</span>
-              <h2>Files Requiring Action</h2>
+              <h2>Files Requiring Managerial Action</h2>
             </div>
             <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-              All approvals are cryptographically attributed to the signing authority.
+              All approvals and rejections are cryptographically attributed to your authenticated actor ID.
             </span>
           </div>
 
-          <div className="library-table">
-            <div className="lib-row lib-head" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1.5fr" }}>
-              <span>FILE NAME</span>
-              <span>TYPE</span>
-              <span>AMOUNT</span>
-              <span>POLICY EVIDENCE</span>
-              <span style={{ textAlign: "right" }}>DECISION</span>
+          {loading ? (
+            <div style={{ padding: "40px", textAlign: "center", color: "var(--muted)", fontSize: "12px" }}>
+              Loading approval ledger from backend...
             </div>
+          ) : items.length === 0 ? (
+            <div style={{ padding: "48px 24px", textAlign: "center" }}>
+              <Icon name="check" size={32} />
+              <h3 style={{ margin: "12px 0 4px", font: "18px 'Newsreader', serif" }}>
+                Approval ledger is clear
+              </h3>
+              <p style={{ margin: "0 auto 16px", maxWidth: "420px", fontSize: "12px", color: "var(--muted)" }}>
+                There are currently no documents pending final sign-off in organization <code>{currentOrg}</code>.
+              </p>
+              <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
+                <Link href="/review" className="btn primary" style={{ textDecoration: "none" }}>
+                  Verification Queue →
+                </Link>
+                <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>
+                  Intake Dropzone →
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="library-table">
+              <div className="lib-row lib-head" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1.5fr" }}>
+                <span>FILE NAME</span>
+                <span>CLASSIFICATION</span>
+                <span>SUBMITTER</span>
+                <span>STATUS / EVIDENCE</span>
+                <span style={{ textAlign: "right" }}>DECISION</span>
+              </div>
 
-            {items.map((item) => {
-              const decision = decisions[item.id];
-              return (
-                <div
-                  key={item.id}
-                  className="lib-row"
-                  style={{ gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1.5fr", cursor: "default" }}
-                >
-                  <span className="doc-name">
-                    <span className="doc-icon">
-                      <Icon name="file" />
+              {items.map((item) => {
+                const confPercent = item.confidence ? `${Math.round(item.confidence * 100)}%` : "Verified";
+                return (
+                  <div
+                    key={item.id}
+                    className="lib-row"
+                    style={{ gridTemplateColumns: "2fr 1fr 1fr 1.5fr 1.5fr", cursor: "default" }}
+                  >
+                    <span className="doc-name">
+                      <span className="doc-icon">
+                        <Icon name="file" />
+                      </span>
+                      <div>
+                        <Link
+                          href={`/documents/${item.id}`}
+                          style={{ color: "var(--ink)", textDecoration: "none", fontWeight: 500 }}
+                        >
+                          {item.filename}
+                        </Link>
+                        <small style={{ display: "block", color: "var(--muted)", fontSize: "10px" }}>
+                          ID: <code>{item.id}</code> · {new Date(item.uploaded_at).toLocaleDateString()}
+                        </small>
+                      </div>
                     </span>
+
+                    <span>{item.classification || "General Document"}</span>
+                    <code>{item.uploaded_by}</code>
+
                     <div>
-                      <Link
-                        href={`/documents/${item.id}`}
-                        style={{ color: "var(--ink)", textDecoration: "none", fontWeight: 500 }}
-                      >
-                        {item.name}
-                      </Link>
-                      <small style={{ display: "block", color: "var(--muted)", fontSize: "10px" }}>
-                        {item.submitter} · {item.date}
+                      <Badge tone="violet">{item.status}</Badge>
+                      <small style={{ display: "block", color: "var(--muted)", fontSize: "9px", marginTop: "3px" }}>
+                        AI Confidence: {confPercent}
                       </small>
                     </div>
-                  </span>
 
-                  <span>{item.type}</span>
-                  <code>{item.amount}</code>
-
-                  <div>
-                    <Badge tone={item.policyStatus === "PASSED" ? "green" : "amber"}>
-                      {item.policyStatus}
-                    </Badge>
-                    <small style={{ display: "block", color: "var(--muted)", fontSize: "9px", marginTop: "3px" }}>
-                      {item.policy}
-                    </small>
-                  </div>
-
-                  <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
-                    {decision ? (
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          fontWeight: 600,
-                          color: decision === "approved" ? "var(--green)" : "var(--red)",
-                        }}
+                    <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+                      <Button
+                        variant="primary"
+                        icon="check"
+                        onClick={() => openDecisionModal(item.id, "approve")}
                       >
-                        {decision === "approved" ? "✓ Approved & Stamped" : "✗ Rejected"}
-                      </span>
-                    ) : (
-                      <>
-                        <Button
-                          variant="primary"
-                          icon="check"
-                          onClick={() => handleDecision(item.id, "approved")}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleDecision(item.id, "rejected")}
-                        >
-                          Reject
-                        </Button>
-                      </>
-                    )}
+                        Approve
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => openDecisionModal(item.id, "reject")}
+                      >
+                        Reject
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
+
+        {/* Decision Modal / Sheet */}
+        {selectedDocId && decisionType && (
+          <div className="sheet-backdrop" onMouseDown={closeDecisionModal}>
+            <aside
+              className="override-sheet"
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{ maxWidth: "480px" }}
+            >
+              <div className="sheet-bar">
+                <span>
+                  <Icon name={decisionType === "approve" ? "check" : "alert"} />
+                  {decisionType === "approve" ? "APPROVE DOCUMENT" : "REJECT DOCUMENT"}
+                </span>
+                <button type="button" onClick={closeDecisionModal}>
+                  ×
+                </button>
+              </div>
+
+              <form onSubmit={submitDecision} className="sheet-form">
+                <div>
+                  <h2 style={{ font: "20px 'Newsreader', serif", margin: "0 0 6px" }}>
+                    {decisionType === "approve"
+                      ? "Affix Executive Approval Stamp"
+                      : "Record Formal Document Rejection"}
+                  </h2>
+                  <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)", lineHeight: 1.5 }}>
+                    Target document: <code>{selectedDocId}</code>. This managerial action transitions the document state and records a permanent cryptographic audit entry.
+                  </p>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                    Reason for {decisionType === "approve" ? "Approval" : "Rejection"} *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder={
+                      decisionType === "approve"
+                        ? "e.g. Cleared under AP-Rule-04 procurement ceiling"
+                        : "e.g. Lodging reimbursement ceiling exceeded by $86.50"
+                    }
+                    value={reasonInput}
+                    onChange={(e) => setReasonInput(e.target.value)}
+                    style={{
+                      width: "100%",
+                      height: "36px",
+                      border: "1px solid var(--line2, #e0ddd5)",
+                      borderRadius: "5px",
+                      padding: "0 12px",
+                      fontSize: "12px",
+                      background: "white",
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                    Internal Governance Comment (Optional)
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Provide details or instructions for submitter / compliance..."
+                    value={commentInput}
+                    onChange={(e) => setCommentInput(e.target.value)}
+                    style={{
+                      width: "100%",
+                      border: "1px solid var(--line2, #e0ddd5)",
+                      borderRadius: "5px",
+                      padding: "8px 12px",
+                      fontSize: "12px",
+                      background: "white",
+                      resize: "vertical",
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "12px" }}>
+                  <Button variant="secondary" onClick={closeDecisionModal}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant={decisionType === "approve" ? "primary" : "secondary"}
+                    icon="check"
+                    disabled={submitting}
+                  >
+                    {submitting
+                      ? "Recording Decision..."
+                      : decisionType === "approve"
+                      ? "Sign & Approve Document →"
+                      : "Confirm Rejection ✗"}
+                  </Button>
+                </div>
+              </form>
+            </aside>
+          </div>
+        )}
       </div>
     </AppShell>
+  );
+}
+
+export default function ApprovalsPage() {
+  return (
+    <ProtectedRoute allowedRoles={["APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"]}>
+      <ApprovalsContent />
+    </ProtectedRoute>
   );
 }

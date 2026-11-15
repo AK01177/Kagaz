@@ -2,7 +2,9 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "../context/AuthContext";
+import { NotificationCenter } from "./NotificationCenter";
 
 export type IconName =
   | "grid"
@@ -105,39 +107,22 @@ export function Badge({
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [userName, setUserName] = useState("Soham Doshi");
-  const [userRole, setUserRole] = useState("Reviewer");
+  const router = useRouter();
+  const { user, memberships, activeOrgId, switchOrganization, logout, isAuthenticated } =
+    useAuth();
+
   const [intakeCount, setIntakeCount] = useState(3);
   const [reviewCount, setReviewCount] = useState(2);
+  const [orgSwitchError, setOrgSwitchError] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        // Dynamic user detection from localStorage / sessionStorage / JWT
-        const email =
-          localStorage.getItem("kagaz_user_email") ||
-          sessionStorage.getItem("kagaz_user_email");
-        const role =
-          localStorage.getItem("kagaz_user_role") ||
-          sessionStorage.getItem("kagaz_user_role");
-        const name =
-          localStorage.getItem("kagaz_user_name") ||
-          sessionStorage.getItem("kagaz_user_name");
-
-        if (name) {
-          setUserName(name);
-        } else if (email) {
-          setUserName(email.split("@")[0].replace(".", " ").replace(/\b\w/g, (c) => c.toUpperCase()));
-        }
-
-        if (role) {
-          setUserRole(role.charAt(0).toUpperCase() + role.slice(1).toLowerCase());
-        }
-
-        // Dynamic count of documents in session storage
-        const storedDocKeys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
+        const storedDocKeys = Object.keys(sessionStorage).filter((k) =>
+          k.startsWith("kagaz_doc_")
+        );
         setIntakeCount(3 + storedDocKeys.length);
-        
+
         const unverifiedCount = storedDocKeys.filter((k) => {
           try {
             const item = JSON.parse(sessionStorage.getItem(k) || "{}");
@@ -157,7 +142,31 @@ export function Sidebar() {
   const isDashboard = pathname === "/dashboard";
   const isApprovals = pathname === "/approvals";
   const isAdmin = pathname.startsWith("/admin");
+  const isPolicies = pathname.startsWith("/policies");
   const isLogin = pathname === "/login";
+
+  const userRole = user?.role || "GUEST";
+  const userName = user?.name || user?.email?.split("@")[0] || "Guest Visitor";
+  const userInitials = (userName || "K").slice(0, 2).toUpperCase();
+
+  const currentOrg = activeOrgId || user?.organization_id || "Acme Global Enterprise";
+
+  const canAccessReview = ["REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN", "COMPLIANCE", "AUDITOR"].includes(
+    userRole
+  );
+  const canAccessApprovals = ["APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"].includes(userRole);
+  const canAccessAdmin = ["ORG_ADMIN", "SYSTEM_ADMIN"].includes(userRole);
+
+  const handleOrgSwitch = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const targetOrg = e.target.value;
+    setOrgSwitchError(null);
+    const result = await switchOrganization(targetOrg);
+    if (!result.success) {
+      setOrgSwitchError(result.error || "Failed to switch organization");
+    } else {
+      router.refresh();
+    }
+  };
 
   return (
     <aside className="sidebar">
@@ -166,14 +175,68 @@ export function Sidebar() {
           Kagaz.
         </Link>
         <span className="brand-dot" />
-        <button type="button" className="collapse" aria-label="Collapse">
-          ◫
-        </button>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
+          <NotificationCenter />
+          <button type="button" className="collapse" aria-label="Collapse">
+            ◫
+          </button>
+        </div>
       </div>
 
       <div className="org">
-        <b>Acme Global Enterprise</b>
-        <span>Enterprise workspace</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <b title={currentOrg} style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+            {currentOrg}
+          </b>
+          {memberships.length > 1 && (
+            <span
+              style={{
+                fontSize: "9px",
+                background: "var(--line2, #e0ddd5)",
+                padding: "1px 5px",
+                borderRadius: "3px",
+                color: "var(--ink)",
+              }}
+            >
+              {memberships.length} orgs
+            </span>
+          )}
+        </div>
+
+        {memberships.length > 1 ? (
+          <div style={{ marginTop: "4px" }}>
+            <select
+              value={activeOrgId || user?.organization_id || ""}
+              onChange={handleOrgSwitch}
+              aria-label="Active Organization"
+              style={{
+                width: "100%",
+                padding: "3px 6px",
+                fontSize: "10px",
+                fontFamily: "inherit",
+                background: "white",
+                border: "1px solid var(--line2, #e0ddd5)",
+                borderRadius: "4px",
+                color: "var(--body)",
+                cursor: "pointer",
+              }}
+            >
+              {memberships.map((m) => (
+                <option key={m.organization_id} value={m.organization_id}>
+                  {m.organization_id} ({m.role})
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <span>{isAuthenticated ? `Role: ${userRole}` : "Enterprise workspace"}</span>
+        )}
+
+        {orgSwitchError && (
+          <span style={{ color: "var(--red, #dc2626)", fontSize: "9px", marginTop: "2px" }}>
+            {orgSwitchError}
+          </span>
+        )}
       </div>
 
       <div className="divider" />
@@ -181,47 +244,75 @@ export function Sidebar() {
       <span className="eyebrow side-label">WORKSPACE</span>
 
       <nav className="side-nav">
-        <Link
-          href="/dashboard"
-          className={isDashboard ? "active" : ""}
-        >
+        <Link href="/dashboard" className={isDashboard ? "active" : ""}>
           <Icon name="grid" />
           Workspace Overview
         </Link>
-        <Link
-          href="/documents"
-          className={isIntake ? "active" : ""}
-        >
+
+        <Link href="/documents" className={isIntake ? "active" : ""}>
           <Icon name="inbox" />
           Intake &amp; Library <em>{intakeCount}</em>
         </Link>
+
         <Link
           href="/review"
           className={isReview ? "active" : ""}
+          style={!canAccessReview && isAuthenticated ? { opacity: 0.6 } : undefined}
+          title={!canAccessReview && isAuthenticated ? "Requires Reviewer or Admin role" : undefined}
         >
           <Icon name="stamp" />
-          Verification Desk <em className="amber-count">{reviewCount}</em>
+          Verification Desk{" "}
+          {canAccessReview || !isAuthenticated ? (
+            <em className="amber-count">{reviewCount}</em>
+          ) : (
+            <em style={{ fontSize: "9px", opacity: 0.8 }}>Restricted</em>
+          )}
         </Link>
+
         <Link
           href="/approvals"
           className={isApprovals ? "active" : ""}
+          style={!canAccessApprovals && isAuthenticated ? { opacity: 0.6 } : undefined}
+          title={!canAccessApprovals && isAuthenticated ? "Requires Approver or Admin role" : undefined}
         >
           <Icon name="check" />
-          Approval Ledger <em>2</em>
+          Approval Ledger{" "}
+          {canAccessApprovals || !isAuthenticated ? (
+            <em>2</em>
+          ) : (
+            <em style={{ fontSize: "9px", opacity: 0.8 }}>Restricted</em>
+          )}
         </Link>
+
+        <Link
+          href="/policies"
+          className={isPolicies ? "active" : ""}
+          style={!canAccessAdmin && isAuthenticated ? { opacity: 0.6 } : undefined}
+          title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : undefined}
+        >
+          <Icon name="shield" />
+          Policy Governance{" "}
+          {!canAccessAdmin && isAuthenticated && (
+            <em style={{ fontSize: "9px", opacity: 0.8 }}>Admin</em>
+          )}
+        </Link>
+
         <Link
           href="/admin/users"
           className={isAdmin ? "active" : ""}
+          style={!canAccessAdmin && isAuthenticated ? { opacity: 0.6 } : undefined}
+          title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : undefined}
         >
           <Icon name="contact" />
-          User Management
+          User Management{" "}
+          {!canAccessAdmin && isAuthenticated && (
+            <em style={{ fontSize: "9px", opacity: 0.8 }}>Admin</em>
+          )}
         </Link>
-        <Link
-          href="/login"
-          className={isLogin ? "active" : ""}
-        >
+
+        <Link href="/login" className={isLogin ? "active" : ""}>
           <Icon name="book" />
-          Access &amp; Auth
+          {isAuthenticated ? "Session & Switchboard" : "Access & Auth"}
         </Link>
       </nav>
 
@@ -241,14 +332,54 @@ export function Sidebar() {
         <div className="divider" />
 
         <div className="profile">
-          <span>{userName.slice(0, 2).toUpperCase()}</span>
-          <div>
-            <b>{userName}</b>
-            <small>{userRole}</small>
+          <span>{userInitials}</span>
+          <div style={{ minWidth: 0 }}>
+            <b
+              style={{
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                display: "block",
+              }}
+              title={userName}
+            >
+              {userName}
+            </b>
+            <small>{isAuthenticated ? userRole : "Not Signed In"}</small>
           </div>
-          <Link href="/login" style={{ color: "inherit", textDecoration: "none" }} title="Session settings">
-            <Icon name="settings" />
-          </Link>
+
+          {isAuthenticated ? (
+            <button
+              type="button"
+              onClick={() => {
+                logout();
+                router.push("/login");
+              }}
+              title="Sign Out of Session"
+              aria-label="Sign Out"
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--muted, #666)",
+                padding: "6px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "4px",
+              }}
+            >
+              <Icon name="history" size={14} />
+            </button>
+          ) : (
+            <Link
+              href="/login"
+              style={{ color: "inherit", textDecoration: "none" }}
+              title="Session Sign In"
+            >
+              <Icon name="settings" size={14} />
+            </Link>
+          )}
         </div>
       </div>
     </aside>

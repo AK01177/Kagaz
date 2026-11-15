@@ -2,8 +2,13 @@
 
 import Link from "next/link";
 import { AppShell, Badge, Icon } from "../components/AppShell";
+import { ProtectedRoute } from "../components/ProtectedRoute";
+import { useAuth } from "../context/AuthContext";
 
-export default function DashboardPage() {
+function DashboardContent() {
+  const { user, activeOrgId } = useAuth();
+  const currentOrg = activeOrgId || user?.organization_id || "ACME GLOBAL ENTERPRISE";
+
   const stats = [
     { label: "FILES INTAKEN", value: "128", tone: "violet" },
     { label: "AUTO-CLEARED", value: "91.4%", tone: "green" },
@@ -52,13 +57,13 @@ export default function DashboardPage() {
         <div className="crumb">
           <Icon name="grid" size={14} /> Workspace <span>/</span> Overview
           <div className="sync">
-            <span className="brand-dot" /> Synced just now
+            <span className="brand-dot" /> Authenticated
           </div>
         </div>
         <div className="head-main">
           <div>
             <h1>Workspace Overview</h1>
-            <p className="subline">ACME GLOBAL ENTERPRISE · INTELLIGENCE HUB</p>
+            <p className="subline">{currentOrg.toUpperCase()} · INTELLIGENCE HUB</p>
           </div>
           <Link href="/documents" className="btn primary" style={{ textDecoration: "none" }}>
             Deposit New File ↥
@@ -104,7 +109,12 @@ export default function DashboardPage() {
                   display: "block",
                   fontSize: "24px",
                   fontFamily: "'JetBrains Mono', monospace",
-                  color: s.tone === "amber" ? "var(--amber)" : s.tone === "green" ? "var(--green)" : "var(--ink)",
+                  color:
+                    s.tone === "amber"
+                      ? "var(--amber)"
+                      : s.tone === "green"
+                      ? "var(--green)"
+                      : "var(--ink)",
                 }}
               >
                 {s.value}
@@ -129,7 +139,9 @@ export default function DashboardPage() {
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <Icon name="stamp" size={18} />
             <div>
-              <b style={{ color: "var(--amber)", fontSize: "12px" }}>4 files require human verification</b>
+              <b style={{ color: "var(--amber)", fontSize: "12px" }}>
+                4 files require human verification
+              </b>
               <p style={{ margin: "4px 0 0", color: "#8b744e", fontSize: "11px" }}>
                 Low confidence OCR extractions or policy variances have been routed to the Verification Desk.
               </p>
@@ -181,5 +193,13 @@ export default function DashboardPage() {
         </section>
       </div>
     </AppShell>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <ProtectedRoute>
+      <DashboardContent />
+    </ProtectedRoute>
   );
 }

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { useAuth } from "../../context/AuthContext";
 
 interface UserRecord {
   id: string;
@@ -55,7 +57,9 @@ const DEFAULT_USERS: UserRecord[] = [
   },
 ];
 
-export default function AdminUsersPage() {
+function AdminUsersContent() {
+  const { user, activeOrgId } = useAuth();
+  const currentOrg = activeOrgId || user?.organization_id || "ACME GLOBAL ENTERPRISE";
   const [users, setUsers] = useState<UserRecord[]>(DEFAULT_USERS);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newName, setNewName] = useState("");
@@ -106,7 +110,7 @@ export default function AdminUsersPage() {
         <div className="head-main">
           <div>
             <h1>Organization User Management</h1>
-            <p className="subline">ROLE-BASED ACCESS CONTROL · {users.length} TEAM MEMBERS</p>
+            <p className="subline">{currentOrg.toUpperCase()} · ROLE-BASED ACCESS CONTROL · {users.length} TEAM MEMBERS</p>
           </div>
           <Button variant="primary" icon="contact" onClick={() => setShowAddModal(true)}>
             Invite User +
@@ -391,5 +395,13 @@ export default function AdminUsersPage() {
         </div>
       )}
     </AppShell>
+  );
+}
+
+export default function AdminUsersPage() {
+  return (
+    <ProtectedRoute allowedRoles={["ORG_ADMIN", "SYSTEM_ADMIN"]}>
+      <AdminUsersContent />
+    </ProtectedRoute>
   );
 }
