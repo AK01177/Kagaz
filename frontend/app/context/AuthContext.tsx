@@ -1,12 +1,8 @@
 "use client";
 
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -18,12 +14,7 @@ export interface AuthUser {
   organization_id: string;
   active: boolean;
 }
-
-export interface OrganizationMembership {
-  organization_id: string;
-  role: string;
-}
-
+export interface OrganizationMembership { organization_id: string; role: string }
 export interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
@@ -32,55 +23,19 @@ export interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   sessionExpired: boolean;
-  login: (
-    email: string,
-    password: string,
-    organizationId?: string
-  ) => Promise<{ success: boolean; error?: string }>;
+  login: (email: string, password: string, organizationId?: string) => Promise<{ success: boolean; error?: string }>;
+  register: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string; confirmationRequired?: boolean }>;
   logout: (options?: { reason?: string }) => void;
-  switchOrganization: (
-    organizationId: string
-  ) => Promise<{ success: boolean; error?: string }>;
+  switchOrganization: (organizationId: string) => Promise<{ success: boolean; error?: string }>;
   fetchWithAuth: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   clearSessionExpiredNotice: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function decodeJwtPayload(token: string): { exp?: number; [key: string]: unknown } | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json = atob(base64);
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-export function isTokenExpired(token: string): boolean {
-  const payload = decodeJwtPayload(token);
-  if (!payload || !payload.exp) return false;
-  // Expired if current time exceeds exp (with 5-second buffer)
-  return Date.now() >= (payload.exp - 5) * 1000;
-}
-
-export function clearStoredSession(): void {
-  const keys = [
-    "kagaz_token",
-    "kagaz_active_org",
-    "kagaz_user_email",
-    "kagaz_user_role",
-    "kagaz_user_name",
-  ];
-  for (const k of keys) {
-    try {
-      localStorage.removeItem(k);
-      sessionStorage.removeItem(k);
-    } catch {
-      // Ignore storage access errors in restricted environments
-    }
+export function clearStoredSession() {
+  for (const key of ["kagaz_token", "kagaz_active_org", "kagaz_user_email", "kagaz_user_role", "kagaz_user_name"]) {
+    try { localStorage.removeItem(key); sessionStorage.removeItem(key); } catch { /* restricted storage */ }
   }
 }
 
@@ -89,357 +44,121 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [memberships, setMemberships] = useState<OrganizationMembership[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [sessionExpired, setSessionExpired] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState(() => Boolean(supabase));
+  const [sessionExpired, setSessionExpired] = useState(false);
 
-  const logout = useCallback(
-    (options?: { reason?: string }) => {
-      clearStoredSession();
-      setToken(null);
-      setUser(null);
-      setActiveOrgId(null);
-      setMemberships([]);
-      if (options?.reason === "expired") {
-        setSessionExpired(true);
+  const loadIdentity = useCallback(async (
+    session: Session | null,
+    targetOrg?: string | null,
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!session || !supabase) {
+      setToken(null); setUser(null); setActiveOrgId(null); setMemberships([]);
+      return { success: false, error: "No active Supabase session was returned." };
+    }
+    setToken(session.access_token); setUser(null); setActiveOrgId(null); setMemberships([]);
+    const headers: Record<string, string> = { Authorization: `Bearer ${session.access_token}` };
+    if (targetOrg) headers["X-Organization-Id"] = targetOrg;
+    try {
+      const [profileRes, membershipsRes] = await Promise.all([
+        fetch(`${API_URL}/api/auth/me`, { headers }),
+        fetch(`${API_URL}/api/auth/memberships`, { headers }),
+      ]);
+      if (profileRes.status === 401) {
+        setSessionExpired(true); setUser(null); setToken(null);
+        return { success: false, error: "Kagaz rejected the Supabase access token. Check the backend Supabase URL and key, then restart the backend." };
       }
-    },
-    []
-  );
-
-  const clearSessionExpiredNotice = useCallback(() => {
-    setSessionExpired(false);
+      if (!profileRes.ok) {
+        const data = await profileRes.json().catch(() => null);
+        return {
+          success: false,
+          error: data?.detail?.message || data?.error?.message || `Kagaz API returned HTTP ${profileRes.status}.`,
+        };
+      }
+      const profile = await profileRes.json();
+      const nextUser: AuthUser = {
+        user_id: profile.user_id, email: profile.email || session.user.email || "",
+        name: profile.name || profile.email || "Kagaz User", role: profile.role,
+        organization_id: profile.organization_id, active: profile.active ?? true,
+      };
+      const membershipData = membershipsRes.ok ? await membershipsRes.json() : null;
+      setToken(session.access_token); setUser(nextUser); setActiveOrgId(nextUser.organization_id);
+      setMemberships(membershipData?.memberships?.length ? membershipData.memberships : [{ organization_id: nextUser.organization_id, role: nextUser.role }]);
+      setSessionExpired(false);
+      return { success: true };
+    } catch (error) {
+      setToken(session.access_token);
+      return { success: false, error: error instanceof Error ? error.message : "Could not connect to the Kagaz backend." };
+    }
   }, []);
 
-  // Fetch verified profile and membership records from backend
-  const refreshIdentity = useCallback(
-    async (authToken: string, targetOrgId?: string | null) => {
-      if (isTokenExpired(authToken)) {
-        logout({ reason: "expired" });
-        return false;
-      }
-
-      try {
-        const headers: Record<string, string> = {
-          Authorization: `Bearer ${authToken}`,
-        };
-        if (targetOrgId) {
-          headers["X-Organization-Id"] = targetOrgId;
-        }
-
-        const [profileRes, membershipsRes] = await Promise.all([
-          fetch(`${API_URL}/api/auth/me`, { headers }),
-          fetch(`${API_URL}/api/auth/memberships`, { headers }),
-        ]);
-
-        if (profileRes.status === 401 || membershipsRes.status === 401) {
-          logout({ reason: "expired" });
-          return false;
-        }
-
-        if (!profileRes.ok) {
-          // If the target organization is invalid/forbidden for the user, reset org context
-          if (profileRes.status === 403 && targetOrgId) {
-            const fallbackRes = await fetch(`${API_URL}/api/auth/me`, {
-              headers: { Authorization: `Bearer ${authToken}` },
-            });
-            if (fallbackRes.ok) {
-              const fallbackProfile = await fallbackRes.json();
-              setUser({
-                user_id: fallbackProfile.user_id,
-                email: fallbackProfile.email || "",
-                name: fallbackProfile.name || fallbackProfile.email,
-                role: fallbackProfile.role,
-                organization_id: fallbackProfile.organization_id,
-                active: fallbackProfile.active ?? true,
-              });
-              setActiveOrgId(fallbackProfile.organization_id);
-              try {
-                localStorage.setItem("kagaz_active_org", fallbackProfile.organization_id);
-                sessionStorage.setItem("kagaz_active_org", fallbackProfile.organization_id);
-              } catch {}
-            }
-          }
-          return false;
-        }
-
-        const profileData = await profileRes.json();
-        const profileUser: AuthUser = {
-          user_id: profileData.user_id,
-          email: profileData.email || "",
-          name: profileData.name || profileData.email,
-          role: profileData.role,
-          organization_id: profileData.organization_id,
-          active: profileData.active ?? true,
-        };
-
-        let resolvedMemberships: OrganizationMembership[] = [
-          { organization_id: profileUser.organization_id, role: profileUser.role },
-        ];
-
-        if (membershipsRes.ok) {
-          const membershipsData = await membershipsRes.json();
-          if (Array.isArray(membershipsData.memberships) && membershipsData.memberships.length > 0) {
-            resolvedMemberships = membershipsData.memberships;
-          }
-        }
-
-        setUser(profileUser);
-        setActiveOrgId(profileUser.organization_id);
-        setMemberships(resolvedMemberships);
-        setToken(authToken);
-
-        // Sync local storage
-        try {
-          localStorage.setItem("kagaz_token", authToken);
-          sessionStorage.setItem("kagaz_token", authToken);
-          localStorage.setItem("kagaz_active_org", profileUser.organization_id);
-          sessionStorage.setItem("kagaz_active_org", profileUser.organization_id);
-          localStorage.setItem("kagaz_user_email", profileUser.email);
-          sessionStorage.setItem("kagaz_user_email", profileUser.email);
-          localStorage.setItem("kagaz_user_role", profileUser.role);
-          sessionStorage.setItem("kagaz_user_role", profileUser.role);
-          localStorage.setItem("kagaz_user_name", profileUser.name);
-          sessionStorage.setItem("kagaz_user_name", profileUser.name);
-        } catch {}
-
-        return true;
-      } catch {
-        // Backend temporarily unreachable; do not clear session if token is still valid
-        return false;
-      }
-    },
-    [logout]
-  );
-
-  // Restore session from localStorage on initial mount
   useEffect(() => {
-    let ignore = false;
+    if (!supabase) return;
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (active) void loadIdentity(data.session, localStorage.getItem("kagaz_active_org"));
+    }).finally(() => { if (active) setIsLoading(false); });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active) void loadIdentity(session, localStorage.getItem("kagaz_active_org"));
+    });
+    return () => { active = false; subscription.unsubscribe(); };
+  }, [loadIdentity]);
 
-    async function initAuth() {
-      try {
-        const storedToken =
-          localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token");
-        const storedOrg =
-          localStorage.getItem("kagaz_active_org") || sessionStorage.getItem("kagaz_active_org");
+  const login = useCallback(async (email: string, password: string, organizationId?: string) => {
+    if (!supabase) return { success: false, error: "Supabase is not configured. Set the frontend Supabase URL and anon key." };
+    const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
+    if (error) return { success: false, error: error.message };
+    const identity = await loadIdentity(data.session, organizationId);
+    if (!identity.success) return { success: false, error: `Supabase sign-in succeeded, but Kagaz could not load your workspace: ${identity.error}` };
+    return { success: true };
+  }, [loadIdentity]);
 
-        if (!storedToken || storedToken === "undefined" || storedToken === "null") {
-          setIsLoading(false);
-          return;
-        }
+  const register = useCallback(async (name: string, email: string, password: string) => {
+    if (!supabase) return { success: false, error: "Supabase is not configured. Set the frontend Supabase URL and anon key." };
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim().toLowerCase(), password,
+      options: { data: { full_name: name.trim() }, emailRedirectTo: `${window.location.origin}/login` },
+    });
+    if (error) return { success: false, error: error.message };
+    if (data.session) await supabase.auth.signOut();
+    return { success: true, confirmationRequired: true };
+  }, []);
 
-        if (isTokenExpired(storedToken)) {
-          clearStoredSession();
-          if (!ignore) {
-            setSessionExpired(true);
-            setIsLoading(false);
-          }
-          return;
-        }
+  const logout = useCallback((options?: { reason?: string }) => {
+    if (supabase) void supabase.auth.signOut();
+    clearStoredSession(); setToken(null); setUser(null); setActiveOrgId(null); setMemberships([]);
+    if (options?.reason === "expired") setSessionExpired(true);
+  }, []);
 
-        if (!ignore) {
-          setToken(storedToken);
-          if (storedOrg) setActiveOrgId(storedOrg);
-        }
+  const switchOrganization = useCallback(async (organizationId: string) => {
+    if (!token || !memberships.some((membership) => membership.organization_id === organizationId)) return { success: false, error: "You are not a member of that organization." };
+    const response = await fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}`, "X-Organization-Id": organizationId } });
+    if (!response.ok) return { success: false, error: "Unable to switch organization. Confirm your membership with an administrator." };
+    const profile = await response.json();
+    setUser({ user_id: profile.user_id, email: profile.email || "", name: profile.name || profile.email || "Kagaz User", role: profile.role, organization_id: profile.organization_id, active: profile.active ?? true });
+    setActiveOrgId(profile.organization_id);
+    try { localStorage.setItem("kagaz_active_org", profile.organization_id); } catch { /* restricted storage */ }
+    return { success: true };
+  }, [token, memberships]);
 
-        await refreshIdentity(storedToken, storedOrg);
-      } finally {
-        if (!ignore) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    initAuth();
-
-    return () => {
-      ignore = true;
-    };
-  }, [refreshIdentity]);
-
-  const login = async (
-    email: string,
-    password: string,
-    organizationId?: string
-  ): Promise<{ success: boolean; error?: string }> => {
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail || !password) {
-      return { success: false, error: "Email and password are required." };
-    }
-
-    try {
-      const payload: { email: string; password: string; organization_id?: string } = {
-        email: cleanEmail,
-        password,
-      };
-      if (organizationId && organizationId.trim()) {
-        payload.organization_id = organizationId.trim();
-      }
-
-      const res = await fetch(`${API_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        const message =
-          data?.error?.message ||
-          data?.detail?.message ||
-          (typeof data?.detail === "string" ? data.detail : null) ||
-          "Authentication failed. Please check your credentials.";
-        return { success: false, error: message };
-      }
-
-      const accessToken = data.access_token;
-      if (!accessToken) {
-        return { success: false, error: "No access token received from server." };
-      }
-
-      setToken(accessToken);
-      setSessionExpired(false);
-
-      // Verify and load full memberships
-      await refreshIdentity(accessToken, organizationId || data.user?.organization_id);
-
-      return { success: true };
-    } catch {
-      return {
-        success: false,
-        error: "Unable to connect to the authentication server.",
-      };
-    }
-  };
-
-  const switchOrganization = async (
-    organizationId: string
-  ): Promise<{ success: boolean; error?: string }> => {
-    if (!token) {
-      return { success: false, error: "Authentication required to switch organizations." };
-    }
-
-    // Verify membership client-side first
-    const hasMembership = memberships.some((m) => m.organization_id === organizationId);
-    if (memberships.length > 0 && !hasMembership) {
-      return {
-        success: false,
-        error: `You are not a member of organization '${organizationId}'.`,
-      };
-    }
-
-    try {
-      const res = await fetch(`${API_URL}/api/auth/me`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-Organization-Id": organizationId,
-        },
-      });
-
-      if (res.status === 401) {
-        logout({ reason: "expired" });
-        return { success: false, error: "Session expired. Please sign in again." };
-      }
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        const msg =
-          data?.detail?.message ||
-          data?.error?.message ||
-          "Unable to switch active organization.";
-        return { success: false, error: msg };
-      }
-
-      const updatedProfile = await res.json();
-      const updatedUser: AuthUser = {
-        user_id: updatedProfile.user_id,
-        email: updatedProfile.email || "",
-        name: updatedProfile.name || updatedProfile.email,
-        role: updatedProfile.role,
-        organization_id: updatedProfile.organization_id,
-        active: updatedProfile.active ?? true,
-      };
-
-      setUser(updatedUser);
-      setActiveOrgId(updatedUser.organization_id);
-
-      try {
-        localStorage.setItem("kagaz_active_org", updatedUser.organization_id);
-        sessionStorage.setItem("kagaz_active_org", updatedUser.organization_id);
-        localStorage.setItem("kagaz_user_role", updatedUser.role);
-        sessionStorage.setItem("kagaz_user_role", updatedUser.role);
-      } catch {}
-
-      return { success: true };
-    } catch {
-      return { success: false, error: "Network error while switching organization." };
-    }
-  };
-
-  const fetchWithAuth = useCallback(
-    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const currentToken =
-        token ||
-        (typeof window !== "undefined"
-          ? localStorage.getItem("kagaz_token") || sessionStorage.getItem("kagaz_token")
-          : null);
-
-      if (currentToken && isTokenExpired(currentToken)) {
-        logout({ reason: "expired" });
-        throw new Error("SESSION_EXPIRED");
-      }
-
-      const headers = new Headers(init?.headers || {});
-      if (currentToken && !headers.has("Authorization")) {
-        headers.set("Authorization", `Bearer ${currentToken}`);
-      }
-
-      const org =
-        activeOrgId ||
-        (typeof window !== "undefined"
-          ? localStorage.getItem("kagaz_active_org") || sessionStorage.getItem("kagaz_active_org")
-          : null);
-
-      if (org && !headers.has("X-Organization-Id")) {
-        headers.set("X-Organization-Id", org);
-      }
-
-      const response = await fetch(input, {
-        ...init,
-        headers,
-      });
-
-      if (response.status === 401) {
-        logout({ reason: "expired" });
-      }
-
-      return response;
-    },
-    [token, activeOrgId, logout]
-  );
+  const fetchWithAuth = useCallback(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers || {});
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (activeOrgId) headers.set("X-Organization-Id", activeOrgId);
+    const response = await fetch(input, { ...init, headers });
+    if (response.status === 401) logout({ reason: "expired" });
+    return response;
+  }, [token, activeOrgId, logout]);
 
   const value: AuthContextType = {
-    user,
-    token,
-    activeOrgId,
-    memberships,
-    isAuthenticated: !!token && !!user && !sessionExpired,
-    isLoading,
-    sessionExpired,
-    login,
-    logout,
-    switchOrganization,
-    fetchWithAuth,
-    clearSessionExpiredNotice,
+    user, token, activeOrgId, memberships, isAuthenticated: !!token && !!user,
+    isLoading, sessionExpired, login, register, logout, switchOrganization, fetchWithAuth,
+    clearSessionExpiredNotice: () => setSessionExpired(false),
   };
-
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth(): AuthContextType {
+export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
+  if (!context) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 }
