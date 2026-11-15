@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import os
-import time
 from typing import Annotated, Callable, Collection, Optional
 
-import jwt
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 try:
@@ -24,7 +23,6 @@ try:
     from app.models.membership import Membership
     from app.models.organization import Organization
     from app.models.user import User
-    from services.password import verify_password
 except ImportError:
     from backend.app.core.permissions import (
         PERMISSION_ERROR_DETAILS,
@@ -38,15 +36,11 @@ except ImportError:
     from backend.app.models.membership import Membership
     from backend.app.models.organization import Organization
     from backend.app.models.user import User
-    from backend.services.password import verify_password
 
 bearer = HTTPBearer(auto_error=False)
 
 # Roles allowed to perform document classification/extraction review mutations
 _REVIEWER_ROLES = roles_with_permission(Permission.DOCUMENTS_CORRECT_CLASSIFICATION)
-_MIN_JWT_SECRET_BYTES = 32
-_DEFAULT_TOKEN_TTL_SECONDS = 3600
-
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
@@ -58,68 +52,29 @@ def _unauthenticated(message: str = "A valid bearer token is required.") -> HTTP
     )
 
 
-def _require_jwt_secret(*, for_request: bool) -> str:
-    secret = os.environ.get("JWT_SECRET", "")
-    if len(secret.encode("utf-8")) < _MIN_JWT_SECRET_BYTES:
-        if for_request:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "AUTH_NOT_CONFIGURED",
-                    "message": "Authentication is not configured.",
-                },
-            )
-        raise RuntimeError("JWT_SECRET must be configured with at least 32 bytes")
-    return secret
-
-
-def _get_jwt_issuer() -> str:
-    return os.environ.get("JWT_ISSUER", "kagaz").strip() or "kagaz"
-
-
-def _get_jwt_audience() -> str:
-    return os.environ.get("JWT_AUDIENCE", "kagaz-api").strip() or "kagaz-api"
-
-
-def create_access_token(
-    user_id: str,
-    role: str = "SUBMITTER",
-    organization_id: str = "org_kagaz_primary",
-    expires_in_seconds: Optional[int] = None,
-    permissions: Optional[Collection[str]] = None,
-) -> str:
-    """Generate a signed, expiring HS256 JWT using environment-configured secrets."""
-    secret = _require_jwt_secret(for_request=False)
-    ttl = (
-        expires_in_seconds
-        if expires_in_seconds is not None
-        else int(os.environ.get("JWT_EXPIRES_IN_SECONDS", _DEFAULT_TOKEN_TTL_SECONDS))
-    )
-    if ttl <= 0:
-        raise ValueError("expires_in_seconds must be positive")
-    now = int(time.time())
-    payload: dict = {
-        "sub": user_id,
-        "role": role,
-        "organization_id": organization_id,
-        "active": True,
-        "iss": _get_jwt_issuer(),
-        "aud": _get_jwt_audience(),
-        "iat": now,
-        "exp": now + ttl,
-    }
-    if permissions is not None:
-        payload["permissions"] = sorted({str(p).strip() for p in permissions if str(p).strip()})
-    return jwt.encode(payload, secret, algorithm="HS256")
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-    organization_id: Optional[str] = None
-    # Accepted only so caller-supplied privilege fields are ignored instead of 422,
-    # never trusted when determining authorization.
-    role: Optional[str] = None
+def _supabase_user_from_token(raw_token: str) -> dict:
+    """Ask Supabase Auth to validate the access token and return its user record."""
+    project_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
+    if not project_url or not anon_key:
+        raise HTTPException(status_code=503, detail={
+            "code": "AUTH_NOT_CONFIGURED", "message": "Supabase authentication is not configured."
+        })
+    try:
+        response = httpx.get(
+            f"{project_url}/auth/v1/user", timeout=5.0,
+            headers={"apikey": anon_key, "Authorization": f"Bearer {raw_token}"},
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail={
+            "code": "AUTH_PROVIDER_UNAVAILABLE", "message": "Supabase Auth is temporarily unavailable."
+        }) from exc
+    if response.status_code != 200:
+        raise _unauthenticated()
+    user = response.json()
+    if not isinstance(user, dict) or not user.get("id") or not user.get("email"):
+        raise _unauthenticated()
+    return user
 
 
 def get_auth_db(
@@ -170,115 +125,12 @@ def _list_active_memberships(db: Session, *, user_id: str) -> list[dict[str, str
     ]
 
 
-def _decode_bearer_token(raw_token: str) -> dict:
-    secret = _require_jwt_secret(for_request=True)
-    try:
-        claims = jwt.decode(
-            raw_token,
-            secret,
-            algorithms=["HS256"],
-            issuer=_get_jwt_issuer(),
-            audience=_get_jwt_audience(),
-            options={
-                "require": [
-                    "sub",
-                    "exp",
-                    "iat",
-                    "iss",
-                    "aud",
-                    "role",
-                    "organization_id",
-                    "active",
-                ]
-            },
-        )
-        for key in ("sub", "organization_id", "role"):
-            if not isinstance(claims[key], str) or not claims[key].strip():
-                raise jwt.InvalidTokenError("Invalid identity claim")
-        if not isinstance(claims["active"], bool):
-            raise jwt.InvalidTokenError("Invalid active claim")
-    except jwt.InvalidTokenError as exc:
-        raise _unauthenticated() from exc
-    return claims
-
-
-@router.post("/login")
-async def login(
-    payload: LoginRequest,
-    db: Annotated[Optional[Session], Depends(get_auth_db)] = None,
-):
-    """Verify persistent user credentials and issue a signed expiring JWT."""
-    email_clean = payload.email.strip().lower()
-    if not email_clean or not payload.password:
-        raise _unauthenticated("Valid email and password credentials are required.")
-
-    if db is None:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "AUTH_DATABASE_UNAVAILABLE",
-                "message": "Authentication requires an active database connection.",
-            },
-        )
-
-    db_user = db.query(User).filter(User.email == email_clean).first()
-    stored_hash = db_user.password_hash if db_user is not None else None
-    if db_user is None or not verify_password(payload.password, stored_hash):
-        raise _unauthenticated("Invalid email or password.")
-
-    if not db_user.is_active:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "ACCOUNT_INACTIVE", "message": "An active user account is required."},
-        )
-
-    target_org = payload.organization_id.strip() if payload.organization_id else None
-    membership = _resolve_active_membership(
-        db,
-        user_id=db_user.id,
-        organization_id=target_org,
-    )
-    if membership is None:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "MEMBERSHIP_REQUIRED",
-                "message": "An active organization membership is required.",
-            },
-        )
-
-    _require_jwt_secret(for_request=True)
-    assigned_role = (
-        membership.role.value if hasattr(membership.role, "value") else str(membership.role)
-    )
-    organization_id = membership.organization_id
-    user_name = db_user.full_name or email_clean.split("@")[0].replace(".", " ").title()
-
-    token = create_access_token(
-        user_id=db_user.id,
-        role=assigned_role,
-        organization_id=organization_id,
-    )
-
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": {
-            "user_id": db_user.id,
-            "name": user_name,
-            "email": db_user.email,
-            "role": assigned_role,
-            "organization_id": organization_id,
-        },
-    }
-
-
 def get_current_user(
     credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer)],
     db: Annotated[Optional[Session], Depends(get_auth_db)] = None,
     x_organization_id: Annotated[Optional[str], Header(alias="X-Organization-Id")] = None,
 ) -> dict:
-    """Verify bearer JWT and resolve server-side identity, active organization, and role."""
+    """Verify Supabase access token and resolve Kagaz membership and role."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise _unauthenticated()
 
@@ -286,12 +138,13 @@ def get_current_user(
     if not raw_token or raw_token in ("undefined", "null"):
         raise _unauthenticated()
 
-    claims = _decode_bearer_token(raw_token)
-    if claims["active"] is not True:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "ACCOUNT_INACTIVE", "message": "An active account is required."},
-        )
+    auth_user = _supabase_user_from_token(raw_token)
+    supabase_user_id = str(auth_user["id"])
+    email = str(auth_user["email"]).strip().lower()
+    if not auth_user.get("email_confirmed_at"):
+        raise HTTPException(status_code=403, detail={
+            "code": "EMAIL_NOT_CONFIRMED", "message": "Confirm your email address with Supabase before signing in."
+        })
 
     requested_org: Optional[str] = None
     if x_organization_id is not None:
@@ -305,12 +158,23 @@ def get_current_user(
                 },
             )
 
-    target_organization_id = requested_org or claims["organization_id"]
-
     if db is not None:
-        db_user = db.query(User).filter(User.id == claims["sub"]).first()
+        db_user = db.query(User).filter(User.provider == "supabase", User.provider_subject == supabase_user_id).first()
         if db_user is None:
-            raise _unauthenticated("Authenticated identity is not registered.")
+            # Link an existing Kagaz profile by the email returned by Supabase Auth.
+            db_user = db.query(User).filter(func.lower(User.email) == email).first()
+            if db_user is not None and db_user.provider == "supabase" and db_user.provider_subject != supabase_user_id:
+                raise HTTPException(status_code=409, detail={
+                    "code": "IDENTITY_ALREADY_LINKED", "message": "This Kagaz profile is linked to another identity provider account."
+                })
+            if db_user is not None:
+                db_user.provider = "supabase"
+                db_user.provider_subject = supabase_user_id
+                db.commit()
+        if db_user is None:
+            raise HTTPException(status_code=403, detail={
+                "code": "MEMBERSHIP_REQUIRED", "message": "Your Supabase account is valid, but an organization administrator must add you to a Kagaz workspace."
+            })
         if not db_user.is_active:
             raise HTTPException(
                 status_code=403,
@@ -319,7 +183,7 @@ def get_current_user(
         membership = _resolve_active_membership(
             db,
             user_id=db_user.id,
-            organization_id=target_organization_id,
+            organization_id=requested_org,
         )
         if membership is None:
             raise HTTPException(
@@ -333,10 +197,10 @@ def get_current_user(
             membership.role.value if hasattr(membership.role, "value") else str(membership.role)
         )
         return {
-            **claims,
             "sub": db_user.id,
-            "email": db_user.email,
-            "name": db_user.full_name,
+            "supabase_user_id": supabase_user_id,
+            "email": email,
+            "name": db_user.full_name or (auth_user.get("user_metadata") or {}).get("full_name") or email.split("@")[0],
             "organization_id": membership.organization_id,
             "role": resolved_role,
             "permissions": sorted(p.value for p in get_permissions_for_role(resolved_role)),
@@ -344,26 +208,9 @@ def get_current_user(
             "memberships": _list_active_memberships(db, user_id=db_user.id),
         }
 
-    if requested_org is not None and requested_org != claims["organization_id"]:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "MEMBERSHIP_REQUIRED",
-                "message": "An active organization membership is required.",
-            },
-        )
-
-    role_perms = {p.value for p in get_permissions_for_role(claims["role"])}
-    extra_perms = claims.get("permissions") or ()
-    if isinstance(extra_perms, (list, tuple, set, frozenset)):
-        role_perms.update(str(item).strip() for item in extra_perms if str(item).strip())
-
-    return {
-        **claims,
-        "permissions": sorted(role_perms),
-        "memberships": claims.get("memberships")
-        or [{"organization_id": claims["organization_id"], "role": claims["role"]}],
-    }
+    raise HTTPException(status_code=503, detail={
+        "code": "AUTH_DATABASE_UNAVAILABLE", "message": "Kagaz organization membership storage is unavailable."
+    })
 
 
 require_authenticated_user = get_current_user
