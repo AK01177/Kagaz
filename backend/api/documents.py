@@ -14,11 +14,10 @@ import json
 import logging
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
-from sqlalchemy.orm import Session
 
 from api.auth import (
     require_classifier,
@@ -59,6 +58,47 @@ class ClassificationCorrectionRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/documents — list documents visible in the active workspace
+# ---------------------------------------------------------------------------
+
+@router.get("")
+async def list_documents(
+    user: Annotated[dict, Depends(require_document_reader)],
+    db: Annotated[Session | None, Depends(get_db)] = None,
+    limit: int = Query(100, ge=1, le=500),
+):
+    """List the active organization's documents, scoped to the caller's role."""
+    if db is None:
+        raise HTTPException(status_code=503, detail="Document database is unavailable")
+
+    from app.models.document import Document
+
+    org_id = str(user.get("organization_id") or "").strip()
+    if not org_id:
+        raise HTTPException(status_code=403, detail="An active workspace is required")
+
+    query = db.query(Document).filter(Document.organization_id == org_id)
+    if str(user.get("role") or "").strip().upper() == "SUBMITTER":
+        query = query.filter(Document.uploaded_by == str(user.get("sub") or ""))
+
+    documents = query.order_by(Document.upload_timestamp.desc()).limit(limit).all()
+    return {
+        "documents": [
+            {
+                "id": document.id,
+                "document_id": document.id,
+                "filename": document.filename,
+                "created_at": document.upload_timestamp.isoformat() if document.upload_timestamp else None,
+                "category": document.classification,
+                "document_type": document.classification,
+                "confidence": document.classification_confidence,
+                "status": document.status.value if hasattr(document.status, "value") else str(document.status),
+            }
+            for document in documents
+        ]
+    }
+
+
 # POST /api/documents — upload a document (BE-07 / DB-03)
 # ---------------------------------------------------------------------------
 

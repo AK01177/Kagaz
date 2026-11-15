@@ -13,7 +13,7 @@ from storage.document_storage import DocumentStorage
 
 
 from services.extraction import extract_text, ExtractionError
-from services.classification import classify_document, ClassificationError
+from services.classification import classify_document, ClassificationError, classification_is_configured
 from services.structured_extraction import (
     StructuredExtractionError,
     UnsupportedDocumentTypeError,
@@ -233,43 +233,49 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
                 ocr_text = extract_text(document_id, storage)
                 logger.info("OCR complete for %s: %d chars", document_id, len(ocr_text))
 
-                # Step 2: Classification
-                classification = classify_document(ocr_text)
-                response["category"] = classification.category.value
-                response["confidence"] = classification.confidence
-                response["status"] = "CLASSIFIED"
-                logger.info(
-                    "Classified %s as '%s' (confidence=%.2f)",
-                    document_id,
-                    classification.category.value,
-                    classification.confidence,
-                )
+                # Step 2: Classification is optional in local development.
+                if not classification_is_configured():
+                    logger.info(
+                        "Skipping AI classification for %s; no classification API key is configured",
+                        document_id,
+                    )
+                else:
+                    classification = classify_document(ocr_text)
+                    response["category"] = classification.category.value
+                    response["confidence"] = classification.confidence
+                    response["status"] = "CLASSIFIED"
+                    logger.info(
+                        "Classified %s as '%s' (confidence=%.2f)",
+                        document_id,
+                        classification.category.value,
+                        classification.confidence,
+                    )
 
-                # Step 3: Structured field extraction (Sprint 2)
-                try:
-                    extraction_obj = extract_structured_fields(ocr_text, classification.category.value)
-                    raw_fields = extraction_obj.to_flat_dict()
-                    raw_conf = extraction_obj.get_field_confidences()
-                    non_none_fields = {k: v for k, v in raw_fields.items() if v is not None}
-                    if non_none_fields:
-                        extracted_fields = non_none_fields
-                        extracted_confidences = {k: v for k, v in raw_conf.items() if k in non_none_fields}
-                        response["status"] = "EXTRACTED"
-                        logger.info(
-                            "Field extraction complete for %s: %d field(s) found",
-                            document_id,
-                            len(extracted_fields),
-                        )
-                    else:
-                        extracted_fields = None
-                        extracted_confidences = None
-                except (StructuredExtractionError, UnsupportedDocumentTypeError) as exc:
-                    logger.info("Structured extraction skipped or failed for document %s: %s", document_id, exc)
-                except Exception as ex_err:
-                    logger.warning("Structured extraction failed for %s (non-fatal): %s", document_id, ex_err)
+                    # Step 3: Structured field extraction (Sprint 2)
+                    try:
+                        extraction_obj = extract_structured_fields(ocr_text, classification.category.value)
+                        raw_fields = extraction_obj.to_flat_dict()
+                        raw_conf = extraction_obj.get_field_confidences()
+                        non_none_fields = {k: v for k, v in raw_fields.items() if v is not None}
+                        if non_none_fields:
+                            extracted_fields = non_none_fields
+                            extracted_confidences = {k: v for k, v in raw_conf.items() if k in non_none_fields}
+                            response["status"] = "EXTRACTED"
+                            logger.info(
+                                "Field extraction complete for %s: %d field(s) found",
+                                document_id,
+                                len(extracted_fields),
+                            )
+                        else:
+                            extracted_fields = None
+                            extracted_confidences = None
+                    except (StructuredExtractionError, UnsupportedDocumentTypeError) as exc:
+                        logger.info("Structured extraction skipped or failed for document %s: %s", document_id, exc)
+                    except Exception as ex_err:
+                        logger.warning("Structured extraction failed for %s (non-fatal): %s", document_id, ex_err)
 
             except (ExtractionError, ClassificationError) as e:
-                logger.exception("Failed to classify document %s", document_id)
+                logger.warning("Document processing did not complete for %s: %s", document_id, e)
                 response["category"] = "unknown"
                 response["confidence"] = 0.0
 

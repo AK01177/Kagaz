@@ -387,7 +387,7 @@ function DocumentDetailsContent(props: {
   const routeParams = useParams();
   const documentId = unwrapped?.id || (routeParams?.id as string) || "";
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
-  const { fetchWithAuth } = useAuth();
+  const { fetchWithAuth, token } = useAuth();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [document, setDocument] = useState<DocumentRecord | null>(null);
@@ -397,6 +397,8 @@ function DocumentDetailsContent(props: {
   const [certified, setCertified] = useState(false);
   const [rerunning, setRerunning] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [filePreview, setFilePreview] = useState<{ documentId: string; url: string } | null>(null);
+  const [filePreviewFailure, setFilePreviewFailure] = useState<{ documentId: string; message: string } | null>(null);
 
   // FE09: Policy validation findings state
   const [validationRun, setValidationRun] = useState<PolicyValidationRun | null>(null);
@@ -421,6 +423,8 @@ function DocumentDetailsContent(props: {
   const [questionInput, setQuestionInput] = useState("");
   const [queryingAssistant, setQueryingAssistant] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const filePreviewUrl = filePreview?.documentId === documentId ? filePreview.url : null;
+  const filePreviewError = filePreviewFailure?.documentId === documentId ? filePreviewFailure.message : null;
 
   function copyId() {
     if (navigator?.clipboard) {
@@ -429,6 +433,41 @@ function DocumentDetailsContent(props: {
       setTimeout(() => setCopied(false), 2000);
     }
   }
+
+  // PDF/image viewers cannot attach the Supabase bearer token to their own request.
+  // Fetch the protected file with auth, then render its temporary object URL.
+  useEffect(() => {
+    if (!documentId || isDemo || !token) return;
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    fetchWithAuth(`${API_URL}/api/documents/${encodeURIComponent(documentId)}/file`)
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          const message = payload?.error?.message || payload?.detail?.message || payload?.detail;
+          throw new Error(typeof message === "string" ? message : `File request failed (${response.status})`);
+        }
+        return response.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setFilePreview({ documentId, url: objectUrl });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setFilePreviewFailure({
+            documentId,
+            message: error instanceof Error ? error.message : "Could not load the source file.",
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [documentId, fetchWithAuth, isDemo, token]);
 
   // Load document review detail, extraction, and validation runs
   useEffect(() => {
@@ -452,16 +491,19 @@ function DocumentDetailsContent(props: {
         if (reviewRes.ok && !ignore) {
           const reviewData = await reviewRes.json();
           if (reviewData.document) {
+            const metadataRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}`);
+            const metadata = metadataRes.ok ? await metadataRes.json() : {};
             setDocument({
-              document_id: reviewData.document.id,
+              document_id: reviewData.document.document_id || reviewData.document.id,
               filename: reviewData.document.filename,
-              file_type: "application/pdf",
-              file_size: reviewData.document.file_size || 0,
+              file_type: metadata.file_type || reviewData.document.file_type || "application/pdf",
+              file_size: metadata.file_size || reviewData.document.file_size || 0,
               status: reviewData.document.status,
-              uploaded_at: reviewData.document.created_at,
-              category: reviewData.document.classification || "Archival Document",
-              confidence: 0.98,
+              uploaded_at: metadata.uploaded_at || reviewData.document.upload_timestamp,
+              category: metadata.category || reviewData.document.classification || "Archival Document",
+              confidence: metadata.confidence ?? reviewData.document.classification_confidence ?? null,
               organization_id: reviewData.document.organization_id,
+              ocr_text_length: metadata.ocr_text_length ?? reviewData.ocr_text?.length ?? 0,
             });
             if (reviewData.document.status === "APPROVED" || reviewData.document.status === "REVIEWER_VERIFIED") {
               setCertified(true);
@@ -481,6 +523,9 @@ function DocumentDetailsContent(props: {
               confidence: confObj,
               status: "EXTRACTED",
             });
+          } else {
+            const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
+            if (extRes.ok && !ignore) setExtraction(await extRes.json());
           }
           if (reviewData.policy_validation_runs && reviewData.policy_validation_runs.length > 0) {
             const latestRun = reviewData.policy_validation_runs[0];
@@ -576,6 +621,9 @@ function DocumentDetailsContent(props: {
       if (res.ok) {
         const data = await res.json();
         setExtraction(data);
+        setDocument((current) => current
+          ? { ...current, status: data.status || current.status, ocr_text_length: data.ocr_text_length ?? current.ocr_text_length }
+          : current);
       }
     } catch {}
     setRerunning(false);
@@ -684,35 +732,9 @@ function DocumentDetailsContent(props: {
           { key: "SUPPLIER NAME", val: "Ad4tech Material LLC", conf: 91 },
           { key: "TOTAL AMOUNT", val: "$1,564.00", conf: 98 },
         ]
-      : [
-          {
-            key: "DOCUMENT TITLE",
-            val: (document?.filename || "").replace(/\.[^/.]+$/, "").replace(/[_-]/g, " "),
-            conf: 98,
-          },
-          {
-            key: "FILE TYPE & FORMAT",
-            val: (document?.filename || "").endsWith(".pdf")
-              ? "Portable Document Format (PDF)"
-              : "High-Resolution Image Asset",
-            conf: 99,
-          },
-          {
-            key: "OCR EXTRACTION STATS",
-            val: document?.ocr_text_length
-              ? `${document.ocr_text_length} characters parsed`
-              : "Awaiting OCR text parsing",
-            conf: document?.ocr_text_length ? 95 : 0,
-          },
-          {
-            key: "CLASSIFIED TAXONOMY",
-            val:
-              document?.category === "unknown"
-                ? "Pending Reviewer Categorization"
-                : document?.category || "Archived Document",
-            conf: document?.confidence ? Math.round(document.confidence * 100) : 0,
-          },
-        ];
+      : [];
+
+  const ocrTextLength = document?.ocr_text_length ?? extraction?.ocr_text_length ?? 0;
 
   const categoryName = document?.category || "Archival Document";
   const rawFieldsMap = extraction?.fields || {};
@@ -912,10 +934,10 @@ function DocumentDetailsContent(props: {
               <i />
             </div>
             <div className="stage">
-              <span className="stage-dot">✓</span>
+              <span className="stage-dot">{ocrTextLength > 0 ? "✓" : "!"}</span>
               <div>
                 <b><code>02</code> OCR Extraction</b>
-                <small>RapidOCR · 1 page</small>
+                <small>{ocrTextLength > 0 ? `${ocrTextLength.toLocaleString()} characters extracted` : "No OCR text recorded"}</small>
               </div>
               <i />
             </div>
@@ -931,7 +953,7 @@ function DocumentDetailsContent(props: {
               <span className="stage-dot">{certified ? "✓" : "●"}</span>
               <div>
                 <b><code>04</code> Field Extraction</b>
-                <small>{fieldList.length} fields · {certified ? "Certified" : "Ready to certify"}</small>
+                <small>{fieldList.length ? `${fieldList.length} fields · ${certified ? "Certified" : "Ready to certify"}` : "No structured fields extracted"}</small>
               </div>
             </div>
           </div>
@@ -946,10 +968,11 @@ function DocumentDetailsContent(props: {
               <div className="viewer" style={{ minHeight: "720px", display: "flex", flexDirection: "column" }}>
                 <div className="viewer-bar">
                   <span>−　<code>100%</code>　＋　 |　 {isDemo ? "Annotated View" : "Original Source Preview"}</span>
-                  <a
-                    href={`/api/documents/${documentId}/file`}
+                <a
+                    href={filePreviewUrl || undefined}
                     target="_blank"
                     rel="noreferrer"
+                    onClick={(event) => { if (!filePreviewUrl) event.preventDefault(); }}
                     style={{ color: "var(--ink)", textDecoration: "none", fontSize: "11px", fontWeight: 500 }}
                     title="Open raw file in new tab"
                   >
@@ -974,6 +997,14 @@ function DocumentDetailsContent(props: {
                       filename={document?.filename || "commercial_invoice_september.pdf"}
                       fields={rawFieldsMap}
                     />
+                  ) : filePreviewError ? (
+                    <div style={{ margin: "auto", padding: "24px", color: "var(--muted)" }}>
+                      Could not load preview: {filePreviewError}
+                    </div>
+                  ) : !filePreviewUrl ? (
+                    <div style={{ margin: "auto", padding: "24px", color: "var(--muted)" }}>
+                      Loading source document…
+                    </div>
                   ) : (document?.filename || "").match(/\.(png|jpg|jpeg|webp)$/i) ? (
                     <div
                       style={{
@@ -988,7 +1019,7 @@ function DocumentDetailsContent(props: {
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={`/api/documents/${documentId}/file`}
+                        src={filePreviewUrl}
                         alt={document?.filename || "Source Document"}
                         style={{
                           maxWidth: "100%",
@@ -1001,7 +1032,7 @@ function DocumentDetailsContent(props: {
                     </div>
                   ) : (
                     <iframe
-                      src={`/api/documents/${documentId}/file#toolbar=0`}
+                      src={`${filePreviewUrl}#toolbar=0`}
                       title={document?.filename || "Source Document"}
                       style={{
                         width: "100%",
@@ -1040,6 +1071,11 @@ function DocumentDetailsContent(props: {
                     </div>
                   </div>
                 ))}
+                {fieldList.length === 0 && (
+                  <p style={{ color: "var(--muted)", fontSize: "12px", padding: "12px" }}>
+                    No structured fields are available for this document yet. Choose “Re-run Extraction” to retry.
+                  </p>
+                )}
               </div>
 
               {/* Policy Clearance Card */}

@@ -100,6 +100,15 @@ class ClassificationError(Exception):
     """Raised when document classification fails for any reason."""
 
 
+def classification_is_configured() -> bool:
+    """Return whether any supported classification provider key is configured."""
+    return bool(
+        os.environ.get("OPENROUTER_API_KEY")
+        or os.environ.get("JEV_API_KEY")
+        or os.environ.get("TYPESAFE_API_KEY")
+    )
+
+
 def classify_document(text: str) -> ClassificationResult:
     """
     Classify the document text into one of the 4 domains using OpenRouter Jev model.
@@ -112,11 +121,7 @@ def classify_document(text: str) -> ClassificationResult:
         raise ClassificationError("Document text is empty or missing.")
 
     # Support primary OPENROUTER_API_KEY with fallbacks for legacy/local test keys
-    api_key = (
-        os.environ.get("OPENROUTER_API_KEY")
-        or os.environ.get("JEV_API_KEY")
-        or os.environ.get("TYPESAFE_API_KEY")
-    )
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("JEV_API_KEY") or os.environ.get("TYPESAFE_API_KEY")
     if not api_key:
         raise ClassificationError("OPENROUTER_API_KEY environment variable is not set.")
 
