@@ -1,13 +1,62 @@
+"use client";
+
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Header, Footer } from "./Header";
+import { useAuth } from "./context/AuthContext";
+import { formatDate } from "./classification";
+
+interface RecentFile {
+  id: string;
+  name: string;
+  date: string;
+  category: string;
+}
 
 export default function HomePage() {
+  const { isAuthenticated, fetchWithAuth } = useAuth();
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let isMounted = true;
+    async function fetchRecent() {
+      setLoadingFiles(true);
+      try {
+        const res = await fetchWithAuth("/api/documents");
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          const list = Array.isArray(data) ? data : data?.documents || [];
+          if (isMounted) {
+            setRecentFiles(
+              list.slice(0, 5).map((d: { id?: string; document_id?: string; filename?: string; name?: string; created_at?: string; category?: string; document_type?: string }) => ({
+                id: d.document_id || d.id || "",
+                name: d.filename || d.name || "Untitled File",
+                date: d.created_at ? formatDate(d.created_at) : "Recently added",
+                category: d.category || d.document_type || "Classified Document",
+              }))
+            );
+          }
+        }
+      } catch {
+        // Honest fallback - empty state
+      } finally {
+        if (isMounted) setLoadingFiles(false);
+      }
+    }
+    fetchRecent();
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthenticated, fetchWithAuth]);
+
   return (
     <>
       <Header />
-      <main className="page">
+      <main className="page" style={{ background: "#FFFFFF" }}>
         {/* Hero Section */}
-        <div className="landing-hero">
+        <div className="landing-hero" style={{ background: "#FFFFFF" }}>
           <div className="section-mark">§ 00 · ARCHIVAL DOCUMENT INTELLIGENCE</div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "24px", marginTop: "24px" }}>
             <div>
@@ -36,40 +85,40 @@ export default function HomePage() {
 
         {/* 3 Pillars of the Kagaz Engine */}
         <section className="landing-features">
-          <div className="feature-card">
+          <div className="feature-card" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
             <span className="feature-num">01 · INGESTION &amp; EXTRACTION</span>
             <h3>Strict File Intake</h3>
             <p>
               Byte-level PDF verification, SHA-256 fingerprinting, layout analysis, and optical text extraction. Every document is anchored to an encrypted enterprise scope.
             </p>
             <div style={{ marginTop: "20px" }}>
-              <Link href="/documents" style={{ color: "var(--sage)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
+              <Link href="/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
                 Test Intake Dropzone →
               </Link>
             </div>
           </div>
 
-          <div className="feature-card">
+          <div className="feature-card" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
             <span className="feature-num">02 · NEURAL CLASSIFICATION</span>
             <h3>Deterministic Taxonomy</h3>
             <p>
               Automated classification into commercial invoices, legal contracts, HR records, academic transcripts, and financial filings with real-time confidence scores.
             </p>
             <div style={{ marginTop: "20px" }}>
-              <Link href="/documents/doc_demo_8823f9" style={{ color: "var(--sage)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
-                Inspect Demo File Result →
+              <Link href="/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
+                Open File Repository →
               </Link>
             </div>
           </div>
 
-          <div className="feature-card">
+          <div className="feature-card" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
             <span className="feature-num">03 · HUMAN VERIFICATION</span>
             <h3>Reviewer Override Desk</h3>
             <p>
-              Low-confidence files are flagged with wax-seal alerts. Certified reviewers examine simulated scan excerpts, override categories, and stamp files with permanent audit trails.
+              Low-confidence files are flagged for human review. Certified reviewers examine physical excerpts, correct fields, and stamp files with permanent audit trails.
             </p>
             <div style={{ marginTop: "20px" }}>
-              <Link href="/review" style={{ color: "var(--sage)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
+              <Link href="/review" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
                 Launch Review Ledger →
               </Link>
             </div>
@@ -77,11 +126,11 @@ export default function HomePage() {
         </section>
 
         {/* Manifesto Quote */}
-        <section className="manifesto-quote">
+        <section className="manifesto-quote" style={{ background: "#FFFFFF", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
           <blockquote>
             &ldquo;Classification is derived from document structure, legal covenants, and semantic markers &mdash; not filename alone.&rdquo;
           </blockquote>
-          <cite>Kagaz Archival Standard · Rule 12.B</cite>
+          <cite style={{ color: "var(--brand)" }}>Kagaz Archival Standard · Rule 12.B</cite>
         </section>
 
         {/* Live Workspace Ledger Sample */}
@@ -91,11 +140,11 @@ export default function HomePage() {
               <span>ACTIVE ARCHIVAL LEDGER</span>
               <h2>Recent Workspace Files</h2>
             </div>
-            <Link href="/documents">Enter full workspace →</Link>
+            <Link href="/documents" style={{ color: "var(--brand)" }}>Enter full workspace →</Link>
           </div>
 
-          <div className="table">
-            <div className="tr th">
+          <div className="table" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
+            <div className="tr th" style={{ background: "#FFFFFF", borderBottom: "1px solid var(--line)" }}>
               <span>File name</span>
               <span>Unique ID</span>
               <span>Timestamp</span>
@@ -103,40 +152,33 @@ export default function HomePage() {
               <span style={{ textAlign: "right" }}>Action</span>
             </div>
 
-            <Link href="/documents/doc_demo_8823f9" className="tr">
-              <span className="file-name">
-                <b>01</b>commercial_invoice_september.pdf
-              </span>
-              <code>doc_demo_8823f9</code>
-              <code>24 Sep 2024 · 14:32</code>
-              <span>Commercial Invoice</span>
-              <span className="inspect">Inspect File →</span>
-            </Link>
-
-            <Link href="/documents/doc_62ad119c" className="tr">
-              <span className="file-name">
-                <b>02</b>vendor_master_agreement.pdf
-              </span>
-              <code>doc_62ad119c</code>
-              <code>23 Sep 2024 · 09:18</code>
-              <span>Legal Contract</span>
-              <span className="inspect">Inspect File →</span>
-            </Link>
-
-            <Link href="/review?id=doc_qr_0184f" className="tr">
-              <span className="file-name">
-                <b>03</b>travel_expense_aug.pdf
-              </span>
-              <code>doc_qr_0184f</code>
-              <code>Today · 09:42</code>
-              <span style={{ color: "var(--red)" }}>Financial (Needs Review)</span>
-              <span className="inspect" style={{ color: "var(--red)" }}>Verify Now →</span>
-            </Link>
+            {loadingFiles ? (
+              <div style={{ padding: "32px 20px", textAlign: "center", color: "var(--muted)" }}>
+                Loading recent files...
+              </div>
+            ) : recentFiles.length === 0 ? (
+              <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--muted)" }}>
+                <p style={{ margin: "0 0 6px", fontSize: "13px", fontWeight: 500 }}>No files deposited in this workspace yet.</p>
+                <small style={{ fontSize: "11px" }}>Deposit a file in the Intake dropzone to begin extraction and classification.</small>
+              </div>
+            ) : (
+              recentFiles.map((file, idx) => (
+                <Link key={file.id} href={`/documents/${file.id}`} className="tr" style={{ background: "#FFFFFF", borderBottom: "1px solid var(--line)" }}>
+                  <span className="file-name">
+                    <b>{String(idx + 1).padStart(2, "0")}</b> {file.name}
+                  </span>
+                  <code>{file.id}</code>
+                  <code>{file.date}</code>
+                  <span>{file.category}</span>
+                  <span className="inspect" style={{ color: "var(--brand)" }}>Inspect File →</span>
+                </Link>
+              ))
+            )}
           </div>
         </section>
 
         {/* Call to action card */}
-        <div style={{ marginTop: "64px", padding: "40px", background: "var(--paper)", border: "1px solid var(--line-dark)", textAlign: "center" }}>
+        <div style={{ marginTop: "64px", padding: "40px", background: "#FFFFFF", border: "1px solid var(--line)", textAlign: "center", borderRadius: "8px" }}>
           <h2 style={{ font: "400 34px 'Newsreader', serif", color: "var(--ink)", marginBottom: "12px" }}>
             Ready to index enterprise files?
           </h2>

@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useState, useRef } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
@@ -91,21 +92,6 @@ interface AssistantMessage {
   is_grounded?: boolean;
   limitation?: string | null;
   confidence?: number | null;
-}
-
-function getDemoDocument(id: string): DocumentRecord {
-  return {
-    document_id: id || "doc_demo_8823f9",
-    filename: "commercial_invoice_september.pdf",
-    file_type: "application/pdf",
-    file_size: 2977955,
-    status: "EXTRACTED",
-    uploaded_at: "2024-09-24T14:32:00Z",
-    category: "Commercial Invoice",
-    confidence: 0.974,
-    organization_id: "org_kagaz_demo",
-    submitter_id: "usr_2098b7",
-  };
 }
 
 /* Adaptive Document Stage Renderers */
@@ -290,13 +276,32 @@ function OverrideSheet({
 
   async function handleSave() {
     setSubmitting(true);
+    const canonicalMap: Record<string, string> = {
+      "Commercial Invoice": "financial",
+      "Legal Contract": "general_confidential",
+      "Legal Contract & Agreement": "general_confidential",
+      "Academic Record & Transcript": "academics",
+      "Academic Transcript": "academics",
+      "HR Record": "hr_documents",
+      "Financial Report": "financial",
+      invoice: "financial",
+      contract: "general_confidential",
+      academic: "academics",
+      hr: "hr_documents",
+      financial: "financial",
+      general_confidential: "general_confidential",
+      academics: "academics",
+      hr_documents: "hr_documents",
+    };
+    const canonicalCategory = canonicalMap[type] || type.toLowerCase().replace(/ /g, "_");
+
     try {
       await fetchWithAuth(`${API_URL}/api/documents/${documentId}/classification`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ category: type, notes: rationale }),
+        body: JSON.stringify({ category: canonicalCategory, notes: rationale }),
       });
     } catch {}
     onSaved(type);
@@ -380,12 +385,13 @@ function DocumentDetailsContent(props: {
 }) {
   const unwrapped = use(props.params);
   const routeParams = useParams();
-  const documentId = unwrapped?.id || (routeParams?.id as string) || "doc_demo_8823f9";
+  const documentId = unwrapped?.id || (routeParams?.id as string) || "";
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
   const { fetchWithAuth } = useAuth();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
-  const [document, setDocument] = useState<DocumentRecord | null>(() => getDemoDocument(documentId));
+  const [document, setDocument] = useState<DocumentRecord | null>(null);
+  const [loadingDoc, setLoadingDoc] = useState(true);
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null);
   const [showOverride, setShowOverride] = useState(false);
   const [certified, setCertified] = useState(false);
@@ -518,6 +524,11 @@ function DocumentDetailsContent(props: {
           }
         }
       } catch {}
+      finally {
+        if (!ignore) {
+          setLoadingDoc(false);
+        }
+      }
     }
 
     const timer = setTimeout(() => {
@@ -688,8 +699,10 @@ function DocumentDetailsContent(props: {
           },
           {
             key: "OCR EXTRACTION STATS",
-            val: `${document?.ocr_text_length || 3947} characters parsed`,
-            conf: 95,
+            val: document?.ocr_text_length
+              ? `${document.ocr_text_length} characters parsed`
+              : "Awaiting OCR text parsing",
+            conf: document?.ocr_text_length ? 95 : 0,
           },
           {
             key: "CLASSIFIED TAXONOMY",
@@ -697,11 +710,11 @@ function DocumentDetailsContent(props: {
               document?.category === "unknown"
                 ? "Pending Reviewer Categorization"
                 : document?.category || "Archived Document",
-            conf: document?.confidence ? Math.round(document.confidence * 100) : 90,
+            conf: document?.confidence ? Math.round(document.confidence * 100) : 0,
           },
         ];
 
-  const categoryName = document?.category || (isDemo ? "Commercial Invoice" : "Archival Document");
+  const categoryName = document?.category || "Archival Document";
   const rawFieldsMap = extraction?.fields || {};
 
   // Group FE09 findings
@@ -715,12 +728,40 @@ function DocumentDetailsContent(props: {
   );
   const passedFindings = findings.filter((f) => f.status === "PASS");
 
+  if (loadingDoc) {
+    return (
+      <AppShell>
+        <div style={{ padding: "60px", textAlign: "center", color: "var(--muted)" }}>
+          <p style={{ font: "20px 'Newsreader', serif", margin: "0 0 8px" }}>Loading File Inspector...</p>
+          <small>Retrieving archival record {documentId}...</small>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (!document) {
+    return (
+      <AppShell>
+        <div style={{ padding: "60px", textAlign: "center" }}>
+          <Icon name="file" size={32} />
+          <h2 style={{ font: "20px 'Newsreader', serif", margin: "12px 0 6px" }}>Document Not Found</h2>
+          <p style={{ color: "var(--muted)", fontSize: "12px", margin: "0 0 16px" }}>
+            The requested document file <code>{documentId}</code> does not exist or has been removed from this workspace.
+          </p>
+          <Link href="/documents" className="btn primary" style={{ textDecoration: "none" }}>
+            Back to Intake Library
+          </Link>
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <header className="inspector-head">
         <div className="crumb">
           <Icon name="folder" size={14} /> Library <span>/</span> {categoryName} <span>/</span>{" "}
-          <code>{document?.filename || "document.pdf"}</code>
+          <code>{document.filename}</code>
           <div className="record-lock">⌂ Private workspace record</div>
         </div>
 
@@ -729,7 +770,7 @@ function DocumentDetailsContent(props: {
             <Icon name="file" size={20} />
           </span>
           <div>
-            <h1>{document?.filename || "commercial_invoice_september.pdf"}</h1>
+            <h1>{document.filename}</h1>
             <p>
               <code>{documentId}</code>{" "}
               <button
@@ -741,19 +782,27 @@ function DocumentDetailsContent(props: {
                 <Icon name="copy" size={12} />
               </button>{" "}
               {copied ? <small style={{ color: "var(--green)" }}>Copied!</small> : null}
-              <i /> <code>{formatFileSize(document?.file_size ?? 2977955)}</code>
-              <i /> Uploaded {formatDate(document?.uploaded_at) || "24 Sep 2024 · 14:32 UTC"}
+              {document.file_size ? (
+                <>
+                  <i /> <code>{formatFileSize(document.file_size)}</code>
+                </>
+              ) : null}
+              {document.uploaded_at ? (
+                <>
+                  <i /> Uploaded {formatDate(document.uploaded_at)}
+                </>
+              ) : null}
             </p>
           </div>
-          <Badge tone={certified ? "green" : "violet"}>
-            {certified ? "VERIFIED (100%)" : "EXTRACTED"}
+          <Badge tone={certified ? "green" : document.status === "UPLOADED" ? undefined : "violet"}>
+            {certified ? "VERIFIED (100%)" : document.status}
           </Badge>
         </div>
 
         <div className="doc-actions">
           <p>
             <span className="eyebrow">CLASSIFIED AS</span> {categoryName}{" "}
-            <code>{certified ? "100%" : `${Math.round((document?.confidence ?? 0.974) * 100)}%`}</code>
+            <code>{certified ? "100%" : document.confidence ? `${Math.round(document.confidence * 100)}%` : "AI Evaluated"}</code>
           </p>
           <div>
             <Button
@@ -858,7 +907,7 @@ function DocumentDetailsContent(props: {
               <span className="stage-dot">✓</span>
               <div>
                 <b><code>01</code> Ingestion</b>
-                <small>File received · {formatFileSize(document?.file_size ?? 2977955)}</small>
+                <small>File received{document?.file_size ? ` · ${formatFileSize(document.file_size)}` : ""}</small>
               </div>
               <i />
             </div>

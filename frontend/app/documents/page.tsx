@@ -1,11 +1,11 @@
 "use client";
 
-import { DragEvent, useEffect, useRef, useState } from "react";
+import { DragEvent, useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell, Button, Badge, Icon } from "../components/AppShell";
 import { ProtectedRoute } from "../components/ProtectedRoute";
-import { formatFileSize } from "../classification";
+import { formatFileSize, formatDate } from "../classification";
 import { useAuth } from "../context/AuthContext";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -19,31 +19,8 @@ interface FileItem {
   date: string;
   genre: string;
   confidence?: string;
+  status?: string;
 }
-
-const DEFAULT_FILES: FileItem[] = [
-  {
-    name: "commercial_invoice_september.pdf",
-    id: "doc_demo_8823f9",
-    date: "24 Sep 2024 · 14:32",
-    genre: "Commercial Invoice",
-    confidence: "97.4%",
-  },
-  {
-    name: "vendor_master_agreement.pdf",
-    id: "doc_62ad119c",
-    date: "23 Sep 2024 · 09:18",
-    genre: "Legal Contract",
-    confidence: "92.1%",
-  },
-  {
-    name: "candidate_record_024.pdf",
-    id: "doc_307fa912",
-    date: "21 Sep 2024 · 17:06",
-    genre: "HR Record",
-    confidence: "88.7%",
-  },
-];
 
 const ACCEPTED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg"];
 const ACCEPTED_MIME = [
@@ -66,41 +43,82 @@ function validateFile(file: File): string | null {
   return null;
 }
 
-function detectDocumentCategory(filename: string): { category: string; confidence: number } {
+function detectDocumentCategory(filename: string): { category: string; confidence: number | null } {
   const name = filename.toLowerCase();
   if (name.includes("academic") || name.includes("transcript") || name.includes("diploma") || name.includes("student")) {
-    return { category: "Academic Record & Transcript", confidence: 0.948 };
+    return { category: "Academic Record & Transcript", confidence: null };
   }
   if (name.includes("hr") || name.includes("employee") || name.includes("resume") || name.includes("candidate") || name.includes("payroll")) {
-    return { category: "HR Record", confidence: 0.952 };
+    return { category: "HR Record", confidence: null };
   }
   if (name.includes("invoice") || name.includes("bill") || name.includes("receipt") || name.includes("inv") || name.includes("supplier")) {
-    return { category: "Commercial Invoice", confidence: 0.978 };
+    return { category: "Commercial Invoice", confidence: null };
   }
   if (name.includes("contract") || name.includes("agreement") || name.includes("nda") || name.includes("vendor")) {
-    return { category: "Legal Contract", confidence: 0.964 };
+    return { category: "Legal Contract", confidence: null };
   }
   if (name.includes("financial") || name.includes("expense") || name.includes("tax") || name.includes("audit") || name.includes("report")) {
-    return { category: "Financial Report", confidence: 0.884 };
+    return { category: "Financial Report", confidence: null };
   }
-  return { category: "Enterprise Document", confidence: 0.912 };
+  return { category: "Enterprise Document", confidence: null };
 }
 
 function DocumentsContent() {
   const router = useRouter();
-  const { fetchWithAuth, user, activeOrgId } = useAuth();
+  const { fetchWithAuth, user, activeOrgId, isAuthenticated } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [state, setState] = useState<UploadState>("idle");
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [files, setFiles] = useState<FileItem[]>(DEFAULT_FILES);
+  const [selectedGenre, setSelectedGenre] = useState("ALL");
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const currentOrg = activeOrgId || user?.organization_id || "ACME GLOBAL ENTERPRISE";
 
-  useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const loadDocuments = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setLoading(true);
+    try {
+      const res = await fetchWithAuth(`${API_URL}/api/documents`);
+      if (res.ok) {
+        const raw = await res.json().catch(() => []);
+        const docsList = Array.isArray(raw) ? raw : raw?.documents || [];
+        if (docsList.length > 0) {
+          const items: FileItem[] = docsList.map(
+            (d: {
+              id?: string;
+              document_id?: string;
+              filename?: string;
+              name?: string;
+              created_at?: string;
+              category?: string;
+              document_type?: string;
+              confidence?: number;
+              status?: string;
+            }) => ({
+              name: d.filename || d.name || "document.pdf",
+              id: d.id || d.document_id || "doc_unknown",
+              date: d.created_at ? formatDate(d.created_at) : "Recent",
+              genre: d.category || d.document_type || "Classified Document",
+              confidence: d.confidence
+                ? `${(d.confidence > 1 ? d.confidence : d.confidence * 100).toFixed(1)}%`
+                : "—",
+              status: d.status || "CLASSIFIED",
+            })
+          );
+          setFiles(items);
+          return;
+        }
+      }
+    } catch {
+      // Fallback to local session storage
+    } finally {
+      setLoading(false);
+    }
+
     try {
       const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
       if (keys.length > 0) {
@@ -113,22 +131,26 @@ function DocumentsContent() {
               id: item.document_id,
               date: "Recently Added",
               genre: item.category || "Classified File",
-              confidence: item.confidence ? `${(item.confidence * 100).toFixed(1)}%` : "94.8%",
+              confidence: item.confidence ? `${(item.confidence * 100).toFixed(1)}%` : "—",
+              status: item.status || "CLASSIFIED",
             });
           }
         }
         if (loaded.length > 0) {
-          const merged = [...loaded, ...DEFAULT_FILES.filter((d) => !loaded.some((l) => l.id === d.id))];
-          timeoutId = setTimeout(() => {
-            setFiles(merged);
-          }, 0);
+          setFiles(loaded);
+          return;
         }
       }
     } catch {}
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, []);
+    setFiles([]);
+  }, [fetchWithAuth, isAuthenticated]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadDocuments();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [loadDocuments]);
 
   function chooseFile(nextFile?: File) {
     if (!nextFile || state === "uploading") return;
@@ -198,91 +220,67 @@ function DocumentsContent() {
         status: "CLASSIFIED",
         category,
         confidence,
-        uploaded_at: new Date().toISOString(),
-        organization_id: currentOrg,
+        created_at: new Date().toISOString(),
       };
 
       try {
         sessionStorage.setItem(`kagaz_doc_${docId}`, JSON.stringify(record));
-        const existingRaw = sessionStorage.getItem("kagaz_recent_docs");
-        const existing = existingRaw ? JSON.parse(existingRaw) : [];
-        sessionStorage.setItem(
-          "kagaz_recent_docs",
-          JSON.stringify([
-            {
-              name: file.name,
-              id: docId,
-              date: "Just now",
-              genre: category,
-              confidence,
-            },
-            ...existing,
-          ])
-        );
       } catch {}
 
       setState("success");
-      router.push(`/documents/${docId}`);
+      await loadDocuments();
+
+      setTimeout(() => {
+        router.push(`/documents/${docId}`);
+      }, 700);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Network error during upload.";
-      if (msg === "SESSION_EXPIRED") {
-        setError("Your session has expired. Redirecting to sign in...");
-      } else {
-        setError(msg);
-      }
+      setError(msg);
       setState("error");
     }
   }
 
-  const filteredFiles = files.filter(
-    (f) =>
+  const filteredFiles = files.filter((f) => {
+    const matchesSearch =
       f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      f.genre.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      f.id.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+      f.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      f.genre.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesGenre =
+      selectedGenre === "ALL" ||
+      f.genre.toLowerCase().includes(selectedGenre.toLowerCase());
+    return matchesSearch && matchesGenre;
+  });
 
   return (
     <AppShell>
       <header className="page-head">
         <div className="crumb">
           <Icon name="inbox" size={14} /> Workspace <span>/</span> Intake &amp; Library
-          <div className="sync">
-            <span className="brand-dot" /> Verified Session
-          </div>
+        </div>
+        <div className="sync">
+          <span className="brand-dot" /> {loading ? "Syncing..." : "Synced just now"}
         </div>
         <div className="head-main">
           <div>
             <h1>Bring a document into focus.</h1>
             <p className="subline">
-              {currentOrg.toUpperCase()} · {files.length} RECORDS IN THIS WORKSPACE
+              DOCUMENT INTAKE · {files.length} RECORDS IN {currentOrg.toUpperCase()}
             </p>
           </div>
-          <Button icon="sliders">Library preferences</Button>
+          <Button icon="sliders" onClick={loadDocuments}>
+            Sync Library
+          </Button>
         </div>
       </header>
 
       <div className="intake-body">
-        {error && (
-          <div
-            style={{
-              padding: "10px 14px",
-              background: "var(--red-bg, #fef2f2)",
-              border: "1px solid var(--red, #dc2626)",
-              color: "var(--red, #dc2626)",
-              borderRadius: "5px",
-              marginBottom: "16px",
-              fontSize: "12px",
-            }}
-          >
-            <b>Intake Notice:</b> {error}
-          </div>
-        )}
-
+        {/* Upload dropzone matching Figma Board 08 */}
         <div
-          className="upload-panel"
+          className={`upload-panel ${isDragging ? "dragging" : ""}`}
           style={{
-            borderColor: isDragging ? "var(--violet)" : undefined,
-            background: isDragging ? "var(--violet-bg)" : "white",
+            border: isDragging ? "2px dashed var(--brand)" : "1px dashed var(--line2)",
+            background: isDragging ? "var(--brand-surface)" : "white",
+            transition: "all 0.2s ease",
           }}
           onDragOver={(e) => {
             e.preventDefault();
@@ -290,70 +288,91 @@ function DocumentsContent() {
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={onDrop}
-          onClick={() => {
-            if (state !== "uploading" && !file) inputRef.current?.click();
-          }}
         >
           <input
-            ref={inputRef}
             type="file"
+            ref={inputRef}
             style={{ display: "none" }}
-            accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+            accept=".pdf,.png,.jpg,.jpeg"
             onChange={(e) => chooseFile(e.target.files?.[0])}
           />
-
           <span className="upload-icon">↥</span>
+          <h2>Deposit a file for intelligence.</h2>
+          <p>
+            {file
+              ? `Ready to process: ${file.name} (${formatFileSize(file.size)})`
+              : "Drop a PDF or image here or browse files from storage."}
+          </p>
+          <span className="upload-spec">PDF · PNG · JPG · JPEG · MAXIMUM 10 MB</span>
 
-          {file ? (
-            <div style={{ textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
-              <h2 style={{ fontSize: "18px" }}>
-                Ready to archive: <em>{file.name}</em>
-              </h2>
-              <p style={{ margin: "6px 0 14px", color: "var(--muted)", fontSize: "11px" }}>
-                {formatFileSize(file.size)} · Will run OCR → Classification → Field Extraction
-              </p>
-              <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                <Button
-                  variant="primary"
-                  icon="check"
-                  disabled={state === "uploading"}
-                  onClick={uploadFile}
-                >
-                  {state === "uploading" ? "Archiving & Processing..." : "Deposit & Process File →"}
+          <div style={{ marginTop: "16px", display: "flex", gap: "10px" }}>
+            {!file ? (
+              <Button variant="primary" icon="file" onClick={() => inputRef.current?.click()}>
+                Select Document File
+              </Button>
+            ) : (
+              <>
+                <Button variant="primary" icon="check" onClick={uploadFile} disabled={state === "uploading"}>
+                  {state === "uploading" ? "RapidOCR Ingesting..." : "Process & Extract"}
                 </Button>
-                <Button
-                  variant="secondary"
-                  disabled={state === "uploading"}
-                  onClick={reset}
-                >
-                  Choose Different File
+                <Button variant="ghost" onClick={reset} disabled={state === "uploading"}>
+                  Cancel
                 </Button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <h2>Deposit a file for intelligence.</h2>
-              <p>Drop a PDF, PNG, JPG, or JPEG here or browse files from storage.</p>
-              <span className="upload-spec">SUPPORTED: PDF · PNG · JPG · JPEG · MAXIMUM 10 MB</span>
-            </>
+              </>
+            )}
+          </div>
+
+          {error && (
+            <p style={{ color: "var(--red)", fontSize: "11px", marginTop: "12px", fontWeight: 500 }}>
+              ⚠ {error}
+            </p>
+          )}
+
+          {state === "success" && (
+            <p style={{ color: "var(--green)", fontSize: "11px", marginTop: "12px", fontWeight: 600 }}>
+              ✓ File registered. Redirecting to Document Inspector...
+            </p>
           )}
         </div>
 
+        {/* Library Card with Filters & Search */}
         <section className="library-card">
           <div className="library-toolbar">
             <div>
-              <span className="eyebrow">RECENT WORKSPACE FILES</span>
+              <span className="eyebrow">WORKSPACE REPOSITORY</span>
               <h2>Intake &amp; Library</h2>
             </div>
-            <label className="search">
-              <Icon name="search" size={13} />
-              <input
-                placeholder="Find a document…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              <kbd>⌘ K</kbd>
-            </label>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: "4px" }}>
+                {["ALL", "INVOICE", "CONTRACT", "RECORD"].map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setSelectedGenre(cat)}
+                    style={{
+                      border: "1px solid var(--line)",
+                      background: selectedGenre === cat ? "var(--brand-surface)" : "white",
+                      color: selectedGenre === cat ? "var(--brand)" : "var(--muted)",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+              <label className="search">
+                <Icon name="search" size={13} />
+                <input
+                  placeholder="Find a document…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                <kbd>⌘ K</kbd>
+              </label>
+            </div>
           </div>
 
           <div className="library-table">
@@ -365,12 +384,8 @@ function DocumentsContent() {
               <span>AI CONF.</span>
             </div>
 
-            {filteredFiles.map((d, i) => (
-              <Link
-                className="lib-row"
-                key={d.id}
-                href={`/documents/${d.id}`}
-              >
+            {filteredFiles.map((d) => (
+              <Link className="lib-row" key={d.id} href={`/documents/${d.id}`}>
                 <span className="doc-name">
                   <span className="doc-icon">
                     <Icon name="file" />
@@ -380,11 +395,25 @@ function DocumentsContent() {
                 <code>{d.id}</code>
                 <span>{d.date}</span>
                 <span>{d.genre}</span>
-                <Badge tone={d.genre.toLowerCase().includes("hr") ? "amber" : "green"}>
-                  {d.confidence || (i === 2 ? "88.7%" : "97.4%")}
+                <Badge
+                  tone={
+                    d.confidence && parseFloat(d.confidence) < 75
+                      ? "amber"
+                      : d.confidence && parseFloat(d.confidence) >= 90
+                      ? "green"
+                      : "violet"
+                  }
+                >
+                  {d.confidence || "—"}
                 </Badge>
               </Link>
             ))}
+
+            {filteredFiles.length === 0 && (
+              <div style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>
+                No documents match your query. Deposit a new file above to start extraction.
+              </div>
+            )}
           </div>
         </section>
       </div>

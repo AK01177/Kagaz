@@ -108,34 +108,71 @@ export function Badge({
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, memberships, activeOrgId, switchOrganization, logout, isAuthenticated } =
+  const { user, memberships, activeOrgId, switchOrganization, logout, isAuthenticated, fetchWithAuth } =
     useAuth();
 
-  const [intakeCount, setIntakeCount] = useState(3);
-  const [reviewCount, setReviewCount] = useState(2);
+  const [intakeCount, setIntakeCount] = useState<number | null>(null);
+  const [reviewCount, setReviewCount] = useState<number | null>(null);
+  const [approvalCount, setApprovalCount] = useState<number | null>(null);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [orgSwitchError, setOrgSwitchError] = useState<string | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
+    let isMounted = true;
+    async function fetchCounts() {
+      if (!isAuthenticated) {
+        if (isMounted) {
+          setIntakeCount(null);
+          setReviewCount(null);
+          setApprovalCount(null);
+        }
+        return;
+      }
       try {
-        const storedDocKeys = Object.keys(sessionStorage).filter((k) =>
-          k.startsWith("kagaz_doc_")
-        );
-        setIntakeCount(3 + storedDocKeys.length);
+        const [docsRes, reviewRes, approvalRes] = await Promise.allSettled([
+          fetchWithAuth("/api/documents"),
+          fetchWithAuth("/api/documents/workflow/review-queue"),
+          fetchWithAuth("/api/documents/workflow/approval-queue"),
+        ]);
+        if (!isMounted) return;
 
-        const unverifiedCount = storedDocKeys.filter((k) => {
-          try {
-            const item = JSON.parse(sessionStorage.getItem(k) || "{}");
-            return item.status !== "REVIEWER_VERIFIED" && item.confidence && item.confidence < 0.8;
-          } catch {
-            return false;
-          }
-        }).length;
-        setReviewCount(4 + unverifiedCount);
-      } catch {}
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [pathname]);
+        if (docsRes.status === "fulfilled" && docsRes.value.ok) {
+          const docsData = await docsRes.value.json().catch(() => null);
+          const list = Array.isArray(docsData) ? docsData : docsData?.documents || [];
+          setIntakeCount(list.length);
+        } else {
+          setIntakeCount(0);
+        }
+
+        if (reviewRes.status === "fulfilled" && reviewRes.value.ok) {
+          const reviewData = await reviewRes.value.json().catch(() => null);
+          const items = reviewData?.items || (Array.isArray(reviewData) ? reviewData : []);
+          setReviewCount(items.length);
+        } else {
+          setReviewCount(0);
+        }
+
+        if (approvalRes.status === "fulfilled" && approvalRes.value.ok) {
+          const appData = await approvalRes.value.json().catch(() => null);
+          const items = appData?.items || (Array.isArray(appData) ? appData : []);
+          setApprovalCount(items.length);
+        } else {
+          setApprovalCount(0);
+        }
+      } catch {
+        if (isMounted) {
+          setIntakeCount(0);
+          setReviewCount(0);
+          setApprovalCount(0);
+        }
+      }
+    }
+
+    fetchCounts();
+    return () => {
+      isMounted = false;
+    };
+  }, [pathname, activeOrgId, isAuthenticated, fetchWithAuth]);
 
   const isIntake = pathname === "/documents" || pathname.startsWith("/documents/");
   const isReview = pathname.startsWith("/review");
@@ -169,103 +206,117 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${isCollapsed ? "collapsed" : ""}`} style={isCollapsed ? { width: "64px", minWidth: "64px", padding: "20px 8px" } : undefined}>
       <div className="brand-row">
-        <Link href="/dashboard" className="brand">
-          Kagaz.
+        <Link href="/dashboard" className="brand" title="Kagaz Enterprise">
+          {isCollapsed ? "K." : "Kagaz."}
         </Link>
         <span className="brand-dot" />
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
-          <NotificationCenter />
-          <button type="button" className="collapse" aria-label="Collapse">
+          {!isCollapsed && <NotificationCenter />}
+          <button
+            type="button"
+            className="collapse"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label="Toggle Sidebar"
+          >
             ◫
           </button>
         </div>
       </div>
 
-      <div className="org">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <b title={currentOrg} style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-            {currentOrg}
-          </b>
-          {memberships.length > 1 && (
-            <span
-              style={{
-                fontSize: "9px",
-                background: "var(--line2, #e0ddd5)",
-                padding: "1px 5px",
-                borderRadius: "3px",
-                color: "var(--ink)",
-              }}
-            >
-              {memberships.length} orgs
+      {!isCollapsed && (
+        <div className="org">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <b title={currentOrg} style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+              {currentOrg}
+            </b>
+            {memberships.length > 1 && (
+              <span
+                style={{
+                  fontSize: "9px",
+                  background: "var(--line2, #e0ddd5)",
+                  padding: "1px 5px",
+                  borderRadius: "3px",
+                  color: "var(--ink)",
+                }}
+              >
+                {memberships.length} orgs
+              </span>
+            )}
+          </div>
+
+          {memberships.length > 1 ? (
+            <div style={{ marginTop: "4px" }}>
+              <select
+                value={activeOrgId || user?.organization_id || ""}
+                onChange={handleOrgSwitch}
+                aria-label="Active Organization"
+                style={{
+                  width: "100%",
+                  padding: "3px 6px",
+                  fontSize: "10px",
+                  fontFamily: "inherit",
+                  background: "white",
+                  border: "1px solid var(--line2, #e0ddd5)",
+                  borderRadius: "4px",
+                  color: "var(--body)",
+                  cursor: "pointer",
+                }}
+              >
+                {memberships.map((m) => (
+                  <option key={m.organization_id} value={m.organization_id}>
+                    {m.organization_id} ({m.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <span>{isAuthenticated ? `Role: ${userRole}` : "Enterprise workspace"}</span>
+          )}
+
+          {orgSwitchError && (
+            <span style={{ color: "var(--red, #dc2626)", fontSize: "9px", marginTop: "2px" }}>
+              {orgSwitchError}
             </span>
           )}
         </div>
-
-        {memberships.length > 1 ? (
-          <div style={{ marginTop: "4px" }}>
-            <select
-              value={activeOrgId || user?.organization_id || ""}
-              onChange={handleOrgSwitch}
-              aria-label="Active Organization"
-              style={{
-                width: "100%",
-                padding: "3px 6px",
-                fontSize: "10px",
-                fontFamily: "inherit",
-                background: "white",
-                border: "1px solid var(--line2, #e0ddd5)",
-                borderRadius: "4px",
-                color: "var(--body)",
-                cursor: "pointer",
-              }}
-            >
-              {memberships.map((m) => (
-                <option key={m.organization_id} value={m.organization_id}>
-                  {m.organization_id} ({m.role})
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : (
-          <span>{isAuthenticated ? `Role: ${userRole}` : "Enterprise workspace"}</span>
-        )}
-
-        {orgSwitchError && (
-          <span style={{ color: "var(--red, #dc2626)", fontSize: "9px", marginTop: "2px" }}>
-            {orgSwitchError}
-          </span>
-        )}
-      </div>
+      )}
 
       <div className="divider" />
 
-      <span className="eyebrow side-label">WORKSPACE</span>
+      {!isCollapsed && <span className="eyebrow side-label">WORKSPACE</span>}
 
       <nav className="side-nav">
-        <Link href="/dashboard" className={isDashboard ? "active" : ""}>
+        <Link href="/dashboard" className={isDashboard ? "active" : ""} title="Overview">
           <Icon name="grid" />
-          Workspace Overview
+          {!isCollapsed && "Overview"}
         </Link>
 
-        <Link href="/documents" className={isIntake ? "active" : ""}>
-          <Icon name="inbox" />
-          Intake &amp; Library <em>{intakeCount}</em>
+        <Link href="/documents" className={isIntake ? "active" : ""} title="Files">
+          <Icon name="file" />
+          {!isCollapsed && (
+            <>
+              Files {intakeCount !== null && intakeCount > 0 && <em>{intakeCount}</em>}
+            </>
+          )}
         </Link>
 
         <Link
           href="/review"
           className={isReview ? "active" : ""}
           style={!canAccessReview && isAuthenticated ? { opacity: 0.6 } : undefined}
-          title={!canAccessReview && isAuthenticated ? "Requires Reviewer or Admin role" : undefined}
+          title={!canAccessReview && isAuthenticated ? "Requires Reviewer or Admin role" : "Verification Desk"}
         >
           <Icon name="stamp" />
-          Verification Desk{" "}
-          {canAccessReview || !isAuthenticated ? (
-            <em className="amber-count">{reviewCount}</em>
-          ) : (
-            <em style={{ fontSize: "9px", opacity: 0.8 }}>Restricted</em>
+          {!isCollapsed && (
+            <>
+              Verification Desk{" "}
+              {canAccessReview && reviewCount !== null && reviewCount > 0 ? (
+                <em className="amber-count">{reviewCount}</em>
+              ) : null}
+            </>
           )}
         </Link>
 
@@ -273,14 +324,16 @@ export function Sidebar() {
           href="/approvals"
           className={isApprovals ? "active" : ""}
           style={!canAccessApprovals && isAuthenticated ? { opacity: 0.6 } : undefined}
-          title={!canAccessApprovals && isAuthenticated ? "Requires Approver or Admin role" : undefined}
+          title={!canAccessApprovals && isAuthenticated ? "Requires Approver or Admin role" : "Approvals"}
         >
           <Icon name="check" />
-          Approval Ledger{" "}
-          {canAccessApprovals || !isAuthenticated ? (
-            <em>2</em>
-          ) : (
-            <em style={{ fontSize: "9px", opacity: 0.8 }}>Restricted</em>
+          {!isCollapsed && (
+            <>
+              Approvals{" "}
+              {canAccessApprovals && approvalCount !== null && approvalCount > 0 ? (
+                <em>{approvalCount}</em>
+              ) : null}
+            </>
           )}
         </Link>
 
@@ -288,65 +341,65 @@ export function Sidebar() {
           href="/policies"
           className={isPolicies ? "active" : ""}
           style={!canAccessAdmin && isAuthenticated ? { opacity: 0.6 } : undefined}
-          title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : undefined}
+          title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : "Policy Governance"}
         >
           <Icon name="shield" />
-          Policy Governance{" "}
-          {!canAccessAdmin && isAuthenticated && (
-            <em style={{ fontSize: "9px", opacity: 0.8 }}>Admin</em>
-          )}
+          {!isCollapsed && "Policy Governance"}
         </Link>
 
         <Link
           href="/admin/users"
           className={isAdmin ? "active" : ""}
           style={!canAccessAdmin && isAuthenticated ? { opacity: 0.6 } : undefined}
-          title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : undefined}
+          title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : "User Management"}
         >
           <Icon name="contact" />
-          User Management{" "}
-          {!canAccessAdmin && isAuthenticated && (
-            <em style={{ fontSize: "9px", opacity: 0.8 }}>Admin</em>
-          )}
+          {!isCollapsed && "User Management"}
         </Link>
 
-        <Link href="/login" className={isLogin ? "active" : ""}>
+        <Link href="/login" className={isLogin ? "active" : ""} title="Session & Switchboard">
           <Icon name="book" />
-          {isAuthenticated ? "Session & Switchboard" : "Access & Auth"}
+          {!isCollapsed && (isAuthenticated ? "Switchboard" : "Sign In")}
         </Link>
       </nav>
 
       <div className="side-bottom">
-        <div className="side-note">
-          <Icon name="shield" size={18} />
-          <p>
-            Every document. Every decision.
-            <br />A permanent, traceable record.
-          </p>
-        </div>
+        {!isCollapsed && (
+          <div className="side-note">
+            <p style={{ color: "var(--muted)", fontSize: "11px", margin: 0, lineHeight: 1.5 }}>
+              Every document.
+              <br />
+              Every decision. Accounted for.
+            </p>
+          </div>
+        )}
 
-        <div className="backend">
-          <span className="brand-dot" /> Backend Online
-        </div>
+        {!isCollapsed && (
+          <div className="backend" style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", color: "var(--brand)" }}>
+            <span className="brand-dot" /> Backend online
+          </div>
+        )}
 
         <div className="divider" />
 
         <div className="profile">
           <span>{userInitials}</span>
-          <div style={{ minWidth: 0 }}>
-            <b
-              style={{
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                display: "block",
-              }}
-              title={userName}
-            >
-              {userName}
-            </b>
-            <small>{isAuthenticated ? userRole : "Not Signed In"}</small>
-          </div>
+          {!isCollapsed && (
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <b
+                style={{
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  display: "block",
+                }}
+                title={userName}
+              >
+                {userName}
+              </b>
+              <small>{isAuthenticated ? userRole : "Not Signed In"}</small>
+            </div>
+          )}
 
           {isAuthenticated ? (
             <button
@@ -355,8 +408,8 @@ export function Sidebar() {
                 logout();
                 router.push("/login");
               }}
-              title="Sign Out of Session"
-              aria-label="Sign Out"
+              title="Log out"
+              aria-label="Log out"
               style={{
                 background: "transparent",
                 border: "none",
@@ -375,7 +428,7 @@ export function Sidebar() {
             <Link
               href="/login"
               style={{ color: "inherit", textDecoration: "none" }}
-              title="Session Sign In"
+              title="Sign In"
             >
               <Icon name="settings" size={14} />
             </Link>

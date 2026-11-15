@@ -31,9 +31,9 @@ function DynamicExcerpt({ item }: { item?: QueueItem }) {
   if (!item) return null;
 
   if (item.docType === "identity") {
-    const holder = item.fields.find((f) => f.field.toLowerCase().includes("holder") || f.field.toLowerCase().includes("name"))?.val || "Klaus Reinhardt";
-    const idNum = item.fields.find((f) => f.field.toLowerCase().includes("number") || f.field.toLowerCase().includes("id"))?.val || "T220001293";
-    const auth = item.fields.find((f) => f.field.toLowerCase().includes("authority") || f.field.toLowerCase().includes("issuer"))?.val || "Federal Republic of Germany";
+    const holder = item.fields.find((f) => f.field.toLowerCase().includes("holder") || f.field.toLowerCase().includes("name"))?.val || "—";
+    const idNum = item.fields.find((f) => f.field.toLowerCase().includes("number") || f.field.toLowerCase().includes("id"))?.val || item.id;
+    const auth = item.fields.find((f) => f.field.toLowerCase().includes("authority") || f.field.toLowerCase().includes("issuer"))?.val || "Official Identity Credential";
 
     return (
       <div className="receipt-paper" style={{ transform: "none", margin: "24px auto", background: "#fcfbf7" }}>
@@ -43,15 +43,11 @@ function DynamicExcerpt({ item }: { item?: QueueItem }) {
         <p>
           HOLDER <span>{holder.toUpperCase()}</span><br />
           DOC NO. <span>{idNum}</span><br />
-          ISSUED <span>BERLIN · DE</span>
+          ISSUED <span>ARCHIVAL ATTESTATION</span>
         </p>
         <hr />
-        <p>
-          NATIONALITY <span>DEUTSCH</span><br />
-          EXPIRY <span>2031-08-14</span>
-        </p>
         <strong>
-          AUTHENTICATED EXCERPT <span>VERIFIED</span>
+          AUTHENTICATED EXCERPT <span>{item.state.toUpperCase()}</span>
         </strong>
         <small>OCR SCAN ACCREDITATION LEVEL 2</small>
         <i className="uncertain" style={{ top: "105px", right: "16px", width: "110px", height: "18px" }} />
@@ -60,9 +56,9 @@ function DynamicExcerpt({ item }: { item?: QueueItem }) {
   }
 
   if (item.docType === "invoice") {
-    const vendor = item.fields.find((f) => f.field.toLowerCase().includes("vendor") || f.field.toLowerCase().includes("supplier"))?.val || "Alpine Hardware GmbH";
-    const total = item.fields.find((f) => f.field.toLowerCase().includes("total") || f.field.toLowerCase().includes("amount"))?.val || "$14,950.00";
-    const ref = item.fields.find((f) => f.field.toLowerCase().includes("reference") || f.field.toLowerCase().includes("number"))?.val || "INV-88-2024";
+    const vendor = item.fields.find((f) => f.field.toLowerCase().includes("vendor") || f.field.toLowerCase().includes("supplier"))?.val || item.name;
+    const total = item.fields.find((f) => f.field.toLowerCase().includes("total") || f.field.toLowerCase().includes("amount"))?.val || "—";
+    const ref = item.fields.find((f) => f.field.toLowerCase().includes("reference") || f.field.toLowerCase().includes("number"))?.val || item.id;
 
     return (
       <div className="receipt-paper" style={{ transform: "none", margin: "24px auto" }}>
@@ -71,8 +67,8 @@ function DynamicExcerpt({ item }: { item?: QueueItem }) {
         <hr />
         <p>
           INVOICE NO <span>{ref}</span><br />
-          CLIENT <span>KAGAZ TECH</span><br />
-          TERMS <span>NET 15</span>
+          CLIENT <span>ENTERPRISE LEDGER</span><br />
+          TERMS <span>RECORDED</span>
         </p>
         <hr />
         <strong>
@@ -84,22 +80,22 @@ function DynamicExcerpt({ item }: { item?: QueueItem }) {
   }
 
   if (item.docType === "contract") {
-    const parties = item.fields.find((f) => f.field.toLowerCase().includes("part"))?.val || "Kagaz Systems & Enterprise Partner";
-    const term = item.fields.find((f) => f.field.toLowerCase().includes("term") || f.field.toLowerCase().includes("duration"))?.val || "36 Months";
+    const parties = item.fields.find((f) => f.field.toLowerCase().includes("part"))?.val || item.name;
+    const term = item.fields.find((f) => f.field.toLowerCase().includes("term") || f.field.toLowerCase().includes("duration"))?.val || "—";
 
     return (
       <div className="receipt-paper" style={{ transform: "none", margin: "24px auto" }}>
-        <b>MUTUAL NON-DISCLOSURE</b>
-        <small>LEGAL COVENANT EXCERPT</small>
+        <b>LEGAL COVENANT EXCERPT</b>
+        <small>CONFIDENTIAL RECORD</small>
         <hr />
         <p>
           PARTIES <span>{parties}</span><br />
-          COVENANT <span>CONFIDENTIALITY</span><br />
+          COVENANT <span>GOVERNANCE PROTOCOL</span><br />
           DURATION <span>{term}</span>
         </p>
         <hr />
         <strong>
-          LEGAL GOVERNANCE <span>CLEARANCE PASSED</span>
+          LEGAL GOVERNANCE <span>{item.state.toUpperCase()}</span>
         </strong>
         <small>PERMANENT ARCHIVAL SEAL AFFIXED</small>
       </div>
@@ -107,15 +103,15 @@ function DynamicExcerpt({ item }: { item?: QueueItem }) {
   }
 
   // Default General / Receipt Excerpt
-  const supplier = item.fields.find((f) => f.field.toLowerCase().includes("supplier") || f.field.toLowerCase().includes("merchant"))?.val || "Skyline Business Hotel";
-  const date = item.fields.find((f) => f.field.toLowerCase().includes("date"))?.val || "2024-08-28";
-  const total = item.fields.find((f) => f.field.toLowerCase().includes("total"))?.val || "$286.50";
+  const supplier = item.fields.find((f) => f.field.toLowerCase().includes("supplier") || f.field.toLowerCase().includes("merchant"))?.val || item.name;
+  const date = item.fields.find((f) => f.field.toLowerCase().includes("date"))?.val || item.time;
+  const total = item.fields.find((f) => f.field.toLowerCase().includes("total"))?.val || "—";
 
   return (
     <div className="receipt-paper">
       <b>{supplier.toUpperCase()}</b>
       <small>
-        ENTERPRISE EXPENSE RECEIPT<br />
+        ENTERPRISE DOCUMENT EXCERPT<br />
         Document ID: {item.id}
       </small>
       <hr />
@@ -229,7 +225,7 @@ function ReviewContent() {
         confidence?: number;
         uploaded_by?: string;
       }) => {
-        const confNum = item.confidence ? Math.round(item.confidence * 100) : 72;
+        const confNum = item.confidence ? Math.round(item.confidence * 100) : null;
         const isVerified = item.status === "REVIEWER_VERIFIED";
         const classification = (item.classification || "").toLowerCase();
 
@@ -253,7 +249,7 @@ function ReviewContent() {
           id: item.id,
           name: item.filename,
           time: new Date(item.uploaded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          score: isVerified ? "✓ 100%" : `${confNum}%`,
+          score: isVerified ? "✓ 100%" : confNum !== null ? `${confNum}%` : "Pending",
           state: isVerified ? "Certified" : item.status === "NEEDS_REVIEW" ? "Needs Human Review" : item.status,
           icon,
           docType,
@@ -262,7 +258,7 @@ function ReviewContent() {
           fields: [
             { field: "Document ID", val: item.id, conf: "100%" },
             { field: "File name", val: item.filename, conf: "100%" },
-            { field: "Classification", val: item.classification || "General Document", conf: `${confNum}%` },
+            { field: "Classification", val: item.classification || "General Document", conf: confNum !== null ? `${confNum}%` : "—" },
             { field: "Workflow state", val: item.status, conf: "100%" },
           ],
         };
