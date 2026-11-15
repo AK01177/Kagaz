@@ -4,7 +4,7 @@ This document records the backend authorization architecture and per-endpoint se
 
 Frontend navigation hiding is treated strictly as a UX convenience and **never** as an access control boundary. Every protected FastAPI endpoint enforces:
 
-1. **Trusted Identity (`401 Unauthorized`)**: Valid server-verified credentials resolved from the database / signed JWT (`get_current_user` in `backend/api/auth.py`). Caller-supplied `role`, `permissions`, or unauthorized `organization_id` headers are never trusted as authority.
+1. **Trusted Identity (`401 Unauthorized`)**: Valid Supabase Auth access token verified by `get_current_user` in `backend/api/auth.py`, then resolved to a Kagaz profile. Caller-supplied `role`, `permissions`, or unauthorized `organization_id` headers are never trusted as authority.
 2. **Role-Permission Matrix (`403 Forbidden`)**: Reusable `require_permission(Permission.<CAP>)` and named dependencies in `backend/api/auth.py` backed by `ROLE_PERMISSIONS` in `backend/app/core/permissions.py`.
 3. **Tenant Isolation (`403 Forbidden`)**: Active organization membership resolution and fail-closed `require_organization_membership(...)` / service-level tenant checks.
 4. **Object & Workflow State Guards (`403 Forbidden` / `409 Conflict`)**:
@@ -91,9 +91,9 @@ Roles defined in `MembershipRole`: `SUBMITTER`, `REVIEWER`, `APPROVER`, `COMPLIA
 | Method & Path | Dependency | Permitted Roles | Tenant / Object / State Checks |
 |---|---|---|---|
 | `GET /api/health` | Public | Public | Non-sensitive health check only |
-| `POST /api/auth/login` | Public | Registered active users | Verifies password hash; resolves active membership server-side |
-| `GET /api/auth/me` | `get_current_user` | Any authenticated active member | Resolves user, active org, role, permissions from DB/token |
-| `GET /api/auth/memberships` | `get_current_user` | Any authenticated active member | Lists caller's verified active memberships only |
+| Supabase Auth signup/sign-in | Public, handled by Supabase | Supabase Auth users | Supabase verifies credentials and issues access tokens |
+| `GET /api/auth/me` | `get_current_user` | Any authenticated active Kagaz member | Validates Supabase token, resolves Kagaz profile, active org, role, and permissions from DB |
+| `GET /api/auth/memberships` | `get_current_user` | Any authenticated active Kagaz member | Lists caller's verified active memberships only |
 
 ### Document Ingestion, Metadata, Classification, Extraction & Validation (`backend/api/documents.py`, `backend/app/api/routes/policy_validation.py`)
 
