@@ -23,6 +23,7 @@ try:
     from app.models.membership import Membership, MembershipRole
     from app.models.organization import Organization
     from app.models.user import User, UserProviderMapping
+    from app.models.validation import ValidationResult
 except ImportError:
     from backend.app.db.base import Base
     from backend.app.models.document import Document
@@ -31,6 +32,7 @@ except ImportError:
     from backend.app.models.membership import Membership, MembershipRole
     from backend.app.models.organization import Organization
     from backend.app.models.user import User, UserProviderMapping
+    from backend.app.models.validation import ValidationResult
 
 config = context.config
 

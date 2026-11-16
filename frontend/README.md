@@ -26,6 +26,8 @@ cp .env.example .env.local
 
 Add the required environment variables to `.env.local` when they are defined for the project.
 
+The example file contains the required Supabase URL and public key, plus the backend URL. Use a Supabase publishable/anon key here; never put a Supabase secret/service-role key in a `NEXT_PUBLIC_` variable.
+
 Do not commit `.env.local` or any file containing secrets.
 
 ## Development

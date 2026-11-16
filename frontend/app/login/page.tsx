@@ -16,6 +16,7 @@ function LoginForm() {
     isAuthenticated,
     sessionExpired,
     login,
+    register,
     logout,
     switchOrganization,
     clearSessionExpiredNotice,
@@ -24,6 +25,8 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [orgInput, setOrgInput] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
   const [loading, setLoading] = useState(false);
   const redirectPath = searchParams.get("redirect") || "/documents";
   const wasExpired = searchParams.get("session_expired") === "true" || sessionExpired;
@@ -66,7 +69,9 @@ function LoginForm() {
       return;
     }
 
-    const result = await login(loginEmail, password, orgInput || undefined);
+    const result = isRegistering
+      ? await register(fullName, loginEmail, password)
+      : await login(loginEmail, password, orgInput || undefined);
     setLoading(false);
 
     if (!result.success) {
@@ -77,6 +82,11 @@ function LoginForm() {
       return;
     }
 
+    if (isRegistering && "confirmationRequired" in result && result.confirmationRequired) {
+      setPassword("");
+      setNotice({ type: "success", message: "Account created. Check your email if confirmation is enabled, then ask an administrator to provision your Kagaz profile and workspace membership." });
+      return;
+    }
     clearSessionExpiredNotice();
     setPassword("");
     setNotice({
@@ -216,7 +226,7 @@ function LoginForm() {
             </div>
             <div>
               <span style={{ color: "var(--muted)", display: "block" }}>Auth Mechanism</span>
-              <b>Signed JWT Bearer Token</b>
+              <b>Supabase Auth session</b>
             </div>
           </div>
 
@@ -298,12 +308,16 @@ function LoginForm() {
       ) : null}
 
       <div className="library-card" style={{ marginTop: 0, padding: "24px" }}>
-        <span className="eyebrow">ENTERPRISE AUTHENTICATION</span>
+        <span className="eyebrow">SUPABASE AUTHENTICATION</span>
         <h2 style={{ margin: "6px 0 16px", font: "20px 'Newsreader', serif" }}>
-          {isAuthenticated ? "Sign in with a different account" : "Sign In to Kagaz"}
+          {isRegistering ? "Create your Kagaz account" : isAuthenticated ? "Sign in with a different account" : "Sign In to Kagaz"}
         </h2>
 
         <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {isRegistering && <div>
+            <label htmlFor="name-input" style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}>Full Name</label>
+            <input id="name-input" type="text" required value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="name" style={{ width: "100%", height: "36px", border: "1px solid var(--line2, #e0ddd5)", borderRadius: "5px", padding: "0 12px", background: "white", fontSize: "12px" }} />
+          </div>}
           <div>
             <label
               htmlFor="email-input"
@@ -315,6 +329,7 @@ function LoginForm() {
               id="email-input"
               type="email"
               required
+              autoComplete="email"
               placeholder="user@organization.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -341,6 +356,8 @@ function LoginForm() {
               id="password-input"
               type="password"
               required
+              minLength={8}
+              autoComplete={isRegistering ? "new-password" : "current-password"}
               placeholder="••••••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -356,7 +373,7 @@ function LoginForm() {
             />
           </div>
 
-          <div>
+          {!isRegistering && <div>
             <label
               htmlFor="org-input"
               style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}
@@ -379,7 +396,7 @@ function LoginForm() {
                 fontSize: "12px",
               }}
             />
-          </div>
+          </div>}
 
           <div
             style={{
@@ -392,13 +409,16 @@ function LoginForm() {
             }}
           >
             <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-              Backend strictly validates organization tenant isolation.
+              {isRegistering ? "Kagaz workspace access is granted through an administrator-managed membership." : "Kagaz validates your organization membership."}
             </span>
             <Button type="submit" variant="primary" icon="check" disabled={loading}>
-              {loading ? "Authenticating..." : "Authenticate Session →"}
+              {loading ? (isRegistering ? "Creating account..." : "Signing in...") : (isRegistering ? "Create Account →" : "Sign In →")}
             </Button>
           </div>
         </form>
+        <button type="button" className="btn secondary" style={{ marginTop: "14px" }} onClick={() => { setIsRegistering((value) => !value); setNotice(null); }}>
+          {isRegistering ? "Already registered? Sign in" : "New to Kagaz? Create an account"}
+        </button>
       </div>
     </div>
   );
@@ -417,7 +437,7 @@ export default function LoginPage() {
         <div className="head-main">
           <div>
             <h1>Session &amp; Credentials</h1>
-            <p className="subline">ROLE-BASED GOVERNANCE · SIGNED JWT AUTHORIZATION</p>
+            <p className="subline">SUPABASE IDENTITY · ORGANIZATION ROLE AUTHORIZATION</p>
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
             <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>

@@ -97,11 +97,6 @@ def upgrade() -> None:
             unique=True,
             postgresql_where=sa.text("status = 'ACTIVE'"),
         )
-        op.execute(
-            "CREATE INDEX ix_policy_chunks_embedding "
-            "ON policy_chunks USING hnsw (embedding vector_cosine_ops)"
-        )
-
     op.create_table(
         "policy_chunks",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -127,6 +122,11 @@ def upgrade() -> None:
             name="ck_policy_chunks_page_number_positive",
         ),
     )
+    if bind.dialect.name == "postgresql":
+        op.execute(
+            "CREATE INDEX ix_policy_chunks_embedding "
+            "ON policy_chunks USING hnsw (embedding vector_cosine_ops)"
+        )
     op.create_index("ix_policy_chunks_policy_version_id", "policy_chunks", ["policy_version_id"])
     op.create_index(
         "ix_policy_chunks_policy_version_chunk",

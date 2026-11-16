@@ -62,7 +62,7 @@ POST /api/documents
 
 ### Authentication
 
-Kagaz uses **JWT + RBAC**.
+Kagaz uses **Supabase Auth access tokens + Kagaz RBAC**.
 
 Protected requests use:
 
@@ -73,7 +73,7 @@ Authorization: Bearer <access_token>
 The backend checks:
 
 ```text
-JWT valid?
+Supabase access token valid?
    ↓
 User active?
    ↓
@@ -112,7 +112,8 @@ Not every role needs a separate UI in the first release.
 | Method | Endpoint | Purpose | Status |
 |---|---|---|---|
 | GET | `/api/health` | Check backend | Current |
-| POST | `/api/auth/login` | Login | Current/foundation |
+| GET | `/api/auth/me` | Resolve Supabase session to Kagaz identity and active membership | Current |
+| GET | `/api/auth/memberships` | List current user's active Kagaz memberships | Current |
 | POST | `/api/documents` | Upload document | Sprint 1 |
 | GET | `/api/documents/{document_id}` | Get document | Sprint 1 |
 | POST | `/api/documents/{document_id}/classify` | Classify document | Sprint 1 |
@@ -178,44 +179,13 @@ Response:
 
 ---
 
-## 5.2 Login
+## 5.2 Authentication
 
-### `POST /api/auth/login`
+Registration, login, logout, password management, and access-token issuance are handled by Supabase Auth in the frontend. The frontend sends the Supabase access token as a bearer token to Kagaz APIs. Kagaz validates the token with the configured Supabase project, then resolves the Supabase email to a Kagaz profile and applies the user's active organization membership and role. The API does not accept a client-supplied role or organization as proof of authorization.
 
-No authentication.
+### `GET /api/auth/me` and `GET /api/auth/memberships`
 
-Request:
-
-```json
-{
-  "email": "user@example.com",
-  "password": "password"
-}
-```
-
-Response:
-
-```json
-{
-  "access_token": "<jwt>",
-  "token_type": "bearer",
-  "user": {
-    "user_id": "usr_001",
-    "name": "Example User",
-    "email": "user@example.com",
-    "role": "SUBMITTER",
-    "organization_id": "org_001"
-  }
-}
-```
-
-Errors:
-
-```text
-400 malformed request
-401 invalid credentials
-403 account disabled / not allowed
-```
+Both endpoints require `Authorization: Bearer <supabase_access_token>`. `/me` returns the server-resolved Kagaz profile and current membership. `/memberships` returns the caller's active memberships, which the frontend uses for organization switching. Invalid tokens return 401; inactive accounts or users without active Kagaz membership return 403.
 
 ---
 
@@ -223,9 +193,8 @@ Errors:
 
 Implementation note (BE-02): the current endpoint accepts unencrypted PDF files
 up to 10 MiB and persists files plus JSON metadata locally. DOCX/image support and
-database integration remain pending. JWT validation is implemented for active
-`SUBMITTER` tokens; login/token issuance and live user-status lookup remain pending.
-See `backend/README.md` for required claims and local testing instructions.
+database integration remain pending. Supabase validates the caller's identity;
+Kagaz membership records determine whether the user may upload. See `backend/README.md` for setup.
 
 The multipart request body is capped during receipt at 10 MiB plus 64 KiB of
 multipart overhead, with HTTP 413 for oversized requests. The file itself is
@@ -630,11 +599,11 @@ The frontend must **not** implement business rules that belong to the backend.
 ## 11. Sprint 1 Reference Flow
 
 ```text
-User logs in
+User signs in with Supabase Auth
    ↓
-POST /api/auth/login
+GET /api/auth/me with Supabase access token
    ↓
-Receive JWT
+Resolve Kagaz profile and active membership
    ↓
 POST /api/documents
    ↓

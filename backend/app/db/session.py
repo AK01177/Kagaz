@@ -1,7 +1,13 @@
 import os
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+
+# Load backend/.env before reading DATABASE_URL. This module can be imported by
+# the API, migration helpers, or the seed command, so don't rely on main.py
+# having initialized the environment first.
+load_dotenv()
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
