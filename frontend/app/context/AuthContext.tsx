@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 
@@ -37,6 +37,13 @@ export function clearStoredSession() {
   for (const key of ["kagaz_token", "kagaz_active_org", "kagaz_user_email", "kagaz_user_role", "kagaz_user_name"]) {
     try { localStorage.removeItem(key); sessionStorage.removeItem(key); } catch { /* restricted storage */ }
   }
+  try {
+    for (const storage of [localStorage, sessionStorage]) {
+      for (const key of Object.keys(storage)) {
+        if (key.startsWith("kagaz_doc_")) storage.removeItem(key);
+      }
+    }
+  } catch { /* storage may be unavailable */ }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -46,16 +53,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [memberships, setMemberships] = useState<OrganizationMembership[]>([]);
   const [isLoading, setIsLoading] = useState(() => Boolean(supabase));
   const [sessionExpired, setSessionExpired] = useState(false);
+  const identityRequestId = useRef(0);
 
   const loadIdentity = useCallback(async (
     session: Session | null,
     targetOrg?: string | null,
   ): Promise<{ success: boolean; error?: string }> => {
+    const requestId = ++identityRequestId.current;
     if (!session || !supabase) {
       setToken(null); setUser(null); setActiveOrgId(null); setMemberships([]);
       return { success: false, error: "No active Supabase session was returned." };
     }
-    setToken(session.access_token); setUser(null); setActiveOrgId(null); setMemberships([]);
+    // Keep the current identity visible while Supabase rotates its access token.
+    // Clearing user here briefly made ProtectedRoute redirect during refresh.
+    setToken(session.access_token);
     const headers: Record<string, string> = { Authorization: `Bearer ${session.access_token}` };
     if (targetOrg) headers["X-Organization-Id"] = targetOrg;
     try {
@@ -64,7 +75,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         fetch(`${API_URL}/api/auth/memberships`, { headers }),
       ]);
       if (profileRes.status === 401) {
-        setSessionExpired(true); setUser(null); setToken(null);
+        if (requestId === identityRequestId.current) {
+          setSessionExpired(true); setUser(null); setToken(null);
+        }
         return { success: false, error: "Kagaz rejected the Supabase access token. Check the backend Supabase URL and key, then restart the backend." };
       }
       if (!profileRes.ok) {
@@ -81,12 +94,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         organization_id: profile.organization_id, active: profile.active ?? true,
       };
       const membershipData = membershipsRes.ok ? await membershipsRes.json() : null;
+      if (requestId !== identityRequestId.current) return { success: false, error: "A newer authentication session replaced this request." };
       setToken(session.access_token); setUser(nextUser); setActiveOrgId(nextUser.organization_id);
       setMemberships(membershipData?.memberships?.length ? membershipData.memberships : [{ organization_id: nextUser.organization_id, role: nextUser.role }]);
       setSessionExpired(false);
       return { success: true };
     } catch (error) {
-      setToken(session.access_token);
+      if (requestId === identityRequestId.current) setToken(session.access_token);
       return { success: false, error: error instanceof Error ? error.message : "Could not connect to the Kagaz backend." };
     }
   }, []);
@@ -141,10 +155,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [token, memberships]);
 
   const fetchWithAuth = useCallback(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const headers = new Headers(init?.headers || {});
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-    if (activeOrgId) headers.set("X-Organization-Id", activeOrgId);
-    const response = await fetch(input, { ...init, headers });
+    const request = (accessToken: string | null) => {
+      const headers = new Headers(init?.headers || {});
+      if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+      if (activeOrgId) headers.set("X-Organization-Id", activeOrgId);
+      return fetch(input, { ...init, headers });
+    };
+
+    // Ask Supabase for the current session first; getSession refreshes an
+    // expired access token when a valid refresh token is still available.
+    const { data } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
+    let response = await request(data.session?.access_token || token);
+    if (response.status !== 401 || !supabase) return response;
+
+    // A request can race token refresh or use an access token that expired
+    // between getSession() and the API call. Refresh once and retry before
+    // declaring the user's session expired.
+    const refreshed = await supabase.auth.refreshSession();
+    if (refreshed.error || !refreshed.data.session) {
+      logout({ reason: "expired" });
+      return response;
+    }
+
+    response = await request(refreshed.data.session.access_token);
     if (response.status === 401) logout({ reason: "expired" });
     return response;
   }, [token, activeOrgId, logout]);

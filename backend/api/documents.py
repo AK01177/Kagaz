@@ -165,7 +165,8 @@ def _assert_submitter_document_owner(
     if str(user.get("role") or "").strip().upper() != "SUBMITTER":
         return
     actor_id = str(user.get("sub") or "").strip()
-    if isinstance(owner_id, str) and owner_id.strip() and owner_id.strip() != actor_id:
+    resolved_owner = owner_id.strip() if isinstance(owner_id, str) else ""
+    if not actor_id or not resolved_owner or resolved_owner != actor_id:
         raise HTTPException(
             status_code=403,
             detail={

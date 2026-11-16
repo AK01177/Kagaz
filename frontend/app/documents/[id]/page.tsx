@@ -387,7 +387,8 @@ function DocumentDetailsContent(props: {
   const routeParams = useParams();
   const documentId = unwrapped?.id || (routeParams?.id as string) || "";
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
-  const { fetchWithAuth, token } = useAuth();
+  const { fetchWithAuth, token, user, activeOrgId } = useAuth();
+  const documentCacheKey = `kagaz_doc_${user?.user_id || "unknown"}_${activeOrgId || user?.organization_id || "unknown"}_${documentId}`;
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [document, setDocument] = useState<DocumentRecord | null>(null);
@@ -475,7 +476,7 @@ function DocumentDetailsContent(props: {
     async function loadData() {
       // 1. Session storage cache check
       try {
-        const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
+        const cached = sessionStorage.getItem(documentCacheKey);
         if (cached && !ignore) {
           const parsed = JSON.parse(cached);
           setDocument(parsed);
@@ -584,7 +585,7 @@ function DocumentDetailsContent(props: {
       ignore = true;
       clearTimeout(timer);
     };
-  }, [documentId, fetchWithAuth]);
+  }, [documentId, documentCacheKey, fetchWithAuth]);
 
   // FE09: Trigger policy validation on demand
   async function runValidation() {
@@ -844,11 +845,11 @@ function DocumentDetailsContent(props: {
               onClick={() => {
                 setCertified(true);
                 try {
-                  const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
+                  const cached = sessionStorage.getItem(documentCacheKey);
                   if (cached) {
                     const parsed = JSON.parse(cached);
                     sessionStorage.setItem(
-                      `kagaz_doc_${documentId}`,
+                      documentCacheKey,
                       JSON.stringify({ ...parsed, status: "REVIEWER_VERIFIED", confidence: 1.0 })
                     );
                   }
@@ -1720,11 +1721,11 @@ function DocumentDetailsContent(props: {
             setDocument((prev) => (prev ? { ...prev, category: newCategory, confidence: 1.0 } : null));
             setCertified(true);
             try {
-              const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
+              const cached = sessionStorage.getItem(documentCacheKey);
               if (cached) {
                 const parsed = JSON.parse(cached);
                 sessionStorage.setItem(
-                  `kagaz_doc_${documentId}`,
+                  documentCacheKey,
                   JSON.stringify({ ...parsed, category: newCategory, confidence: 1.0, status: "REVIEWER_VERIFIED" })
                 );
               }

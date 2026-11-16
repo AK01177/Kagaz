@@ -77,6 +77,7 @@ function DocumentsContent() {
   const [loading, setLoading] = useState(false);
 
   const currentOrg = activeOrgId || user?.organization_id || "ACME GLOBAL ENTERPRISE";
+  const documentCachePrefix = `kagaz_doc_${user?.user_id || "unknown"}_${currentOrg}_`;
 
   const loadDocuments = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -120,7 +121,7 @@ function DocumentsContent() {
     }
 
     try {
-      const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
+      const keys = Object.keys(sessionStorage).filter((k) => k.startsWith(documentCachePrefix));
       if (keys.length > 0) {
         const loaded: FileItem[] = [];
         for (const k of keys) {
@@ -143,7 +144,7 @@ function DocumentsContent() {
       }
     } catch {}
     setFiles([]);
-  }, [fetchWithAuth, isAuthenticated]);
+  }, [fetchWithAuth, isAuthenticated, documentCachePrefix]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -224,7 +225,7 @@ function DocumentsContent() {
       };
 
       try {
-        sessionStorage.setItem(`kagaz_doc_${docId}`, JSON.stringify(record));
+        sessionStorage.setItem(`${documentCachePrefix}${docId}`, JSON.stringify(record));
       } catch {}
 
       setState("success");
