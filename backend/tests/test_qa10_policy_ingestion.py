@@ -77,7 +77,7 @@ def test_pdf_is_extracted_and_each_chunk_keeps_its_vector_and_source(policy_clie
             "policy_version_id": result["policy_version_id"],
             "version": "v1",
             "domain": "finance",
-            "document_type": "invoice",
+            "document_type": "financial",  # "invoice" is stored as the classifier's category
             "source_document_id": result["source_document_id"],
             "source_filename": "travel-policy.pdf",
             "chunk_index": index,

@@ -24,13 +24,20 @@ from app.schemas.policy import (
     PolicyRetrievalResponse,
     PolicyVersionSummary,
 )
-from services.policy_ingestion import ingest_policy_version
+from services.document_types import require_document_type
+from services.policy_ingestion import index_text_policy_version, ingest_policy_version
 from services.policy_retrieval import (
     EmbeddingServiceError,
     create_query_embedding,
     retrieve_policy_evidence,
 )
-from services.upload import CHUNK_BYTES, MAX_UPLOAD_BYTES, UploadError, _validate_pdf
+from services.policy_text import (
+    SUPPORTED_POLICY_EXTENSIONS,
+    SUPPORTED_POLICY_FORMATS,
+    PolicyFileError,
+    validate_policy_file,
+)
+from services.upload import CHUNK_BYTES, MAX_UPLOAD_BYTES
 from storage.document_storage import DocumentStorage
 
 
@@ -45,14 +52,14 @@ router = APIRouter(
 def _ingestion_response(
     policy: Policy,
     version: PolicyVersion,
-    source: Document,
+    source: Document | None,
     chunk_count: int,
 ) -> PolicyIngestionResponse:
     return PolicyIngestionResponse(
         policy_id=policy.id,
         policy_version_id=version.id,
-        source_document_id=source.id,
-        source_filename=source.filename,
+        source_document_id=source.id if source else None,
+        source_filename=source.filename if source else None,
         version=version.version,
         status=version.status.value,
         chunk_count=chunk_count,
@@ -78,8 +85,11 @@ def _ingest_uploaded_policy(
 
     policy_name = policy_name.strip()
     version_name = version_name.strip()
-    domain = domain.strip() if domain and domain.strip() else None
-    document_type = document_type.strip() if document_type and document_type.strip() else None
+    domain = domain.strip().lower() if domain and domain.strip() else None
+    try:
+        document_type = require_document_type(document_type)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "UNKNOWN_DOCUMENT_TYPE", "message": str(exc)}) from exc
     if not policy_name or not version_name:
         raise HTTPException(422, detail={
             "code": "INVALID_POLICY_METADATA",
@@ -87,10 +97,11 @@ def _ingest_uploaded_policy(
         })
 
     filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
-    if not filename or "\x00" in filename or Path(filename).suffix.lower() != ".pdf":
+    extension = Path(filename).suffix.lower()
+    if not filename or "\x00" in filename or extension not in SUPPORTED_POLICY_FORMATS:
         raise HTTPException(415, detail={
             "code": "UNSUPPORTED_POLICY_FORMAT",
-            "message": "Policy files must be PDFs.",
+            "message": f"Policy files must be one of: {SUPPORTED_POLICY_EXTENSIONS}.",
         })
 
     # Resolve policies only inside the authenticated organization and selected metadata identity.
@@ -116,12 +127,12 @@ def _ingest_uploaded_policy(
     storage = DocumentStorage(str(storage_root.base_dir / "policy_sources"))
     storage.base_dir.mkdir(parents=True, exist_ok=True)
     document_id = f"doc_{uuid4().hex}"
-    document_path = storage.base_dir / f"{document_id}.pdf"
+    document_path = storage.base_dir / f"{document_id}{extension}"
     size = 0
     try:
         # Validate in a staging directory so rejected uploads never leave a partial source file.
         with TemporaryDirectory(prefix="policy_upload_", dir=storage.base_dir) as staging:
-            staged_path = Path(staging) / "policy.pdf"
+            staged_path = Path(staging) / f"policy{extension}"
             with staged_path.open("wb") as destination:
                 while chunk := file.file.read(CHUNK_BYTES):
                     size += len(chunk)
@@ -134,13 +145,13 @@ def _ingest_uploaded_policy(
             if size == 0:
                 raise HTTPException(400, detail={
                     "code": "INVALID_FILE",
-                    "message": "The uploaded PDF is empty.",
+                    "message": "The uploaded file is empty.",
                 })
             try:
-                _validate_pdf(staged_path)
-            except UploadError as exc:
-                raise HTTPException(exc.status_code, detail={
-                    "code": exc.code,
+                validate_policy_file(staged_path, extension)
+            except PolicyFileError as exc:
+                raise HTTPException(400, detail={
+                    "code": "INVALID_FILE",
                     "message": str(exc),
                 }) from exc
             staged_path.replace(document_path)
@@ -164,7 +175,7 @@ def _ingest_uploaded_policy(
             organization_id=identity["organization_id"],
             uploaded_by=identity["sub"],
             filename=filename,
-            file_type="application/pdf",
+            file_type=SUPPORTED_POLICY_FORMATS[extension],
             file_size=size,
             storage_path=str(document_path.resolve()),
             status=DocumentStatus.UPLOADED,
@@ -216,7 +227,7 @@ async def ingest(
     identity: dict = Depends(require_policy_admin),
     db: Session | None = Depends(get_db),
 ):
-    """Submit a PDF policy for extraction, chunking and vector indexing."""
+    """Submit a policy file (PDF, DOCX or TXT) for extraction, chunking and vector indexing."""
     try:
         return await run_in_threadpool(
             _ingest_uploaded_policy,
@@ -256,16 +267,17 @@ def list_policy_versions(
         })
     versions = (
         db.query(PolicyVersion, Document)
-        .join(Document, Document.id == PolicyVersion.source_document_id)
+        .outerjoin(Document, Document.id == PolicyVersion.source_document_id)
         .filter(PolicyVersion.policy_id == policy.id)
         .order_by(PolicyVersion.created_at.desc())
         .all()
     )
     return [
         PolicyVersionSummary(
+            created_at=version.created_at,
             policy_version_id=version.id,
-            source_document_id=source.id,
-            source_filename=source.filename,
+            source_document_id=source.id if source else None,
+            source_filename=source.filename if source else None,
             version=version.version,
             status=version.status.value,
             chunk_count=len(version.chunks),
@@ -309,21 +321,28 @@ async def retry_policy_version(
             "code": "POLICY_VERSION_NOT_RETRYABLE",
             "message": "Only failed policy versions can be retried.",
         })
-    source = db.query(Document).filter(
-        Document.id == version.source_document_id,
-        Document.organization_id == identity["organization_id"],
-    ).first()
-    if source is None:
-        raise HTTPException(404, detail={
-            "code": "POLICY_SOURCE_NOT_FOUND",
-            "message": "The source document for this policy version was not found.",
-        })
+    is_text_version = version.source_document_id is None
+    source = None
+    if not is_text_version:
+        source = db.query(Document).filter(
+            Document.id == version.source_document_id,
+            Document.organization_id == identity["organization_id"],
+        ).first()
+        if source is None:
+            raise HTTPException(404, detail={
+                "code": "POLICY_SOURCE_NOT_FOUND",
+                "message": "The source document for this policy version was not found.",
+            })
 
     # Reuse the version record so retries cannot create additional active versions.
     version.status = PolicyVersionStatus.PROCESSING
     version.ingestion_error = None
     version.finished_at = None
     db.commit()
+    if is_text_version:
+        chunk_count = await run_in_threadpool(index_text_policy_version, db, policy, version)
+        db.refresh(version)
+        return _ingestion_response(policy, version, None, chunk_count)
     storage_root = DocumentStorage()
     storage = DocumentStorage(str(storage_root.base_dir / "policy_sources"))
     chunk_count = await run_in_threadpool(
@@ -363,6 +382,7 @@ def retrieve(
         request.document_type,
         request.policy_version,
         request.limit,
+        query_text=request.query,
     )
     logger.info(
         "policy_retrieval organization_id=%s user_id=%s outcome=%s",
@@ -389,7 +409,7 @@ def retrieve(
                 chunk_index=chunk.chunk_index,
                 metadata=chunk.chunk_metadata,
                 source_document_id=version.source_document_id,
-                source_filename=document.filename,
+                source_filename=document.filename if document else None,
             )
             for policy, version, chunk, score, document in result.rows
         ],

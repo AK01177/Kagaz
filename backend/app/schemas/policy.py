@@ -1,7 +1,10 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, validator
+
+from app.models.policy import PolicyClassification, PolicyVersionStatus
+from services.document_types import require_document_type
 
 
 class PolicyBase(BaseModel):
@@ -9,10 +12,19 @@ class PolicyBase(BaseModel):
     domain: str = Field(..., min_length=1, max_length=50, description="Domain (financial, hr, academic, compliance)")
     content: str = Field(..., min_length=1, description="Policy text or rule definitions")
     description: Optional[str] = Field(None, max_length=500, description="Brief policy description")
+    document_type: Optional[str] = Field(
+        None, max_length=100, description="Document type this policy applies to; empty means every type"
+    )
+    classification: PolicyClassification = Field(
+        PolicyClassification.INTERNAL, description="Who may read this policy"
+    )
 
 
 class PolicyCreate(PolicyBase):
-    pass
+    @field_validator("document_type")
+    @classmethod
+    def document_type_is_a_known_category(cls, value: Optional[str]) -> Optional[str]:
+        return require_document_type(value)
 
 
 class PolicyUpdate(BaseModel):
@@ -20,8 +32,15 @@ class PolicyUpdate(BaseModel):
     domain: Optional[str] = Field(None, min_length=1, max_length=50)
     description: Optional[str] = None
     content: Optional[str] = Field(None, min_length=1)
+    document_type: Optional[str] = Field(None, max_length=100)
+    classification: Optional[PolicyClassification] = None
     changelog: Optional[str] = Field(None, description="Notes on what changed in this version")
     is_active: Optional[bool] = None
+
+    @field_validator("document_type")
+    @classmethod
+    def document_type_is_a_known_category(cls, value: Optional[str]) -> Optional[str]:
+        return require_document_type(value)
 
 
 class PolicyVersionResponse(BaseModel):
@@ -30,7 +49,9 @@ class PolicyVersionResponse(BaseModel):
     id: str
     policy_id: str
     version: str
-    content: str
+    content: Optional[str] = None  # None for versions uploaded as files
+    status: PolicyVersionStatus
+    ingestion_error: Optional[str] = None
     changelog: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
@@ -72,8 +93,8 @@ class PolicyEvidence(BaseModel):
     section: str | None
     chunk_index: int
     metadata: dict[str, Any]
-    source_document_id: str
-    source_filename: str
+    source_document_id: str | None
+    source_filename: str | None
 
 
 class PolicyRetrievalResponse(BaseModel):
@@ -86,8 +107,8 @@ class PolicyIngestionResponse(BaseModel):
     """Result for a submitted or retried policy version."""
     policy_id: str
     policy_version_id: str
-    source_document_id: str
-    source_filename: str
+    source_document_id: str | None  # None for policies entered as text
+    source_filename: str | None
     version: str
     status: str
     chunk_count: int = 0
@@ -96,9 +117,10 @@ class PolicyIngestionResponse(BaseModel):
 
 class PolicyVersionSummary(BaseModel):
     """Status and source details returned for one policy version."""
+    created_at: datetime | None = None
     policy_version_id: str
-    source_document_id: str
-    source_filename: str
+    source_document_id: str | None  # None for policies entered as text
+    source_filename: str | None
     version: str
     status: str
     chunk_count: int = 0

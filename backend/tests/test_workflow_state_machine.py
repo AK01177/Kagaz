@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from api.auth import create_access_token
+from tests.auth_helpers import create_access_token, install_fake_supabase
 from app.db.session import get_db
 from app.db.base import Base
 from app.models.document import Document, DocumentStatus
@@ -59,6 +59,11 @@ def db_session() -> Iterator[Session]:
     finally:
         session.close()
         Base.metadata.drop_all(engine)
+
+
+@pytest.fixture(autouse=True)
+def _fake_supabase(monkeypatch: pytest.MonkeyPatch, db_session: Session) -> None:
+    install_fake_supabase(monkeypatch, db_session)
 
 
 @pytest.fixture()

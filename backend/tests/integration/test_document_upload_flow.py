@@ -158,3 +158,6 @@ class TestUploadDocumentFailure:
         assert resp.status_code == 422
         assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
 
+
+
+pytestmark = pytest.mark.usefixtures("stateless_identity")

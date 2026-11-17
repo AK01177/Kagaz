@@ -1,0 +1,9 @@
+# Globex Ltd - Leave Rules (v1)
+## 1. Definitions
+In these rules "staff member" means any permanent employee of Globex Ltd.
+## 2. Casual Leave
+2.1 Staff members receive 18 days of casual leave each year, requested at least 3 days in advance.
+## 3. Sick Leave
+3.1 A medical certificate is required for any sick leave longer than 2 consecutive days.
+## 4. Carry-over
+4.1 Up to 10 unused casual leave days may be carried over to the next year.

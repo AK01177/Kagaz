@@ -1,0 +1,265 @@
+{
+  "_comment": "kind: 'relevant' = a clause in `policy` contains the answer (its text includes `expect`); 'off_topic' = unrelated to any policy; 'near_miss' = on-topic area but NOT covered by any policy. org: whose policies the asker may see. 'doc_type': the asking document's type in any spelling. 'wrong_type': the policies on this topic apply to another document type, so nothing may be returned. 'exact': a short exact-term question (numbers, clause numbers).",
+  "queries": [
+    {
+      "q": "How many unused leave days can I carry over to next year?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "hr_leave_orgA.md",
+      "expect": "maximum of 5 unused casual leave days",
+      "doc_type": "HR Forms"
+    },
+    {
+      "q": "When do I need a medical certificate for sick leave?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "hr_leave_orgA.md",
+      "expect": "medical certificate from a registered doctor",
+      "doc_type": "HR Forms"
+    },
+    {
+      "q": "How far in advance must casual leave be requested?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "hr_leave_orgA.md",
+      "expect": "at least 7 days in advance",
+      "doc_type": "HR Forms"
+    },
+    {
+      "q": "How long is maternity leave?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "hr_leave_orgA.md",
+      "expect": "26 weeks",
+      "doc_type": "HR Forms"
+    },
+    {
+      "q": "Who approves leave longer than five days?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "hr_leave_orgA.md",
+      "expect": "requires approval from both the manager and the HR Director",
+      "doc_type": "HR Forms"
+    },
+    {
+      "q": "Document fields: leave_type: casual; start_date: 2026-03-02; end_date: 2026-03-13; days_requested: 10",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "hr_leave_orgA.md",
+      "expect": "may not exceed 5 consecutive working days",
+      "doc_type": "HR Forms"
+    },
+    {
+      "q": "At what amount does an expense claim need manager approval?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "expect": "total above $500",
+      "doc_type": "Invoice"
+    },
+    {
+      "q": "Is a receipt required for small expenses?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "expect": "itemised receipt is mandatory",
+      "doc_type": "Invoice"
+    },
+    {
+      "q": "What are the standard invoice payment terms?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "expect": "Net 30",
+      "doc_type": "Invoice"
+    },
+    {
+      "q": "Do we need a purchase order for a $1,500 purchase?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "expect": "required for any purchase above $1,000",
+      "doc_type": "Invoice"
+    },
+    {
+      "q": "Document fields: invoice_number: INV-2291; invoice_date: 2025-06-01; vendor: Delta Supplies; total_amount: 4800.00; received_date: 2026-01-10",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "expect": "more than 90 days after the invoice date",
+      "doc_type": "Invoice"
+    },
+    {
+      "q": "Document fields: claimant: R. Shah; total: 740.00; category: travel; receipt_attached: yes",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "expect": "total above $500",
+      "doc_type": "Invoice"
+    },
+    {
+      "q": "How much can be reimbursed for meals while travelling?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "expect": "up to $60 per day",
+      "doc_type": "Invoice"
+    },
+    {
+      "q": "What CGPA is needed for the merit scholarship?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "academic_scholarship_orgA.md",
+      "expect": "CGPA is 8.0 or above",
+      "doc_type": "transcript"
+    },
+    {
+      "q": "What is the late fee for tuition payment?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "academic_scholarship_orgA.md",
+      "expect": "2 percent of the outstanding amount",
+      "doc_type": "transcript"
+    },
+    {
+      "q": "What must a fee receipt show?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "academic_scholarship_orgA.md",
+      "expect": "unique transaction ID",
+      "doc_type": "transcript"
+    },
+    {
+      "q": "How much does an extra transcript copy cost?",
+      "kind": "relevant",
+      "org": "A",
+      "policy": "academic_scholarship_orgA.md",
+      "expect": "costs $10",
+      "doc_type": "transcript"
+    },
+    {
+      "q": "How many unused leave days can I carry over to next year?",
+      "kind": "relevant",
+      "org": "B",
+      "policy": "hr_leave_orgB.md",
+      "expect": "Up to 10 unused casual leave days",
+      "doc_type": "hr-documents"
+    },
+    {
+      "q": "How many casual leave days do staff get?",
+      "kind": "relevant",
+      "org": "B",
+      "policy": "hr_leave_orgB.md",
+      "expect": "18 days of casual leave",
+      "doc_type": "hr-documents"
+    },
+    {
+      "q": "What is the capital of France?",
+      "kind": "off_topic"
+    },
+    {
+      "q": "Give me a recipe for chocolate cake",
+      "kind": "off_topic"
+    },
+    {
+      "q": "Who won the last cricket world cup?",
+      "kind": "off_topic"
+    },
+    {
+      "q": "Explain how photosynthesis works",
+      "kind": "off_topic"
+    },
+    {
+      "q": "Write a poem about the ocean",
+      "kind": "off_topic"
+    },
+    {
+      "q": "What is the company policy on remote work from home?",
+      "kind": "near_miss",
+      "org": "A"
+    },
+    {
+      "q": "What is the parking allowance for employees?",
+      "kind": "near_miss",
+      "org": "A"
+    },
+    {
+      "q": "What is the dress code in the office?",
+      "kind": "near_miss",
+      "org": "A"
+    },
+    {
+      "q": "How many days of study leave do students get for exams?",
+      "kind": "near_miss",
+      "org": "A"
+    },
+    {
+      "q": "What is the policy on salary increments and bonuses?",
+      "kind": "near_miss",
+      "org": "A"
+    },
+    {
+      "q": "Net 30",
+      "kind": "relevant",
+      "exact": true,
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "doc_type": "Invoice",
+      "expect": "Net 30"
+    },
+    {
+      "q": "$500 approval limit",
+      "kind": "relevant",
+      "exact": true,
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "doc_type": "Invoice",
+      "expect": "total above $500"
+    },
+    {
+      "q": "What does clause 2.3 say?",
+      "kind": "relevant",
+      "exact": true,
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "doc_type": "Invoice",
+      "expect": "total above $500"
+    },
+    {
+      "q": "purchase above $1,000",
+      "kind": "relevant",
+      "exact": true,
+      "org": "A",
+      "policy": "finance_expense_orgA.md",
+      "doc_type": "Invoice",
+      "expect": "required for any purchase above $1,000"
+    },
+    {
+      "q": "transaction ID",
+      "kind": "relevant",
+      "exact": true,
+      "org": "A",
+      "policy": "academic_scholarship_orgA.md",
+      "doc_type": "transcript",
+      "expect": "unique transaction ID"
+    },
+    {
+      "q": "How many unused leave days can I carry over to next year?",
+      "kind": "wrong_type",
+      "org": "A",
+      "doc_type": "Invoice"
+    },
+    {
+      "q": "What CGPA is needed for the merit scholarship?",
+      "kind": "wrong_type",
+      "org": "A",
+      "doc_type": "hr-documents"
+    },
+    {
+      "q": "At what amount does an expense claim need manager approval?",
+      "kind": "wrong_type",
+      "org": "A",
+      "doc_type": "academics"
+    }
+  ]
+}

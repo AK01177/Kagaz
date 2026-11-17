@@ -16,6 +16,8 @@ Covers:
 
 import json
 
+import pytest
+
 from .conftest import make_pdf, upload_document
 
 
@@ -150,3 +152,6 @@ class TestMetadataIsolation:
         assert not list((storage_dir / "metadata").rglob("*.json")) if (
             storage_dir / "metadata"
         ).exists() else True
+
+
+pytestmark = pytest.mark.usefixtures("stateless_identity")

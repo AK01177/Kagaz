@@ -31,8 +31,9 @@ The current implementation includes:
 - An AI classification and structured field extraction service. Both require `OPENROUTER_API_KEY` when called.
 - Initial Next.js screens for the landing page, login, dashboard, documents, document details, review, approvals, and user administration.
 - Supabase Auth email/password login and registration. Kagaz validates Supabase sessions and continues to enforce workspace roles and memberships in its backend database.
+- A policy knowledge base: policies (PDF, DOCX, TXT, or text entered in the app) are split into clauses, embedded, and stored per organization in PostgreSQL with pgvector. Policy validation checks a document's extracted fields against the applicable clauses with verified quotes, and a document assistant answers questions with cited evidence. See [docs/rag.md](docs/rag.md).
 
-Uploads run text extraction, classification, and structured extraction when the required OCR dependencies and `OPENROUTER_API_KEY` are available. Kagaz also includes database-backed document/workspace records and review workflows. Policy validation, summaries/chat, and some frontend workflows remain under active development.
+Uploads run text extraction, classification, and structured extraction when the required OCR dependencies and `OPENROUTER_API_KEY` are available. Kagaz also includes database-backed document/workspace records and review workflows. Document summaries and some frontend workflows remain under active development.
 
 ## Technology
 
@@ -43,7 +44,8 @@ Uploads run text extraction, classification, and structured extraction when the 
 | Current file support | PDF, PNG, JPG, and JPEG |
 | OCR | RapidOCR/PaddleOCR local processing; scanned-PDF rendering uses Poppler |
 | AI classification and field extraction | OpenRouter; `OPENROUTER_API_KEY` required when used |
-| Planned data and infrastructure | PostgreSQL, background workers, policy retrieval, and supporting services |
+| Policy knowledge base (RAG) | Google Gemini embeddings and language model; PostgreSQL with the pgvector extension; `GEMINI_API_KEY` required when used |
+| Planned data and infrastructure | Background workers and supporting services |
 
 See [docs/tech_stack.md](docs/tech_stack.md), [docs/architecture.md](docs/architecture.md), and [docs/api-design.md](docs/api-design.md) for design details.
 
@@ -62,9 +64,13 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 Copy-Item backend\.env.example backend\.env
 # Edit backend\.env and set DATABASE_URL, SUPABASE_URL, and SUPABASE_ANON_KEY.
+# For policies, also set GEMINI_API_KEY (a free key from https://aistudio.google.com/apikey works).
 Set-Location backend
+..\.venv\Scripts\python.exe -m alembic upgrade head
 ..\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8001
 ```
+
+The database needs the `vector` extension before `alembic upgrade head` (Supabase: Database → Extensions → enable `vector`).
 
 This checkout was verified at `http://127.0.0.1:8001`. Open `http://127.0.0.1:8001/api/health` for the health check and `http://127.0.0.1:8001/docs` for interactive API documentation. The standard backend port is 8000; use `--port 8000` if it is available.
 
@@ -103,7 +109,9 @@ npm run build
 
 The backend and frontend development servers started successfully in this checkout. The health endpoint, API docs, and frontend routes (`/`, `/login`, `/dashboard`, `/documents`, `/review`, `/approvals`, and `/admin/users`) returned HTTP 200. The production frontend build completed successfully.
 
-The current backend test run reports **34 passed and 9 failed**. Failures include classifier tests expecting the older `TYPESAFE_API_KEY` configuration and upload tests whose expected response/authentication behavior does not match the current implementation. Frontend lint currently reports a `react-hooks/set-state-in-effect` error in `frontend/app/documents/[id]/page.tsx`. Resolve these existing test and lint failures before treating the checks as clean.
+The backend test run (`pytest` from `backend/`) reports **498 passed, 12 skipped, 0 failed**. Nine skips need `QA10_TEST_DATABASE_URL` (a PostgreSQL database with pgvector; tests run in a throwaway schema that is rolled back) and three are obsolete tests of self-issued JWT signatures, which Supabase now verifies. Tests never call Gemini: the conftest removes the key. Not part of that run: `tests/test_qa07_upload.py` (it calls the classification service), and four files listed in `backend/pytest.ini` that still target the pre-Supabase login or the classifier.
+
+The real-stack RAG evaluations (`python -m tests.rag_eval.e2e_check` and `e2e_validation`, from `backend/`) are described in [docs/rag.md](docs/rag.md). The frontend type check (`npx tsc --noEmit`) passes; run `npm run lint` and `npm run build` yourself to confirm the rest of the frontend.
 
 ## Repository structure
 
@@ -124,6 +132,7 @@ database/   Database documentation
 - [Architecture](docs/architecture.md)
 - [API design](docs/api-design.md)
 - [Technology stack](docs/tech_stack.md)
+- [Policy knowledge base and RAG](docs/rag.md)
 - [Testing strategy](docs/testing-strategy.md)
 - [Backend setup and API details](backend/README.md)
 - [Frontend setup](frontend/README.md)

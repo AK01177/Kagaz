@@ -216,3 +216,6 @@ class TestManualClassificationCorrection:
         body = resp.json()
         assert body["is_manually_corrected"] is False
         assert body["category"] == "financial"  # back to AI classification
+
+
+pytestmark = pytest.mark.usefixtures("stateless_identity")

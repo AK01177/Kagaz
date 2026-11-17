@@ -291,3 +291,6 @@ def test_get_extract_requires_reviewer_role(api_client):
         headers={"Authorization": f"Bearer {submitter_token}"},
     )
     assert res.status_code == 403
+
+
+pytestmark = pytest.mark.usefixtures("stateless_identity")

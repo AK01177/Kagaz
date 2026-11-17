@@ -124,6 +124,9 @@ class PolicyVersion(Base):
     changelog = Column(String, nullable=True)
     created_by = Column(String(36), nullable=True)
     ingestion_error = Column(Text, nullable=True)
+    # Embedding model that produced this version's chunk vectors. Vectors from different
+    # models are not comparable, so retrieval only uses versions embedded with the current one.
+    embedding_model = Column(String(100), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
@@ -160,6 +163,8 @@ class PolicyChunk(Base):
     page_number = Column(Integer, nullable=True)
     section = Column(String(255), nullable=True)
     chunk_index = Column(Integer, nullable=False)
+    # SHA-256 of `content`; lets a new version reuse the vector of an unchanged clause.
+    content_hash = Column(String(64), nullable=True, index=True)
     chunk_metadata = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
