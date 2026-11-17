@@ -1,0 +1,96 @@
+{
+  "dataset_version": "1.0",
+  "notice": "Synthetic evaluation cases. Seed each policy as an active, indexed policy and persist each document extraction before running the live evaluator.",
+  "cases": [
+    {
+      "case_id": "invoice-compliant",
+      "category": "compliant",
+      "policy": {"name": "Invoice approval policy", "document_type": "invoice", "text": "Invoices above USD 500 require two approver signatures. The invoice number and invoice date must be present."},
+      "document": {"document_type": "invoice", "extractions": {"invoice_number": "INV-104", "invoice_date": "2026-09-01", "supplier_name": "ACME Corp", "total_amount": "420.00", "approver_signatures": "2"}},
+      "expected_status": "PASS",
+      "expected_violation": false,
+      "rationale": "The invoice has an identifier and date, and its total is below the two-approval threshold; two signatures are recorded.",
+      "expected_evidence": ["Invoices above USD 500 require two approver signatures", "invoice number and invoice date must be present", "USD 450 or more are recommended for a second reviewer check"]
+    },
+    {
+      "case_id": "invoice-advisory-review",
+      "category": "supported_concern",
+      "policy": {"name": "Invoice advisory review policy", "document_type": "invoice", "text": "Invoice totals of USD 450 or more are recommended for a second reviewer check before payment. This is advisory and is not a mandatory approval condition."},
+      "document": {"document_type": "invoice", "extractions": {"invoice_number": "INV-108", "invoice_date": "2026-09-04", "supplier_name": "Northwind Supplies", "total_amount": "475.00", "additional_review_status": "not recorded"}},
+      "expected_status": "FLAG",
+      "expected_violation": false,
+      "rationale": "The invoice meets the advisory review threshold and no second review is recorded, which is a supported concern but not a mandatory policy violation.",
+      "expected_evidence": ["USD 450 or more are recommended for a second reviewer check", "advisory and is not a mandatory approval condition"]
+    },
+    {
+      "case_id": "invoice-noncompliant",
+      "category": "non_compliant",
+      "policy": {"name": "Invoice approval policy", "document_type": "invoice", "text": "Invoices above USD 500 require two approver signatures. The invoice number and invoice date must be present."},
+      "document": {"document_type": "invoice", "extractions": {"invoice_number": "INV-105", "invoice_date": "2026-09-02", "supplier_name": "ACME Corp", "total_amount": "780.00", "approver_signatures": "1", "additional_review_status": "not recorded"}},
+      "expected_status": "FAIL",
+      "expected_violation": true,
+      "rationale": "The extracted total exceeds USD 500 and only one signature is recorded.",
+      "expected_evidence": ["Invoices above USD 500 require two approver signatures", "USD 450 or more are recommended for a second reviewer check"]
+    },
+    {
+      "case_id": "invoice-incomplete",
+      "category": "incomplete",
+      "policy": {"name": "Invoice approval policy", "document_type": "invoice", "text": "Invoices above USD 500 require two approver signatures. The invoice number and invoice date must be present."},
+      "document": {"document_type": "invoice", "extractions": {"invoice_number": "INV-106", "supplier_name": "ACME Corp", "total_amount": "780.00"}},
+      "expected_status": "NEEDS_HUMAN_REVIEW",
+      "expected_violation": false,
+      "rationale": "Invoice date and approver signatures are not extracted, so compliance cannot be established and absence is not proof of a violation.",
+      "expected_evidence": ["Invoices above USD 500 require two approver signatures", "invoice number and invoice date must be present", "USD 450 or more are recommended for a second reviewer check"]
+    },
+    {
+      "case_id": "invoice-ambiguous-currency",
+      "category": "ambiguous",
+      "policy": {"name": "Invoice approval policy", "document_type": "invoice", "text": "Invoices above USD 500 require two approver signatures. The invoice number and invoice date must be present."},
+      "document": {"document_type": "invoice", "extractions": {"invoice_number": "INV-107", "invoice_date": "2026-09-03", "supplier_name": "ACME Corp", "total_amount": "780", "currency": "not stated", "approver_signatures": "1", "additional_review_status": "not recorded"}},
+      "expected_status": "NEEDS_HUMAN_REVIEW",
+      "expected_violation": false,
+      "rationale": "The policy threshold is denominated in USD but the document currency is unknown; the amount cannot be compared safely.",
+      "expected_evidence": ["Invoices above USD 500 require two approver signatures", "USD 450 or more are recommended for a second reviewer check"]
+    },
+    {
+      "case_id": "expense-compliant",
+      "category": "compliant",
+      "policy": {"name": "Travel expense policy", "document_type": "expense_report", "text": "A receipt is required for expenses over USD 25 when a receipt is obtainable. Alcohol is not reimbursable."},
+      "document": {"document_type": "expense_report", "extractions": {"expense_amount": "18.50", "expense_category": "meals", "receipt_attached": "false"}},
+      "expected_status": "PASS",
+      "expected_violation": false,
+      "rationale": "The expense is below the receipt threshold and is not identified as alcohol.",
+      "expected_evidence": ["A receipt is required for expenses over USD 25 when a receipt is obtainable", "Alcohol is not reimbursable"]
+    },
+    {
+      "case_id": "expense-noncompliant",
+      "category": "non_compliant",
+      "policy": {"name": "Travel expense policy", "document_type": "expense_report", "text": "A receipt is required for expenses over USD 25 when a receipt is obtainable. Alcohol is not reimbursable."},
+      "document": {"document_type": "expense_report", "extractions": {"expense_amount": "64.00", "expense_category": "alcohol", "receipt_attached": "false", "receipt_obtainable": "true"}},
+      "expected_status": "FAIL",
+      "expected_violation": true,
+      "rationale": "The alcohol expense is explicitly excluded; it also exceeds the receipt threshold, and an obtainable receipt is not attached.",
+      "expected_evidence": ["A receipt is required for expenses over USD 25 when a receipt is obtainable", "Alcohol is not reimbursable"]
+    },
+    {
+      "case_id": "expense-incomplete",
+      "category": "incomplete",
+      "policy": {"name": "Travel expense policy", "document_type": "expense_report", "text": "A receipt is required for expenses over USD 25 when a receipt is obtainable. Alcohol is not reimbursable."},
+      "document": {"document_type": "expense_report", "extractions": {"expense_category": "lodging"}},
+      "expected_status": "NEEDS_HUMAN_REVIEW",
+      "expected_violation": false,
+      "rationale": "The amount and receipt status are unavailable, so neither check can be resolved.",
+      "expected_evidence": ["A receipt is required for expenses over USD 25 when a receipt is obtainable", "Alcohol is not reimbursable"]
+    },
+    {
+      "case_id": "expense-ambiguous-receipt-availability",
+      "category": "ambiguous",
+      "policy": {"name": "Travel expense policy", "document_type": "expense_report", "text": "A receipt is required for expenses over USD 25 when a receipt is obtainable. Alcohol is not reimbursable."},
+      "document": {"document_type": "expense_report", "extractions": {"expense_amount": "40.00", "expense_category": "meal", "receipt_attached": "false", "receipt_obtainable": "unknown"}},
+      "expected_status": "NEEDS_HUMAN_REVIEW",
+      "expected_violation": false,
+      "rationale": "The receipt exception depends on whether a receipt was obtainable, which is unknown.",
+      "expected_evidence": ["A receipt is required for expenses over USD 25 when a receipt is obtainable", "Alcohol is not reimbursable"]
+    }
+  ]
+}
