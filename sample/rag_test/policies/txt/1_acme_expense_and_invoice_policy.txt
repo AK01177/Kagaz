@@ -1,0 +1,17 @@
+# Acme Corp - Expense, Procurement and Invoice Policy (v3)
+## 1. Scope and Definitions
+This policy governs expense claims, purchase orders and supplier invoices at Acme Corp. "Claimant" means the employee submitting an expense claim, "vendor" means an external supplier, and "business day" means a weekday that is not a public holiday. The Finance Director owns this policy and reviews it annually.
+## 2. Expense Claims
+2.1 Expense claims must be submitted within 30 days of the date the expense was incurred. Claims submitted later are rejected.
+2.2 An itemised receipt is mandatory for every expense above $25.
+2.3 Any single expense claim with a total above $500 requires prior written approval from the department manager. Claims above $2,000 additionally require Finance Director approval.
+2.4 Alcohol, personal entertainment and traffic fines are not reimbursable.
+2.5 Meals during business travel are reimbursed up to $60 per day.
+## 3. Purchase Orders
+3.1 A purchase order (PO) is required for any purchase above $1,000. Purchases without a PO will not be paid.
+3.2 Every PO must state the vendor name, item description, quantity, unit price and delivery date.
+## 4. Supplier Invoices
+4.1 An invoice must show the invoice number, invoice date, vendor name, tax registration number and total amount.
+4.2 Standard payment terms are Net 30 days from the invoice date.
+4.3 Invoices received more than 90 days after the invoice date are not accepted for payment.
+4.4 The invoice total must match the approved purchase order within a tolerance of 2 percent.
