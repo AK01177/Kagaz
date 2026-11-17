@@ -12,6 +12,7 @@ from app.db.base import Base
 from app.models.document import Document
 from app.models.policy import EMBEDDING_DIMENSION, Policy, PolicyChunk, PolicyVersion, PolicyVersionStatus
 from services import policy_retrieval
+from services.embeddings import EMBEDDING_MODEL
 
 
 def vector(first, second):
@@ -35,7 +36,13 @@ def policy_db(monkeypatch):
             connection.execute(text(f'SET LOCAL search_path TO "{schema}", public'))
             if connection.scalar(text("SELECT to_regtype('vector')")) is None:
                 pytest.fail("Enable the vector extension in the QA-10 test database first")
-            Base.metadata.create_all(connection)
+            # checkfirst=False: otherwise tables that already exist in `public` are skipped
+            # and the test would read and write the real tables through the search path.
+            Base.metadata.create_all(connection, checkfirst=False)
+            resolved_schema = connection.scalar(
+                text("SELECT relnamespace::regnamespace::text FROM pg_class WHERE oid = to_regclass('policies')")
+            )
+            assert resolved_schema.strip('"') == schema, "test tables must live in the throwaway schema"
             with Session(connection) as session:
                 yield session
             # The connection context rolls back on failures. Roll back on success too.
@@ -44,7 +51,7 @@ def policy_db(monkeypatch):
         engine.dispose()
 
 
-def add_policy_version(db, policy, version_name, status, embedding):
+def add_policy_version(db, policy, version_name, status, embedding, content="Travel expenses require approval."):
     db.add(policy)
     db.flush()
     filename = f"{policy.organization_id}-{version_name}.pdf"
@@ -59,13 +66,17 @@ def add_policy_version(db, policy, version_name, status, embedding):
     db.add(source)
     db.flush()
     version = PolicyVersion(
-        policy_id=policy.id, source_document_id=source.id, version=version_name, status=status
+        policy_id=policy.id,
+        source_document_id=source.id,
+        version=version_name,
+        status=status,
+        embedding_model=EMBEDDING_MODEL,
     )
     db.add(version)
     db.flush()
     chunk = PolicyChunk(
         policy_version_id=version.id,
-        content="Travel expenses require approval.",
+        content=content,
         embedding=embedding,
         chunk_index=0,
         page_number=2,

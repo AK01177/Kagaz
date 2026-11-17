@@ -688,3 +688,6 @@ def test_12_database_persistence_integration():
         db.close()
         Base.metadata.drop_all(eng)
 
+
+
+pytestmark = pytest.mark.usefixtures("stateless_identity")

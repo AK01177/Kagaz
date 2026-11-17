@@ -185,3 +185,6 @@ def test_image_metadata_stores_correct_file_type(client):
     assert meta["file_type"] == "image/png"
     assert meta["filename"] == "scan.png"
     assert meta["file_size"] == len(png)
+
+
+pytestmark = pytest.mark.usefixtures("stateless_identity")

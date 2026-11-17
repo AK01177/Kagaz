@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +16,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from api.auth import create_access_token, get_auth_db
+from api.auth import get_auth_db
+from tests.auth_helpers import create_access_token, install_fake_supabase
 from app.api.routes.documents import router as legacy_documents_router
 from app.crud.extraction import (
     create_extractions_bulk,
@@ -90,6 +92,11 @@ def db_session() -> Iterator[Session]:
         engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _fake_supabase(monkeypatch: pytest.MonkeyPatch, db_session: Session) -> None:
+    install_fake_supabase(monkeypatch, db_session)
+
+
 @pytest.fixture()
 def client(db_session: Session) -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = lambda: db_session
@@ -158,10 +165,16 @@ def _seed_two_tenants(db: Session) -> dict[str, str]:
 
     db.add_all(
         [
-            Membership(user_id="usr_multi", organization_id=org_a_id, role=MembershipRole.SUBMITTER, is_active=True),
-            Membership(user_id="usr_multi", organization_id=org_b_id, role=MembershipRole.REVIEWER, is_active=True),
-            Membership(user_id="usr_multi", organization_id=org_c_id, role=MembershipRole.ORG_ADMIN, is_active=False),
-            Membership(user_id="usr_multi", organization_id=org_inactive_id, role=MembershipRole.ORG_ADMIN, is_active=True),
+            # Explicit creation times: the default organization is the earliest membership, and
+            # memberships created in the same clock tick would otherwise be ordered by random ids.
+            Membership(user_id="usr_multi", organization_id=org_a_id, role=MembershipRole.SUBMITTER, is_active=True,
+                       created_at=datetime(2026, 1, 1, tzinfo=timezone.utc)),
+            Membership(user_id="usr_multi", organization_id=org_b_id, role=MembershipRole.REVIEWER, is_active=True,
+                       created_at=datetime(2026, 1, 2, tzinfo=timezone.utc)),
+            Membership(user_id="usr_multi", organization_id=org_c_id, role=MembershipRole.ORG_ADMIN, is_active=False,
+                       created_at=datetime(2026, 1, 3, tzinfo=timezone.utc)),
+            Membership(user_id="usr_multi", organization_id=org_inactive_id, role=MembershipRole.ORG_ADMIN, is_active=True,
+                       created_at=datetime(2026, 1, 4, tzinfo=timezone.utc)),
             Membership(user_id="usr_a_sub", organization_id=org_a_id, role=MembershipRole.SUBMITTER, is_active=True),
             Membership(user_id="usr_a_rev", organization_id=org_a_id, role=MembershipRole.REVIEWER, is_active=True),
             Membership(user_id="usr_a_adm", organization_id=org_a_id, role=MembershipRole.ORG_ADMIN, is_active=True),

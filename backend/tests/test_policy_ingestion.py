@@ -16,6 +16,7 @@ from app.models.organization import Organization
 from app.models.policy import Policy, PolicyVersion, PolicyVersionStatus
 from app.models.user import User
 from main import app
+from services.policy_text import SourcePage
 
 
 TEST_SECRET = "policy-ingestion-test-secret-not-for-production"
@@ -47,6 +48,17 @@ def _pdf(text: str = "Policy clause: expenses require approval.") -> bytes:
     return stream.getvalue()
 
 
+def _pages(text: str) -> list[SourcePage]:
+    """What extract_policy_pages returns for a file containing `text` (nothing when blank)."""
+    return [SourcePage(1, text)] if text.strip() else []
+
+
+def _fake_supabase_user(raw_token: str) -> dict:
+    """Stand-in for Supabase Auth: the test JWT's subject doubles as the Supabase user."""
+    claims = jwt.decode(raw_token, TEST_SECRET, algorithms=["HS256"], audience="kagaz-api", issuer="kagaz")
+    return {"id": claims["sub"], "email": f"{claims['sub']}@kagaz.test", "email_confirmed_at": "2026-01-01"}
+
+
 def _raise_embedding_error(chunks):
     raise RuntimeError("provider details stay private")
 
@@ -54,14 +66,15 @@ def _raise_embedding_error(chunks):
 @pytest.fixture
 def policy_client(tmp_path, monkeypatch):
     monkeypatch.setenv("JWT_SECRET", TEST_SECRET)
+    monkeypatch.setattr("api.auth._supabase_user_from_token", _fake_supabase_user)
     monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(tmp_path / "documents"))
     engine = create_engine(f"sqlite:///{tmp_path / 'policy.db'}")
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     org_a = Organization(id="org-a", name="Org A", slug="org-a", is_active=True)
     org_b = Organization(id="org-b", name="Org B", slug="org-b", is_active=True)
-    adm_a = User(id="org_admin-org-a", email="admin@org-a.test", is_active=True)
-    rev_a = User(id="reviewer-org-a", email="reviewer@org-a.test", is_active=True)
+    adm_a = User(id="org_admin-org-a", email="org_admin-org-a@kagaz.test", is_active=True)
+    rev_a = User(id="reviewer-org-a", email="reviewer-org-a@kagaz.test", is_active=True)
     session.add_all([org_a, org_b, adm_a, rev_a])
     session.flush()
     session.add_all([
@@ -81,8 +94,8 @@ def policy_client(tmp_path, monkeypatch):
 def test_org_admin_ingests_policy_and_saves_chunk_metadata(policy_client, monkeypatch):
     client, session = policy_client
     monkeypatch.setattr(
-        "services.policy_ingestion.extract_text",
-        lambda document_id, storage: "Policy clause: expenses require approval.",
+        "services.policy_ingestion.extract_policy_pages",
+        lambda path: _pages("Policy clause: expenses require approval."),
     )
     monkeypatch.setattr(
         "services.policy_ingestion.create_embeddings",
@@ -122,7 +135,7 @@ def test_org_admin_ingests_policy_and_saves_chunk_metadata(policy_client, monkey
 
 def test_empty_extraction_is_visible_and_retryable(policy_client, monkeypatch):
     client, session = policy_client
-    monkeypatch.setattr("services.policy_ingestion.extract_text", lambda document_id, storage: "  ")
+    monkeypatch.setattr("services.policy_ingestion.extract_policy_pages", lambda path: _pages("  "))
 
     response = client.post(
         "/api/policies/ingest",
@@ -144,8 +157,8 @@ def test_empty_extraction_is_visible_and_retryable(policy_client, monkeypatch):
     assert versions.json()[0]["status"] == "FAILED"
 
     monkeypatch.setattr(
-        "services.policy_ingestion.extract_text",
-        lambda document_id, storage: "Policy text after retry.",
+        "services.policy_ingestion.extract_policy_pages",
+        lambda path: _pages("Policy text after retry."),
     )
     monkeypatch.setattr(
         "services.policy_ingestion.create_embeddings",
@@ -163,8 +176,8 @@ def test_empty_extraction_is_visible_and_retryable(policy_client, monkeypatch):
 def test_unexpected_ingestion_error_is_visible_and_retryable(policy_client, monkeypatch):
     client, session = policy_client
     monkeypatch.setattr(
-        "services.policy_ingestion.extract_text",
-        lambda document_id, storage: "Policy text before an embedding error.",
+        "services.policy_ingestion.extract_policy_pages",
+        lambda path: _pages("Policy text before an embedding error."),
     )
     monkeypatch.setattr(
         "services.policy_ingestion.create_embeddings",
