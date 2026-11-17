@@ -11,7 +11,7 @@ interface PolicyVersion {
   id: string;
   policy_id: string;
   version: string;
-  status: "PENDING" | "INGESTING" | "ACTIVE" | "FAILED";
+  status: "PROCESSING" | "ACTIVE" | "ARCHIVED" | "FAILED";
   chunk_count: number;
   error_message?: string | null;
   created_at: string;
@@ -22,12 +22,27 @@ interface Policy {
   organization_id: string;
   name: string;
   domain?: string | null;
+  document_type?: string | null;
   description?: string | null;
   is_active: boolean;
-  active_version_id?: string | null;
+  current_version?: string | null;
   created_at: string;
   updated_at: string;
   versions?: PolicyVersion[];
+}
+
+// The document categories the classifier assigns. A policy applies to one of them, or to all.
+const APPLIES_TO_OPTIONS = [
+  { value: "", label: "All document types" },
+  { value: "financial", label: "Financial (invoices, receipts, expense claims)" },
+  { value: "hr_documents", label: "HR (resumes, forms, offer letters)" },
+  { value: "academics", label: "Academic (transcripts, records)" },
+  { value: "general_confidential", label: "General / confidential (contracts, IDs, other)" },
+];
+
+function appliesToLabel(documentType?: string | null): string {
+  const option = APPLIES_TO_OPTIONS.find((item) => item.value === (documentType || ""));
+  return option ? option.label.split(" (")[0] : documentType || "All document types";
 }
 
 function PoliciesContent() {
@@ -45,6 +60,7 @@ function PoliciesContent() {
   const [policyName, setPolicyName] = useState("");
   const [versionStr, setVersionStr] = useState("1.0.0");
   const [domain, setDomain] = useState("Finance");
+  const [appliesTo, setAppliesTo] = useState("");
   const [description, setDescription] = useState("");
   const [isIngesting, setIsIngesting] = useState(false);
 
@@ -86,7 +102,17 @@ function PoliciesContent() {
     try {
       const res = await fetchWithAuth(`${API_URL}/api/policies/${policyId}/versions`);
       if (res.ok) {
-        const versionsData: PolicyVersion[] = await res.json();
+        // The API names these fields differently from the list below, so map them once here.
+        const rows: Array<Record<string, string | number | null>> = await res.json();
+        const versionsData: PolicyVersion[] = rows.map((row) => ({
+          id: String(row.policy_version_id),
+          policy_id: policyId,
+          version: String(row.version),
+          status: row.status as PolicyVersion["status"],
+          chunk_count: Number(row.chunk_count ?? 0),
+          error_message: row.ingestion_error ? String(row.ingestion_error) : null,
+          created_at: String(row.created_at ?? ""),
+        }));
         setPolicyVersions((prev) => ({ ...prev, [policyId]: versionsData }));
       }
     } catch {
@@ -110,7 +136,7 @@ function PoliciesContent() {
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!uploadFile) {
-      setError("Please select a policy PDF file to upload.");
+      setError("Please select a policy file (PDF, DOCX or TXT) to upload.");
       return;
     }
     if (!policyName.trim()) {
@@ -127,6 +153,7 @@ function PoliciesContent() {
     formData.append("policy_name", policyName.trim());
     formData.append("version", versionStr.trim() || "1.0.0");
     if (domain) formData.append("domain", domain.trim());
+    if (appliesTo) formData.append("document_type", appliesTo);
     if (description) formData.append("description", description.trim());
 
     try {
@@ -146,8 +173,15 @@ function PoliciesContent() {
         throw new Error(msg);
       }
 
+      if (data.status !== "ACTIVE") {
+        // The API answers 201 even when indexing failed; the reason is stored on the version.
+        await loadPolicies();
+        throw new Error(
+          `'${policyName.trim()}' v${data.version} was saved but is not searchable yet: ${data.ingestion_error || data.status}. Open the policy and use "Retry Ingestion" once the cause is fixed.`
+        );
+      }
       setSuccessMsg(
-        `Policy '${data.policy_name}' v${data.version} ingested successfully (${data.chunk_count} vector chunks generated).`
+        `Policy '${policyName.trim()}' v${data.version} ingested successfully (${data.chunk_count} searchable chunks).`
       );
       setShowUploadForm(false);
       setUploadFile(null);
@@ -195,7 +229,11 @@ function PoliciesContent() {
       );
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.detail?.message || "Retry failed.");
+        throw new Error(data?.error?.message || data?.detail?.message || "Retry failed.");
+      }
+      const retried = await res.json().catch(() => null);
+      if (retried && retried.status !== "ACTIVE") {
+        throw new Error(`Retry did not succeed: ${retried.ingestion_error || retried.status}.`);
       }
       setSuccessMsg("Policy version ingestion retry completed successfully.");
       await loadVersions(policyId);
@@ -211,12 +249,12 @@ function PoliciesContent() {
     switch (status) {
       case "ACTIVE":
         return <Badge tone="green">ACTIVE</Badge>;
-      case "INGESTING":
-        return <Badge tone="violet">INGESTING</Badge>;
+      case "PROCESSING":
+        return <Badge tone="violet">PROCESSING</Badge>;
       case "FAILED":
         return <Badge tone="red">FAILED</Badge>;
-      case "PENDING":
-        return <Badge tone="amber">PENDING</Badge>;
+      case "ARCHIVED":
+        return <Badge tone="amber">ARCHIVED</Badge>;
       default:
         return <Badge tone="amber">{status}</Badge>;
     }
@@ -244,7 +282,7 @@ function PoliciesContent() {
               icon="stamp"
               onClick={() => setShowUploadForm(!showUploadForm)}
             >
-              {showUploadForm ? "Close Form" : "Upload Policy PDF +"}
+              {showUploadForm ? "Close Form" : "Upload Policy +"}
             </Button>
             <Button variant="secondary" icon="refresh" onClick={loadPolicies}>
               Refresh
@@ -307,7 +345,7 @@ function PoliciesContent() {
                   Upload Policy File &amp; Vectorize
                 </h2>
                 <p style={{ margin: 0, fontSize: "11px", color: "var(--muted)" }}>
-                  Uploaded PDFs are parsed with optical layout recognition, chunked into semantically coherent segments, and indexed for neural validation retrieval.
+                  Uploaded PDF, DOCX and TXT files are split into clauses with their section and page, and indexed for policy validation and the assistant.
                 </p>
               </div>
             </div>
@@ -388,13 +426,38 @@ function PoliciesContent() {
 
                 <div>
                   <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
-                    Select PDF Document *
+                    Applies to
+                  </label>
+                  <select
+                    value={appliesTo}
+                    onChange={(e) => setAppliesTo(e.target.value)}
+                    style={{
+                      width: "100%",
+                      height: "36px",
+                      border: "1px solid var(--line2, #e0ddd5)",
+                      borderRadius: "5px",
+                      padding: "0 12px",
+                      fontSize: "12px",
+                      background: "white",
+                    }}
+                  >
+                    {APPLIES_TO_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                    Select Policy File (PDF, DOCX or TXT) *
                   </label>
                   <input
                     ref={fileInputRef}
                     type="file"
                     required
-                    accept=".pdf,application/pdf"
+                    accept=".pdf,.docx,.txt"
                     onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                     style={{
                       width: "100%",
@@ -465,10 +528,10 @@ function PoliciesContent() {
                 No policies configured for this organization
               </h3>
               <p style={{ margin: "0 auto 16px", maxWidth: "400px", fontSize: "12px", color: "var(--muted)" }}>
-                Upload an official organizational policy PDF to activate layout-aware compliance verification and AI policy assistant retrieval.
+                Upload an official organizational policy (PDF, DOCX or TXT) to activate layout-aware compliance verification and AI policy assistant retrieval.
               </p>
               <Button variant="primary" icon="stamp" onClick={() => setShowUploadForm(true)}>
-                Upload First Policy PDF
+                Upload First Policy
               </Button>
             </div>
           ) : (
@@ -524,7 +587,12 @@ function PoliciesContent() {
                         </div>
                       </span>
 
-                      <span>{p.domain || "General"}</span>
+                      <span>
+                        {p.domain || "General"}
+                        <small style={{ display: "block", color: "var(--muted)", fontSize: "10px" }}>
+                          Applies to: {appliesToLabel(p.document_type)}
+                        </small>
+                      </span>
 
                       <div>
                         {p.is_active ? (
@@ -534,7 +602,7 @@ function PoliciesContent() {
                         )}
                       </div>
 
-                      <code>{p.active_version_id ? "Active" : "None"}</code>
+                      <code>{p.current_version ? `v${p.current_version.replace(/^v/i, "")}` : "None"}</code>
 
                       <div
                         style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}
@@ -623,7 +691,7 @@ function PoliciesContent() {
 
                                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                                   <span style={{ color: "var(--muted)", fontSize: "10px" }}>
-                                    {new Date(ver.created_at).toLocaleDateString()}
+                                    {ver.created_at ? new Date(ver.created_at).toLocaleDateString() : ""}
                                   </span>
                                   {ver.status === "FAILED" && (
                                     <Button
