@@ -13,7 +13,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from api.auth import Permission, ROLE_PERMISSIONS, create_access_token, get_auth_db
+from api.auth import Permission, ROLE_PERMISSIONS, get_auth_db
+from tests.auth_helpers import create_access_token, install_fake_supabase
 from app.core.permissions import get_permissions_for_role, roles_with_permission
 from app.crud.user import create_user
 from app.db.base import Base
@@ -71,6 +72,11 @@ def client(db_session: Session) -> Iterator[TestClient]:
     finally:
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(get_auth_db, None)
+
+
+@pytest.fixture(autouse=True)
+def _fake_supabase(monkeypatch: pytest.MonkeyPatch, db_session: Session) -> None:
+    install_fake_supabase(monkeypatch, db_session)
 
 
 def _seed_org(db: Session, org_id: str, slug: str) -> Organization:
@@ -287,19 +293,25 @@ def test_submitter_cannot_approve_or_administer_unless_explicitly_authorized(
     assert approve.status_code == 200
     assert approve.json()["status"] == "APPROVED"
 
-    # Explicit server-signed permission grant also works via create_access_token in stateless/delegated mode.
+    # Explicit permission evaluation in identity_has_permission.
+    from app.core.permissions import identity_has_permission
+    assert identity_has_permission(
+        {"role": "SUBMITTER", "permissions": [Permission.WORKFLOW_DECIDE.value]},
+        Permission.WORKFLOW_DECIDE,
+    ) is True
+    assert identity_has_permission(
+        {"role": "SUBMITTER", "permissions": []},
+        Permission.WORKFLOW_DECIDE,
+    ) is False
+
+    # When database storage is unavailable, requests fail closed with 503.
     doc_for_grant = _seed_document(
         db_session,
         org_id="org-alpha",
         uploaded_by=other_submitter_id,
         status=DocumentStatus.PENDING_APPROVAL,
     )
-    explicit_token = create_access_token(
-        user_id=other_submitter_id,
-        role="SUBMITTER",
-        organization_id="org-alpha",
-        permissions=[Permission.WORKFLOW_DECIDE.value],
-    )
+    explicit_token = create_access_token(user_id=other_submitter_id)
     app.dependency_overrides[get_auth_db] = lambda: None
     try:
         explicit_resp = client.post(
@@ -309,8 +321,7 @@ def test_submitter_cannot_approve_or_administer_unless_explicitly_authorized(
         )
     finally:
         app.dependency_overrides[get_auth_db] = lambda: db_session
-    assert explicit_resp.status_code == 200
-    assert explicit_resp.json()["status"] == "APPROVED"
+    assert explicit_resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------

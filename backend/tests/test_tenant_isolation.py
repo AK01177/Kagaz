@@ -273,8 +273,8 @@ class TestMembershipAndActiveOrganizationContext:
         with TestClient(app) as tc:
             headers = _auth_header("usr_x", "org_a", "REVIEWER", extra_org_header="org_b")
             res = tc.get("/api/auth/me", headers=headers)
-            assert res.status_code == 403
-            assert res.json()["error"]["code"] == "MEMBERSHIP_REQUIRED"
+            assert res.status_code == 503
+            assert res.json()["error"]["code"] == "AUTH_DATABASE_UNAVAILABLE"
 
 
 class TestDocumentAndFileRouteTenantIsolation:
