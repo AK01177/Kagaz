@@ -70,3 +70,6 @@ class PolicyValidationFindingDraft(BaseModel):
 class PolicyValidationDraft(BaseModel):
     summary: str
     findings: list[PolicyValidationFindingDraft] = Field(default_factory=list)
+    # Supplied clauses that contain no requirement relevant to this document. Together with the
+    # clauses cited by findings they must account for every clause the model was shown.
+    irrelevant_chunk_ids: list[str] = Field(default_factory=list)

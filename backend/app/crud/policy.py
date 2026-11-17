@@ -5,7 +5,7 @@ Enforces multi-tenant isolation and policy version increments.
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from app.models.policy import Policy, PolicyVersion
+from app.models.policy import Policy, PolicyVersion, PolicyVersionStatus
 from app.schemas.policy import PolicyCreate, PolicyUpdate
 
 
@@ -19,6 +19,11 @@ def _next_version(current_ver: str) -> str:
         return f"{current_ver}.1"
 
 
+def _clean_document_type(value: Optional[str]) -> Optional[str]:
+    """Blank means "applies to every document type"."""
+    return value.strip() or None if value else None
+
+
 def create_policy(db: Session, organization_id: str, data: PolicyCreate, user_id: Optional[str] = None) -> Policy:
     """Create a new policy and its initial v1 version record."""
     policy = Policy(
@@ -26,6 +31,8 @@ def create_policy(db: Session, organization_id: str, data: PolicyCreate, user_id
         name=data.name.strip(),
         description=data.description.strip() if data.description else None,
         domain=data.domain.strip().lower(),
+        document_type=_clean_document_type(data.document_type),
+        classification=data.classification,
         content=data.content,
         current_version="v1",
         created_by=user_id,
@@ -36,6 +43,7 @@ def create_policy(db: Session, organization_id: str, data: PolicyCreate, user_id
     initial_version = PolicyVersion(
         policy_id=policy.id,
         version="v1",
+        status=PolicyVersionStatus.PROCESSING,  # becomes ACTIVE once indexed for retrieval
         content=data.content,
         changelog="Initial policy creation",
         created_by=user_id,
@@ -79,6 +87,10 @@ def update_policy(db: Session, policy: Policy, data: PolicyUpdate, user_id: Opti
         policy.domain = data.domain.strip().lower()
     if data.is_active is not None:
         policy.is_active = data.is_active
+    if data.document_type is not None:
+        policy.document_type = _clean_document_type(data.document_type)
+    if data.classification is not None:
+        policy.classification = data.classification
 
     if data.content and data.content != policy.content:
         new_version = _next_version(policy.current_version)
@@ -87,6 +99,7 @@ def update_policy(db: Session, policy: Policy, data: PolicyUpdate, user_id: Opti
         version_record = PolicyVersion(
             policy_id=policy.id,
             version=new_version,
+            status=PolicyVersionStatus.PROCESSING,  # becomes ACTIVE once indexed for retrieval
             content=data.content,
             changelog=data.changelog or f"Updated policy content to {new_version}",
             created_by=user_id,

@@ -5,6 +5,7 @@ Provides tenant-isolated CRUD operations and version tracking for organization p
 from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from api.auth import require_policy_admin, require_policy_reader
 from app.db.session import get_db
@@ -16,6 +17,7 @@ from app.crud.policy import (
     list_policy_versions,
     update_policy,
 )
+from services.policy_ingestion import index_pending_text_versions
 from app.schemas.policy import (
     PolicyCreate,
     PolicyResponse,
@@ -33,7 +35,11 @@ async def create_policy_endpoint(
     db: Annotated[Session, Depends(get_db)],
 ):
     """Create a new policy and initial v1 version for the caller's organization."""
-    return create_policy(db, organization_id=user["organization_id"], data=payload, user_id=user.get("sub"))
+    policy = create_policy(db, organization_id=user["organization_id"], data=payload, user_id=user.get("sub"))
+    # Embedding calls the provider over the network, so keep it off the event loop. A failure is
+    # recorded on the version (see the versions endpoint) and does not fail the request.
+    await run_in_threadpool(index_pending_text_versions, db, policy)
+    return policy
 
 
 @router.get("", response_model=List[PolicyResponse])
@@ -71,7 +77,9 @@ async def update_policy_endpoint(
     policy = get_policy(db, policy_id=policy_id, organization_id=user["organization_id"])
     if not policy:
         raise HTTPException(status_code=404, detail={"code": "POLICY_NOT_FOUND", "message": f"Policy '{policy_id}' not found."})
-    return update_policy(db, policy=policy, data=payload, user_id=user.get("sub"))
+    policy = update_policy(db, policy=policy, data=payload, user_id=user.get("sub"))
+    await run_in_threadpool(index_pending_text_versions, db, policy)
+    return policy
 
 
 @router.delete("/{policy_id}", response_model=PolicyResponse)

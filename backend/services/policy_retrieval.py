@@ -1,10 +1,11 @@
 import os
+import re
 from dataclasses import dataclass, field
 
-from app.models.document import Document
+from sqlalchemy import case, func, literal, or_
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
+from app.models.document import Document
 from app.models.policy import (
     Policy,
     PolicyClassification,
@@ -12,12 +13,23 @@ from app.models.policy import (
     PolicyVersion,
     PolicyVersionStatus,
 )
+from services.document_types import document_type_spellings
+from services.embeddings import (  # noqa: F401  (re-exported: callers import them from here)
+    EMBEDDING_MODEL,
+    EmbeddingServiceError,
+    create_embeddings,
+    create_query_embedding,
+)
 
 
-RELEVANCE_THRESHOLD = float(os.getenv("POLICY_RELEVANCE_THRESHOLD", "0.75"))
-EMBEDDING_MODEL = "text-embedding-3-small"
-_openai_client = None
+# Minimum cosine similarity for a chunk to count as evidence. Calibrated on the evaluation set
+# (tests/rag_eval): unrelated questions score up to 0.53 and genuine answers start at 0.65, so
+# 0.55 rejects off-topic questions while keeping every real answer with a safety margin.
+# Questions that are on-topic but not covered (0.61) pass the floor on purpose: deciding
+# "the policy does not say" is the answering model's job, which must see the nearest clauses.
+RELEVANCE_THRESHOLD = float(os.getenv("POLICY_RELEVANCE_THRESHOLD", "0.55"))
 REVIEWER_ROLES = {"REVIEWER", "APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN", "COMPLIANCE", "AUDITOR"}
+# Roles allowed to read each classification; None means every authenticated role.
 CLASSIFICATION_ROLES = {
     PolicyClassification.PUBLIC: None,
     PolicyClassification.INTERNAL: None,
@@ -25,53 +37,103 @@ CLASSIFICATION_ROLES = {
     PolicyClassification.CONFIDENTIAL: {"ORG_ADMIN", "SYSTEM_ADMIN", "COMPLIANCE", "AUDITOR"},
     PolicyClassification.RESTRICTED: {"ORG_ADMIN", "SYSTEM_ADMIN"},
 }
-
-
-class EmbeddingServiceError(RuntimeError):
-    pass
-
-
-def create_embeddings(texts: list[str]) -> list[list[float]]:
-    global _openai_client
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise EmbeddingServiceError("Embedding service configuration is missing")
-    try:
-        from openai import APIError, OpenAI
-
-        if _openai_client is None:
-            _openai_client = OpenAI(api_key=api_key, timeout=10.0)
-        embeddings: list[list[float]] = []
-        for offset in range(0, len(texts), 100):
-            # Batch chunks to limit request size while using the same model as retrieval.
-            batch = texts[offset : offset + 100]
-            response = _openai_client.embeddings.create(
-                model=EMBEDDING_MODEL,
-                input=batch,
-            )
-            # The API returns an input index; restore input order before pairing vectors with chunks.
-            embeddings.extend(
-                item.embedding for item in sorted(response.data, key=lambda item: item.index)
-            )
-        if len(embeddings) != len(texts):
-            raise EmbeddingServiceError("Embedding service returned an incomplete response")
-        return embeddings
-    except ImportError as exc:
-        raise EmbeddingServiceError("The OpenAI client dependency is not installed") from exc
-    except (APIError, ValueError, RuntimeError) as exc:
-        raise EmbeddingServiceError("Embedding generation failed") from exc
-
-
-def create_query_embedding(query: str) -> list[float]:
-    """Keep query embedding on the same provider/model path as policy chunks."""
-    return create_embeddings([query])[0]
+MAX_KEYWORDS = 5
+CANDIDATE_FACTOR = 4  # candidates fetched per requested result, before de-duplication and ranking
+EXACT_TERM_BOOST = 0.1  # similarity bonus per distinct figure of the question found in a chunk
+MAX_BOOSTED_TERMS = 2
+# Validation reads policies completely when they are small; above this it reads the most relevant clauses.
+FULL_SCOPE_MAX_CHUNKS = 25
+SUBSET_MAX_CHUNKS = 30  # the model never sees more than this (30 x 1200 characters fits comfortably)
+CHUNKS_PER_QUERY = 6  # clauses taken for each field of the document when choosing a subset
+# Figures worth matching literally: 30, 2.3, $1,000, 12/05, 5%.
+_FIGURE = re.compile(r"[$€£]?\d[\d.,/:-]*\d%?|[$€£]?\d%?")
 
 
 @dataclass(frozen=True)
 class RetrievalResult:
     outcome: str
-    rows: list
+    rows: list  # (Policy, PolicyVersion, PolicyChunk, score, Document | None)
     incomplete_policies: list[dict] = field(default_factory=list)
+
+
+def readable_classifications(role: str) -> list[PolicyClassification]:
+    """Policy classifications the given role may read."""
+    normalized_role = (role or "").strip().upper()
+    return [
+        classification
+        for classification, roles in CLASSIFICATION_ROLES.items()
+        if roles is None or normalized_role in roles
+    ]
+
+
+@dataclass(frozen=True)
+class PolicyScope:
+    """Which policy content a caller may see.
+
+    Every search path (vector, keyword, validation) builds its filters here, so a
+    new search path cannot forget the organization or role checks.
+    """
+
+    organization_id: str
+    role: str
+    domain: str | None = None
+    document_type: str | None = None  # any spelling; resolved to the classifier's category
+    version: str | None = None  # None means the ACTIVE version of each policy
+    strict_untyped: bool = False  # no document_type given: only policies for every type apply
+    embedding_model: str | None = None  # set for vector search: only versions embedded with it
+
+    def policy_conditions(self) -> list:
+        """Conditions on the policy itself: tenant, state, role, domain and document type."""
+        conditions = [
+            Policy.organization_id == self.organization_id,
+            Policy.is_active.is_(True),
+            Policy.classification.in_(readable_classifications(self.role)),
+        ]
+        if self.domain is not None:
+            conditions.append(func.lower(Policy.domain) == self.domain.strip().lower())
+        if (type_condition := self._document_type_condition()) is not None:
+            conditions.append(type_condition)
+        return conditions
+
+    def _document_type_condition(self):
+        """Policies for this document's type, plus policies that apply to every type.
+
+        Matching goes through the classifier's alias table, so "Invoice", "invoice" and
+        "financial" are one type. A policy with no document_type applies to all documents.
+        """
+        wanted = document_type_spellings(self.document_type)
+        if not wanted:
+            return Policy.document_type.is_(None) if self.strict_untyped else None
+        stored = func.replace(func.lower(func.trim(Policy.document_type)), "-", "_")
+        return or_(Policy.document_type.is_(None), stored.in_(wanted))
+
+    def chunk_conditions(self) -> list:
+        """Policy conditions plus version state and source-document tenancy."""
+        conditions = self.policy_conditions()
+        # A policy created from text has no source document; if one exists it must be ours.
+        conditions.append(or_(Document.id.is_(None), Document.organization_id == self.organization_id))
+        if self.version is None:
+            conditions.append(PolicyVersion.status == PolicyVersionStatus.ACTIVE)
+        else:
+            conditions.append(PolicyVersion.version == self.version.strip())
+            conditions.append(
+                PolicyVersion.status.in_([PolicyVersionStatus.ACTIVE, PolicyVersionStatus.ARCHIVED])
+            )
+        if self.embedding_model is not None:
+            conditions.append(PolicyVersion.embedding_model == self.embedding_model)
+        return conditions
+
+
+def _chunk_query(db: Session, scope: PolicyScope, *entities):
+    """Chunks the scope allows, joined to their version, policy and optional source document."""
+    return (
+        db.query(*entities)
+        .select_from(PolicyChunk)
+        .join(PolicyVersion, PolicyVersion.id == PolicyChunk.policy_version_id)
+        .join(Policy, Policy.id == PolicyVersion.policy_id)
+        .outerjoin(Document, Document.id == PolicyVersion.source_document_id)
+        .filter(*scope.chunk_conditions())
+    )
 
 
 def retrieve_policy_evidence(
@@ -83,150 +145,170 @@ def retrieve_policy_evidence(
     document_type: str | None,
     policy_version: str | None,
     limit: int,
+    query_text: str | None = None,
 ) -> RetrievalResult:
-    distance = PolicyChunk.embedding.cosine_distance(embedding)
-    score = (1 - distance).label("score")
-    normalized_role = (role or "").strip().upper()
-    filters = [
-        Policy.organization_id == organization_id,
-        Policy.is_active.is_(True),
-        Document.organization_id == organization_id,
-        distance <= (1 - RELEVANCE_THRESHOLD),
-    ]
-    if policy_version is None:
-        filters.append(PolicyVersion.status == PolicyVersionStatus.ACTIVE)
-    if domain is not None:
-        filters.append(Policy.domain == domain)
-    if document_type is not None:
-        filters.append(Policy.document_type == document_type.strip())
-    if policy_version is not None:
-        filters.append(PolicyVersion.version == policy_version.strip())
+    """Search the policy content the caller is allowed to read.
 
-    allowed_classifications = [
-        PolicyClassification.PUBLIC,
-        PolicyClassification.INTERNAL,
-    ]
-    for classification, roles in CLASSIFICATION_ROLES.items():
-        if roles is None or normalized_role in roles:
-            allowed_classifications.append(classification)
-
-    eligible_filters = [
-        Policy.organization_id == organization_id,
-        Policy.is_active.is_(True),
-        Document.organization_id == organization_id,
-        Policy.classification.in_(allowed_classifications),
-    ]
-    if policy_version is None:
-        eligible_filters.append(PolicyVersion.status == PolicyVersionStatus.ACTIVE)
-    if domain is not None:
-        eligible_filters.append(Policy.domain == domain)
-    if document_type is not None:
-        eligible_filters.append(Policy.document_type == document_type.strip())
-    if policy_version is not None:
-        eligible_filters.append(PolicyVersion.version == policy_version.strip())
-
-    candidates = (
-        db.query(Policy, PolicyVersion, PolicyChunk, score, Document)
-        .join(PolicyVersion, PolicyVersion.policy_id == Policy.id)
-        .join(PolicyChunk, PolicyChunk.policy_version_id == PolicyVersion.id)
-        .join(Document, Document.id == PolicyVersion.source_document_id)
-        .filter(*filters)
-        .filter(Policy.classification.in_(allowed_classifications))
-        .order_by(distance)
-        .limit(limit)
-        .all()
+    Ranking is by embedding similarity. Embeddings are weak at exact figures, so when the
+    question contains numbers (an amount, a clause number, "Net 30") the chunks that contain
+    those exact figures are also considered and ranked first. The relevance floor applies to
+    every candidate, so a number alone never drags in an unrelated clause.
+    """
+    scope = PolicyScope(
+        organization_id, role, domain, document_type, policy_version, embedding_model=EMBEDDING_MODEL
     )
-    if not candidates:
-        any_candidates = (
-            db.query(PolicyChunk.id)
-            .join(PolicyVersion, PolicyVersion.id == PolicyChunk.policy_version_id)
-            .join(Policy, Policy.id == PolicyVersion.policy_id)
-            .join(Document, Document.id == PolicyVersion.source_document_id)
-            .filter(*eligible_filters)
-            .first()
-        )
-        return RetrievalResult("low_relevance" if any_candidates else "no_results", [])
-    return RetrievalResult("results", candidates)
+    distance = PolicyChunk.embedding.cosine_distance(embedding)
+    entities = (Policy, PolicyVersion, PolicyChunk, (1 - distance).label("score"), Document)
+    relevant = _chunk_query(db, scope, *entities).filter(distance <= (1 - RELEVANCE_THRESHOLD))
+    pool_size = limit * CANDIDATE_FACTOR
+
+    rows = relevant.order_by(distance).limit(pool_size).all()
+    terms = exact_terms(query_text or "")
+    if terms:
+        containing_terms = relevant.filter(_content_contains_any(terms)).order_by(distance).limit(pool_size)
+        rows = _rank_by_exact_terms(_merge_rows(rows, containing_terms.all()), terms)
+    rows = _distinct_by_content(rows)[:limit]
+    if rows:
+        return RetrievalResult("results", rows)
+    # Tell "nothing readable is indexed" apart from "indexed but not relevant enough".
+    has_readable_content = _chunk_query(db, scope, PolicyChunk.id).first() is not None
+    return RetrievalResult("low_relevance" if has_readable_content else "no_results", [])
 
 
-def retrieve_policy_validation_corpus(
+def exact_terms(question: str) -> list[str]:
+    """Figures in a question worth matching literally: 30, 2.3, $1,000, 12/05, 5%."""
+    seen = dict.fromkeys(_normalize_term(match) for match in _FIGURE.findall(question))
+    return [term for term in seen if term]
+
+
+def _normalize_term(match: str) -> str:
+    return match.strip(".,:;/-").lstrip("$€£")
+
+
+def _term_pattern(term: str) -> re.Pattern:
+    """The figure as a whole token: "2.3" must not match inside "12.3" or "2.30"."""
+    return re.compile(r"(?<![\w.,])" + re.escape(term) + r"(?!\w|[.,]\d)")
+
+
+def _content_contains_any(terms: list[str]):
+    return or_(*(PolicyChunk.content.ilike(f"%{_escape_like(term)}%", escape="\\") for term in terms))
+
+
+def _merge_rows(first: list, second: list) -> list:
+    """Union of two result lists by chunk, keeping the first occurrence."""
+    merged = {row[2].id: row for row in first}
+    for row in second:
+        merged.setdefault(row[2].id, row)
+    return list(merged.values())
+
+
+def _rank_by_exact_terms(rows: list, terms: list[str]) -> list:
+    """Order by similarity plus a boost for each distinct figure the chunk contains."""
+    patterns = [_term_pattern(term) for term in terms]
+
+    def boosted(row) -> float:
+        matched = sum(1 for pattern in patterns if pattern.search(row[2].content))
+        return float(row[3]) + EXACT_TERM_BOOST * min(matched, MAX_BOOSTED_TERMS)
+
+    return sorted(rows, key=boosted, reverse=True)
+
+
+def _distinct_by_content(rows: list) -> list:
+    """Keep the best-ranked copy when the same clause appears in several policies."""
+    seen: set[str] = set()
+    unique = []
+    for row in rows:
+        key = " ".join(row[2].content.split()).casefold()
+        if key not in seen:
+            seen.add(key)
+            unique.append(row)
+    return unique
+
+
+def _escape_like(term: str) -> str:
+    """Escape LIKE wildcards so user words match literally ('_' and '%' are wildcards)."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def search_policies_by_keywords(
     db: Session,
     organization_id: str,
     role: str,
-    embedding: list[float],
+    keywords: list[str],
     document_type: str | None,
     limit: int,
-) -> RetrievalResult:
-    """Return the complete active, readable policy scope for validation when it fits.
-
-    Unlike interactive search, validation must not silently omit relevant clauses
-    because they fell outside a top-k or similarity threshold. The bounded result
-    lets callers fail closed and request human review if the whole scope is too large.
-    Policies without a document_type are treated as organization-wide policies.
-    """
-    distance = PolicyChunk.embedding.cosine_distance(embedding)
-    normalized_role = (role or "").strip().upper()
-    allowed_classifications = [PolicyClassification.PUBLIC, PolicyClassification.INTERNAL]
-    for classification, roles in CLASSIFICATION_ROLES.items():
-        if roles is None or normalized_role in roles:
-            allowed_classifications.append(classification)
-
-    filters = [
-        Policy.organization_id == organization_id,
-        Policy.is_active.is_(True),
-        Document.organization_id == organization_id,
-        PolicyVersion.status == PolicyVersionStatus.ACTIVE,
-        Policy.classification.in_(allowed_classifications),
-    ]
-    normalized_type = document_type.strip() if document_type and document_type.strip() else None
-    if normalized_type is None:
-        filters.append(Policy.document_type.is_(None))
-    else:
-        filters.append(or_(Policy.document_type == normalized_type, Policy.document_type.is_(None)))
-
-    policy_scope = [
-        Policy.organization_id == organization_id,
-        Policy.is_active.is_(True),
-        Policy.classification.in_(allowed_classifications),
-    ]
-    if normalized_type is None:
-        policy_scope.append(Policy.document_type.is_(None))
-    else:
-        policy_scope.append(or_(Policy.document_type == normalized_type, Policy.document_type.is_(None)))
-
-    scoped_policies = db.query(Policy.id, Policy.name, Policy.current_version).filter(*policy_scope).all()
-    indexed_policy_ids = {
-        row[0]
-        for row in (
-            db.query(Policy.id)
-            .join(PolicyVersion, PolicyVersion.policy_id == Policy.id)
-            .join(PolicyChunk, PolicyChunk.policy_version_id == PolicyVersion.id)
-            .join(Document, Document.id == PolicyVersion.source_document_id)
-            .filter(*filters)
-            .distinct()
-            .all()
-        )
-    }
-    incomplete_policies = [
-        {"policy_id": policy_id, "policy_name": name, "version": current_version}
-        for policy_id, name, current_version in scoped_policies
-        if policy_id not in indexed_policy_ids
-    ]
-    if incomplete_policies:
-        return RetrievalResult("unindexed_policy_evidence", [], incomplete_policies)
-
-    candidates = (
-        db.query(Policy, PolicyVersion, PolicyChunk, (1 - distance).label("score"), Document)
-        .join(PolicyVersion, PolicyVersion.policy_id == Policy.id)
-        .join(PolicyChunk, PolicyChunk.policy_version_id == PolicyVersion.id)
-        .join(Document, Document.id == PolicyVersion.source_document_id)
-        .filter(*filters)
-        .order_by(distance)
-        .limit(limit + 1)
+) -> list:
+    """Keyword fallback for when embeddings are unavailable; same access rules as vector search."""
+    terms = list(dict.fromkeys(word.lower() for word in keywords if word))[:MAX_KEYWORDS]
+    if not terms:
+        return []
+    scope = PolicyScope(organization_id, role, document_type=document_type)
+    matches = []
+    for term in terms:
+        pattern = f"%{_escape_like(term)}%"
+        matches.append(PolicyChunk.content.ilike(pattern, escape="\\"))
+        matches.append(Policy.name.ilike(pattern, escape="\\"))
+    matched_terms = sum((case((match, 1), else_=0) for match in matches), literal(0))
+    return (
+        _chunk_query(db, scope, Policy, PolicyVersion, PolicyChunk, literal(0.0).label("score"), Document)
+        .filter(or_(*matches))
+        .order_by(matched_terms.desc(), PolicyChunk.chunk_index)
+        .limit(limit)
         .all()
     )
-    if len(candidates) > limit:
-        return RetrievalResult("scope_too_large", candidates[:limit])
-    if not candidates:
-        return RetrievalResult("no_results", [])
-    return RetrievalResult("results", candidates)
+
+
+def retrieve_policy_validation_evidence(
+    db: Session,
+    organization_id: str,
+    role: str,
+    document_type: str | None,
+    query_embeddings: list[list[float]],
+) -> RetrievalResult:
+    """The policy clauses a document must be checked against.
+
+    Outcomes:
+    * `full_scope`: every applicable clause fits, so the model sees all of them.
+    * `relevant_subset`: the applicable policies are larger than the model should read, so it
+      sees the clauses most relevant to this document (one search per query embedding).
+    * `no_applicable_policies`: nothing applies to this document type.
+    * `unindexed_policy_evidence`: policies apply but none of them is searchable yet.
+
+    `incomplete_policies` lists applicable policies that cannot be searched (not indexed, or
+    indexed with another embedding model); callers must report them, never skip them silently.
+    """
+    scope = PolicyScope(
+        organization_id,
+        role,
+        document_type=document_type,
+        strict_untyped=True,
+        embedding_model=EMBEDDING_MODEL,
+    )
+    applicable = db.query(Policy.id, Policy.name, Policy.current_version).filter(*scope.policy_conditions()).all()
+    searchable_ids = {row[0] for row in _chunk_query(db, scope, Policy.id).distinct().all()}
+    incomplete = [
+        {"policy_id": policy_id, "policy_name": name, "version": version}
+        for policy_id, name, version in applicable
+        if policy_id not in searchable_ids
+    ]
+    if not searchable_ids:
+        return RetrievalResult("unindexed_policy_evidence" if incomplete else "no_applicable_policies", [], incomplete)
+
+    if _chunk_query(db, scope, func.count(PolicyChunk.id)).scalar() <= FULL_SCOPE_MAX_CHUNKS:
+        rows = _closest_chunks(db, scope, query_embeddings[0], limit=FULL_SCOPE_MAX_CHUNKS)
+        return RetrievalResult("full_scope", rows, incomplete)
+
+    best_by_chunk: dict[str, tuple] = {}
+    for embedding in query_embeddings:
+        for row in _closest_chunks(db, scope, embedding, limit=CHUNKS_PER_QUERY):
+            known = best_by_chunk.get(row[2].id)
+            if known is None or row[3] > known[3]:
+                best_by_chunk[row[2].id] = row
+    ranked = sorted(best_by_chunk.values(), key=lambda row: row[3], reverse=True)
+    return RetrievalResult("relevant_subset", ranked[:SUBSET_MAX_CHUNKS], incomplete)
+
+
+def _closest_chunks(db: Session, scope: PolicyScope, embedding: list[float], limit: int) -> list:
+    distance = PolicyChunk.embedding.cosine_distance(embedding)
+    entities = (Policy, PolicyVersion, PolicyChunk, (1 - distance).label("score"), Document)
+    return _chunk_query(db, scope, *entities).order_by(distance).limit(limit).all()

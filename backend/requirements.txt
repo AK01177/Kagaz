@@ -19,3 +19,4 @@ pdf2image
 rapidocr_onnxruntime
 Pillow
 numpy
+python-docx

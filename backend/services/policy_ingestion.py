@@ -1,8 +1,19 @@
-"""PDF policy ingestion into the existing organization-scoped vector store."""
+"""Policy ingestion: turn a policy version into searchable, organization-scoped chunks.
+
+Two entry points share one indexing core:
+* `ingest_policy_version`    - an uploaded PDF / DOCX / TXT file stored as a Document.
+* `index_text_policy_version` - policy text entered through the text policy API.
+
+A version is only made ACTIVE after every step succeeded, in one transaction, so readers
+never see a half-indexed policy. Any failure leaves the version FAILED with a short,
+user-safe message, and the previously ACTIVE version keeps serving.
+"""
+import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
@@ -13,13 +24,11 @@ from app.models.policy import (
     PolicyVersion,
     PolicyVersionStatus,
 )
-from services.extraction import ExtractionError, extract_text
-from services.policy_retrieval import EmbeddingServiceError, create_embeddings
-from storage.document_storage import DocumentStorage
+from services.embeddings import EMBEDDING_MODEL, EmbeddingServiceError, create_embeddings
+from services.policy_chunking import ChunkDraft, chunk_policy, chunk_text
+from services.policy_text import PolicyTextError, extract_policy_pages
+from storage.document_storage import DocumentNotFoundError, DocumentStorage
 
-
-CHUNK_SIZE = 1200
-CHUNK_OVERLAP = 150
 logger = logging.getLogger(__name__)
 
 
@@ -27,28 +36,8 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def chunk_policy_text(text: str) -> list[str]:
-    """Split text into overlapping, ordered chunks without dropping content."""
-    text = text.strip()
-    if not text:
-        return []
-
-    # Overlap preserves context for sentences that cross a chunk boundary.
-    chunks: list[str] = []
-    start = 0
-    while start < len(text):
-        end = min(start + CHUNK_SIZE, len(text))
-        if end < len(text):
-            boundary = max(text.rfind("\n", start, end), text.rfind(" ", start, end))
-            if boundary > start + CHUNK_SIZE // 2:
-                end = boundary
-        content = text[start:end].strip()
-        if content:
-            chunks.append(content)
-        if end >= len(text):
-            break
-        start = max(start + 1, end - CHUNK_OVERLAP)
-    return chunks
+def _content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _fail(db: Session, version: PolicyVersion, message: str) -> int:
@@ -60,26 +49,11 @@ def _fail(db: Session, version: PolicyVersion, message: str) -> int:
     return 0
 
 
-def ingest_policy_version(
-    db: Session,
-    policy: Policy,
-    version: PolicyVersion,
-    source_filename: str,
-    storage: DocumentStorage,
-    *,
-    expected_organization_id: Optional[str] = None,
-) -> int:
-    """Record unexpected processing errors so this version remains visible and retryable."""
+def _guarded(db: Session, version: PolicyVersion, work: Callable[[], int]) -> int:
+    """Run `work`; on an unexpected error record it so the version stays visible and retryable."""
     version_id = version.id
     try:
-        return _process_policy_version(
-            db,
-            policy,
-            version,
-            source_filename,
-            storage,
-            expected_organization_id=expected_organization_id,
-        )
+        return work()
     except Exception:
         # Undo any partial chunk writes before recording the failure in a fresh transaction.
         db.rollback()
@@ -93,7 +67,7 @@ def ingest_policy_version(
             raise
 
 
-def _process_policy_version(
+def ingest_policy_version(
     db: Session,
     policy: Policy,
     version: PolicyVersion,
@@ -102,7 +76,41 @@ def _process_policy_version(
     *,
     expected_organization_id: Optional[str] = None,
 ) -> int:
-    """Verify organization boundaries, extract, embed and atomically activate a policy version."""
+    """Index an uploaded policy file. Returns the number of chunks (0 when it failed)."""
+    return _guarded(
+        db,
+        version,
+        lambda: _ingest_uploaded_file(
+            db, policy, version, source_filename, storage, expected_organization_id
+        ),
+    )
+
+
+def index_text_policy_version(db: Session, policy: Policy, version: PolicyVersion) -> int:
+    """Index a text-entered policy version. Returns the number of chunks (0 when it failed)."""
+    return _guarded(db, version, lambda: _index_text(db, policy, version))
+
+
+def index_pending_text_versions(db: Session, policy: Policy) -> None:
+    """Index every text-entered version still waiting to be indexed, oldest first."""
+    pending = [
+        version
+        for version in reversed(policy.versions)  # `versions` is newest first
+        if version.status == PolicyVersionStatus.PROCESSING and version.source_document_id is None
+    ]
+    for version in pending:
+        index_text_policy_version(db, policy, version)
+
+
+def _ingest_uploaded_file(
+    db: Session,
+    policy: Policy,
+    version: PolicyVersion,
+    source_filename: str,
+    storage: DocumentStorage,
+    expected_organization_id: Optional[str],
+) -> int:
+    """Verify organization boundaries, read the file and index it."""
     policy_org = (policy.organization_id or "").strip()
     if not policy_org:
         return _fail(db, version, "Policy ingestion rejected: missing organization context.")
@@ -120,37 +128,57 @@ def _process_policy_version(
         )
 
     try:
-        # Reuse the document extraction service so scanned PDFs take its OCR fallback path.
-        text = extract_text(version.source_document_id, storage)
-    except (ExtractionError, OSError):
+        pages = extract_policy_pages(storage.resolve(version.source_document_id))
+    except (PolicyTextError, DocumentNotFoundError, OSError):
         return _fail(db, version, "Policy text extraction failed.")
+    if not pages:
+        return _fail(db, version, "No readable text was extracted from the policy file.")
+    return _index_version(db, policy, version, chunk_policy(pages), source_filename)
 
-    chunks = chunk_policy_text(text)
-    if not chunks:
-        return _fail(db, version, "No readable text was extracted from the PDF.")
 
+def _index_text(db: Session, policy: Policy, version: PolicyVersion) -> int:
+    if not (policy.organization_id or "").strip():
+        return _fail(db, version, "Policy ingestion rejected: missing organization context.")
+    if version.policy_id != policy.id:
+        return _fail(db, version, "Policy ingestion rejected: policy version mismatch.")
+    return _index_version(db, policy, version, chunk_text(version.content or ""), None)
+
+
+def _index_version(
+    db: Session,
+    policy: Policy,
+    version: PolicyVersion,
+    drafts: list[ChunkDraft],
+    source_filename: Optional[str],
+) -> int:
+    """Embed the chunks, replace the version's chunks and activate it atomically."""
+    if not drafts:
+        return _fail(db, version, "No readable text was extracted from the policy.")
+
+    hashes = [_content_hash(draft.content) for draft in drafts]
     try:
-        embeddings = create_embeddings(chunks)
+        vectors = _vectors_for(db, policy, version, drafts, hashes)
     except EmbeddingServiceError:
         return _fail(db, version, "Policy embeddings could not be generated.")
 
-    # Match the database vector column and reject incomplete provider responses before writes.
-    if len(embeddings) != len(chunks) or any(
-        len(embedding) != EMBEDDING_DIMENSION for embedding in embeddings
-    ):
+    # Reject incomplete provider responses before any write.
+    if len(vectors) != len(drafts) or any(len(vector) != EMBEDDING_DIMENSION for vector in vectors):
         return _fail(db, version, "The embedding service returned invalid vectors.")
 
-    db.query(PolicyChunk).filter(
-        PolicyChunk.policy_version_id == version.id
-    ).delete(synchronize_session=False)
+    db.query(PolicyChunk).filter(PolicyChunk.policy_version_id == version.id).delete(
+        synchronize_session=False
+    )
     # Keep source and tenant identifiers with each chunk for audit and retrieval traceability.
-    for index, (content, embedding) in enumerate(zip(chunks, embeddings)):
+    for index, (draft, content_hash, vector) in enumerate(zip(drafts, hashes, vectors)):
         db.add(
             PolicyChunk(
                 policy_version_id=version.id,
-                content=content,
-                embedding=embedding,
+                content=draft.content,
+                content_hash=content_hash,
+                embedding=vector,
                 chunk_index=index,
+                page_number=draft.page_number,
+                section=draft.section,
                 chunk_metadata={
                     "chunk_index": index,
                     "organization_id": policy.organization_id,
@@ -171,14 +199,84 @@ def _process_policy_version(
     db.query(PolicyVersion).filter(
         PolicyVersion.policy_id == policy.id,
         PolicyVersion.status == PolicyVersionStatus.ACTIVE,
-    ).update(
-        {PolicyVersion.status: PolicyVersionStatus.ARCHIVED},
-        synchronize_session=False,
-    )
+    ).update({PolicyVersion.status: PolicyVersionStatus.ARCHIVED}, synchronize_session=False)
     db.flush()
     version.status = PolicyVersionStatus.ACTIVE
+    version.embedding_model = EMBEDDING_MODEL
     version.ingestion_error = None
     version.finished_at = _utc_now()
     version.published_at = version.finished_at
+    policy.current_version = version.version
     db.commit()
-    return len(chunks)
+    return len(drafts)
+
+
+def _vectors_for(
+    db: Session,
+    policy: Policy,
+    version: PolicyVersion,
+    drafts: list[ChunkDraft],
+    hashes: list[str],
+) -> list[list[float]]:
+    """One vector per draft, calling the embedding API only for clauses not seen before.
+
+    A new version of the same policy usually changes a few clauses. Unchanged clauses
+    reuse the vector stored for the identical text (same policy, same embedding model),
+    which keeps ingestion fast and within the provider's rate limits.
+    """
+    known = _stored_vectors(db, policy, version, set(hashes))
+    missing = [draft.content for draft, content_hash in zip(drafts, hashes) if content_hash not in known]
+    if missing:
+        for content, vector in zip(missing, create_embeddings(missing)):
+            known[_content_hash(content)] = vector
+    if any(content_hash not in known for content_hash in hashes):
+        return []  # the provider returned fewer vectors than requested; the caller rejects this
+    return [known[content_hash] for content_hash in hashes]
+
+
+def _stored_vectors(
+    db: Session, policy: Policy, version: PolicyVersion, hashes: set[str]
+) -> dict[str, list[float]]:
+    rows = (
+        db.query(PolicyChunk.content_hash, PolicyChunk.embedding)
+        .join(PolicyVersion, PolicyVersion.id == PolicyChunk.policy_version_id)
+        .filter(
+            PolicyVersion.policy_id == policy.id,
+            PolicyVersion.id != version.id,
+            PolicyVersion.embedding_model == EMBEDDING_MODEL,
+            PolicyChunk.content_hash.in_(hashes),
+        )
+        .all()
+    )
+    return {content_hash: [float(value) for value in embedding] for content_hash, embedding in rows}
+
+
+def reindex_stale_versions(db: Session, storage: DocumentStorage) -> dict[str, int]:
+    """Re-embed ACTIVE versions whose vectors came from another (or an unknown) embedding model.
+
+    Retrieval ignores such versions, so after changing the embedding model this is what
+    brings a policy back. Returns {policy_version_id: chunk_count}; 0 means that version failed.
+    """
+    stale = (
+        db.query(PolicyVersion, Policy)
+        .join(Policy, Policy.id == PolicyVersion.policy_id)
+        .filter(
+            PolicyVersion.status == PolicyVersionStatus.ACTIVE,
+            or_(PolicyVersion.embedding_model.is_(None), PolicyVersion.embedding_model != EMBEDDING_MODEL),
+        )
+        .all()
+    )
+    results: dict[str, int] = {}
+    for version, policy in stale:
+        version_id = version.id
+        version.status = PolicyVersionStatus.PROCESSING
+        db.commit()
+        if version.source_document_id is None:
+            results[version_id] = index_text_policy_version(db, policy, version)
+            continue
+        source = db.get(Document, version.source_document_id)
+        filename = source.filename if source else ""
+        results[version_id] = ingest_policy_version(
+            db, policy, version, filename, storage, expected_organization_id=policy.organization_id
+        )
+    return results
