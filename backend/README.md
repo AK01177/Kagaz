@@ -24,6 +24,7 @@ Interactive documentation: http://127.0.0.1:8000/docs. `GET /api/health` is publ
 | `SUPABASE_ANON_KEY` | Supabase publishable/anon API key | Required for authenticated requests |
 | `OPENROUTER_API_KEY` | OpenRouter key for classification and structured extraction | Optional; required to run AI processing |
 | `DOCUMENT_STORAGE_DIR` | Local storage directory | `storage_data`, relative to working directory |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call this API | Localhost ports 3000/3001 |
 
 Export variables or create a `.env` file (see `backend/.env.example`). Kagaz roles and organization memberships remain in its relational database; Supabase Auth owns credentials and user authentication.
 
@@ -40,7 +41,7 @@ multipart parser, including when Content-Length is missing or inaccurate.
 Oversized requests return 413 and partial parser files are closed. The separate
 10 MiB file check remains in place after parsing.
 
-Documents use generated IDs as filenames. Metadata is persisted in `storage_data/metadata/<document_id>.json`, including file size, OCR text length, storage path, submitter and organization. Document records and extracted fields are persisted to the configured database when it is available. Identity comes from the verified token.
+Documents use generated IDs as filenames. Metadata is persisted in `storage_data/metadata/<document_id>.json`, including file size, OCR text length, storage path, submitter and organization. When the database is configured, document records, extracted fields, and audit events are written in one database transaction; a persistence failure rejects the upload and removes its local file and metadata. Identity comes from the verified token. S3 storage is optional and currently applies to policy source files, not these document uploads.
 
 Errors use `{"error": {"code": "...", "message": "..."}}`: invalid/missing files return 400, missing/invalid tokens 401, forbidden uploads 403, oversized files 413, unsupported types 415, malformed fields 422, storage failures 500, and missing authentication configuration 503.
 

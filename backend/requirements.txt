@@ -11,7 +11,6 @@ pypdf
 reportlab
 python-multipart
 PyJWT>=2.10,<3
-typesafe-sdk
 alembic
 openai
 pgvector
@@ -20,5 +19,5 @@ rapidocr_onnxruntime
 Pillow
 numpy
 python-docx
-boto3 
+boto3
 moto[s3]
