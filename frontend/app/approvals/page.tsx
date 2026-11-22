@@ -117,7 +117,7 @@ function ApprovalsContent() {
 
       setSuccessNotice(
         `Document ${selectedDocId} has been successfully ${
-          decisionType === "approve" ? "approved & stamped" : "rejected"
+          decisionType === "approve" ? "approved" : "rejected"
         }. Permanent audit transition recorded.`
       );
       closeDecisionModal();
@@ -191,7 +191,7 @@ function ApprovalsContent() {
               <h2>Files Requiring Managerial Action</h2>
             </div>
             <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-              All approvals and rejections are cryptographically attributed to your authenticated actor ID.
+              Approval and rejection actions are associated with the authenticated user in the audit history.
             </span>
           </div>
 
@@ -310,7 +310,7 @@ function ApprovalsContent() {
                       : "Record Formal Document Rejection"}
                   </h2>
                   <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)", lineHeight: 1.5 }}>
-                    Target document: <code>{selectedDocId}</code>. This managerial action transitions the document state and records a permanent cryptographic audit entry.
+                    Target document: <code>{selectedDocId}</code>. This action changes the document state and records an audit event.
                   </p>
                 </div>
 

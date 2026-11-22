@@ -452,7 +452,7 @@ function AdminUsersContent() {
             </div>
 
             <p style={{ fontSize: "12px", color: "var(--body)", lineHeight: 1.6, margin: "0 0 16px" }}>
-              In Kagaz, user identities are cryptographically provisioned at the enterprise identity provider level. Once provisioned, members can be assigned roles within <code>{currentOrg}</code> using the directory role switcher above.
+              Sign-in identities are managed by Supabase. A matching Kagaz profile and organization membership must exist before a user can access this workspace. Members with an existing profile can be assigned roles in <code>{currentOrg}</code> using the directory role switcher above.
             </p>
 
             <div
@@ -469,7 +469,7 @@ function AdminUsersContent() {
               <ul style={{ margin: "8px 0 0", paddingLeft: "18px", color: "var(--muted)", lineHeight: 1.6 }}>
                 <li><b>SUBMITTER</b>: Ingest files and run structured rapid extraction.</li>
                 <li><b>REVIEWER</b>: Inspect, override categories, and verify queue items.</li>
-                <li><b>APPROVER</b>: Exercise managerial sign-off and permanent certification.</li>
+                <li><b>APPROVER</b>: Exercise managerial sign-off and approve or reject documents.</li>
                 <li><b>ORG_ADMIN</b>: Manage policy governance and organization members.</li>
               </ul>
             </div>
