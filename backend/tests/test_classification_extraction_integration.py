@@ -517,7 +517,7 @@ def test_09_persistence_failure_does_not_report_false_success(tmp_path, monkeypa
 
     # Fake db session that fails persistence
     fake_db = MagicMock()
-    fake_db.query.side_effect = Exception("DB connection dropped")
+    fake_db.commit.side_effect = Exception("DB connection dropped")
 
     res = upload_module.save_upload(file, storage, user, db=fake_db)
     # The failure prevents status from becoming EXTRACTED

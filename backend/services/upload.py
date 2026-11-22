@@ -282,6 +282,25 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
 
             response["file_size"] = size
 
+            # Persist before publishing metadata so a failed database write can
+            # downgrade the local result from EXTRACTED to CLASSIFIED.
+            if db is not None:
+                persisted = _persist_to_db(
+                    db,
+                    document_id=document_id,
+                    filename=filename,
+                    mime=canonical_mime,
+                    size=size,
+                    path=document_path,
+                    user=user,
+                    response=response,
+                    extraction=extraction_obj if extracted_fields else None,
+                )
+                if not persisted:
+                    response["status"] = "CLASSIFIED"
+                    extracted_fields = None
+                    extracted_confidences = None
+
             metadata = {
                 **response,
                 "file_size": size,
@@ -297,27 +316,6 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
             staged_metadata = Path(staging) / "metadata.json"
             staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             staged_metadata.replace(metadata_path)
-
-            # Persist after local metadata is ready, so a metadata write failure
-            # cannot leave a committed database record with no local file metadata.
-            if db is not None:
-                persisted = _persist_to_db(
-                    db,
-                    document_id=document_id,
-                    filename=filename,
-                    mime=canonical_mime,
-                    size=size,
-                    path=document_path,
-                    user=user,
-                    response=response,
-                    extraction=extraction_obj if extracted_fields else None,
-                )
-                if not persisted:
-                    raise UploadError(
-                        503,
-                        "DATABASE_PERSISTENCE_FAILED",
-                        "The document could not be recorded. Please retry the upload.",
-                    )
 
     except UploadError:
         if published_document:
