@@ -8,13 +8,13 @@ GEMINI_API_KEY and DATABASE_URL in backend/.env.
 """
 from app.db.session import SessionLocal
 from services.policy_ingestion import reindex_stale_versions
-from storage.document_storage import DocumentStorage
+from storage.s3_policy_storage import get_policy_storage
 
 
 def main() -> None:
     if SessionLocal is None:
         raise SystemExit("DATABASE_URL is not configured.")
-    storage = DocumentStorage(str(DocumentStorage().base_dir / "policy_sources"))
+    storage = get_policy_storage()
     with SessionLocal() as db:
         results = reindex_stale_versions(db, storage)
     if not results:

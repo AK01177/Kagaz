@@ -38,7 +38,7 @@ from services.policy_text import (
     validate_policy_file,
 )
 from services.upload import CHUNK_BYTES, MAX_UPLOAD_BYTES
-from storage.document_storage import DocumentStorage
+from storage.s3_policy_storage import S3PolicyStorage, get_policy_storage
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,14 @@ def _ingestion_response(
         chunk_count=chunk_count,
         ingestion_error=version.ingestion_error,
     )
+
+
+def _discard_source(storage, document_id: str, extension: str, local_path) -> None:
+    """Remove a source file that was stored but never recorded."""
+    if isinstance(storage, S3PolicyStorage):
+        storage.delete(document_id, extension)
+    elif local_path is not None:
+        local_path.unlink(missing_ok=True)
 
 
 def _ingest_uploaded_policy(
@@ -123,15 +131,19 @@ def _ingest_uploaded_policy(
             })
 
     # Keep policy files outside the generic document download lookup path.
-    storage_root = DocumentStorage()
-    storage = DocumentStorage(str(storage_root.base_dir / "policy_sources"))
-    storage.base_dir.mkdir(parents=True, exist_ok=True)
+    storage = get_policy_storage()
+    use_s3 = isinstance(storage, S3PolicyStorage)
+    if not use_s3:
+        storage.base_dir.mkdir(parents=True, exist_ok=True)
     document_id = f"doc_{uuid4().hex}"
-    document_path = storage.base_dir / f"{document_id}{extension}"
+    document_path = None if use_s3 else storage.base_dir / f"{document_id}{extension}"
+    storage_path = None
     size = 0
     try:
         # Validate in a staging directory so rejected uploads never leave a partial source file.
-        with TemporaryDirectory(prefix="policy_upload_", dir=storage.base_dir) as staging:
+        with TemporaryDirectory(
+            prefix="policy_upload_", dir=None if use_s3 else storage.base_dir
+        ) as staging:
             staged_path = Path(staging) / f"policy{extension}"
             with staged_path.open("wb") as destination:
                 while chunk := file.file.read(CHUNK_BYTES):
@@ -154,7 +166,11 @@ def _ingest_uploaded_policy(
                     "code": "INVALID_FILE",
                     "message": str(exc),
                 }) from exc
-            staged_path.replace(document_path)
+            if use_s3:
+                storage_path = storage.store(staged_path, document_id, extension)
+            else:
+                staged_path.replace(document_path)
+                storage_path = str(document_path.resolve())
 
         if policy is None:
             policy = Policy(
@@ -177,7 +193,7 @@ def _ingest_uploaded_policy(
             filename=filename,
             file_type=SUPPORTED_POLICY_FORMATS[extension],
             file_size=size,
-            storage_path=str(document_path.resolve()),
+            storage_path=storage_path,
             status=DocumentStatus.UPLOADED,
         )
         version = PolicyVersion(
@@ -193,11 +209,11 @@ def _ingest_uploaded_policy(
         db.refresh(version)
         db.refresh(source)
     except HTTPException:
-        document_path.unlink(missing_ok=True)
+        _discard_source(storage, document_id, extension, document_path)
         raise
     except Exception:
         db.rollback()
-        document_path.unlink(missing_ok=True)
+        _discard_source(storage, document_id, extension, document_path)
         logger.error("Could not record policy ingestion request")
         raise HTTPException(500, detail={
             "code": "POLICY_INGESTION_RECORD_FAILED",
@@ -343,8 +359,7 @@ async def retry_policy_version(
         chunk_count = await run_in_threadpool(index_text_policy_version, db, policy, version)
         db.refresh(version)
         return _ingestion_response(policy, version, None, chunk_count)
-    storage_root = DocumentStorage()
-    storage = DocumentStorage(str(storage_root.base_dir / "policy_sources"))
+    storage = get_policy_storage()
     chunk_count = await run_in_threadpool(
         ingest_policy_version,
         db,

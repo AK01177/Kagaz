@@ -20,3 +20,5 @@ rapidocr_onnxruntime
 Pillow
 numpy
 python-docx
+boto3 
+moto[s3]
