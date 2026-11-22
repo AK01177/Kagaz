@@ -95,6 +95,8 @@ ALL_SUPPORTED_EXTENSIONS = TEXT_PDF_EXTENSIONS | IMAGE_EXTENSIONS
 
 _WHITESPACE_RUN = re.compile(r"[ \t]+")
 _BLANK_LINE_RUN = re.compile(r"\n{3,}")
+MAX_OCR_PDF_PAGES = 50
+MAX_OCR_PAGE_DIMENSION = 2000
 
 # Singleton PaddleOCR instance — initialised once on first use
 _ocr_instance: Optional["PaddleOCR"] = None  # type: ignore[type-arg]
@@ -186,16 +188,34 @@ def _ocr_pdf(path: Path) -> str:
         )
 
     try:
+        page_count = len(PdfReader(str(path)).pages)
+        if page_count > MAX_OCR_PDF_PAGES:
+            raise OcrExtractionError(
+                f"Scanned PDFs are limited to {MAX_OCR_PDF_PAGES} pages for OCR."
+            )
         with tempfile.TemporaryDirectory(prefix="kagaz_ocr_") as tmp:
-            images = convert_from_path(str(path), output_folder=tmp, fmt="png")
             texts = []
             ocr = _get_ocr()
-            for img in images:
-                import numpy as np  # type: ignore[import]
-                arr = np.array(img)
-                result = ocr.ocr(arr, cls=True)
-                page_lines = _flatten_paddle_result(result)
-                texts.append("\n".join(page_lines))
+            for page_number in range(1, page_count + 1):
+                images = convert_from_path(
+                    str(path),
+                    first_page=page_number,
+                    last_page=page_number,
+                    output_folder=tmp,
+                    fmt="png",
+                    size=MAX_OCR_PAGE_DIMENSION,
+                )
+                if not images:
+                    continue
+                img = images[0]
+                try:
+                    import numpy as np  # type: ignore[import]
+                    arr = np.array(img)
+                    result = ocr.ocr(arr, cls=True)
+                    page_lines = _flatten_paddle_result(result)
+                    texts.append("\n".join(page_lines))
+                finally:
+                    img.close()
             return _normalize("\n".join(texts))
     except OcrExtractionError:
         raise

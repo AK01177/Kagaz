@@ -200,7 +200,7 @@ function PoliciesContent() {
     try {
       const nextActive = !policy.is_active;
       const res = await fetchWithAuth(`${API_URL}/api/policies/${policy.id}`, {
-        method: "PATCH",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: nextActive }),
       });

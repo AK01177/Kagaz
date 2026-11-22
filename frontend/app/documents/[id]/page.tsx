@@ -181,7 +181,7 @@ function DynamicDocumentStage({
         <strong>
           TOTAL CHARGED <span>{typeof total === "number" ? `$${total.toLocaleString()}` : total}</span>
         </strong>
-        <small>DIGITALLY CERTIFIED · RAG COMPLIANT</small>
+        <small>EXTRACTED DOCUMENT FIELDS</small>
         <div className="uncertain" style={{ top: "115px", right: "14px", width: "120px", height: "16px" }} />
       </div>
     );
@@ -267,12 +267,13 @@ function OverrideSheet({
   documentId: string;
   currentCategory: string;
   onClose: () => void;
-  onSaved: (category: string) => void;
+  onSaved: (category: string, confidence: number | null, status: string) => void;
   fetchWithAuth: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }) {
   const [rationale, setRationale] = useState("");
   const [type, setType] = useState("Legal Contract");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSave() {
     setSubmitting(true);
@@ -296,17 +297,24 @@ function OverrideSheet({
     const canonicalCategory = canonicalMap[type] || type.toLowerCase().replace(/ /g, "_");
 
     try {
-      await fetchWithAuth(`${API_URL}/api/documents/${documentId}/classification`, {
+      const response = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/classification`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ category: canonicalCategory, notes: rationale }),
       });
-    } catch {}
-    onSaved(type);
-    setSubmitting(false);
-    onClose();
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result?.error?.message || result?.detail?.message || result?.detail || `Save failed (${response.status}).`);
+      }
+      onSaved(type, result.confidence ?? null, result.status || "CLASSIFIED");
+      onClose();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save the classification.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -340,6 +348,7 @@ function OverrideSheet({
               {currentCategory} <Badge>AI · Evaluated</Badge>
             </div>
           </label>
+          {error && <p role="alert" className="error-text">{error}</p>}
           <label>
             <span>PROPOSED CLASSIFICATION</span>
             <select value={type} onChange={(e) => setType(e.target.value)}>
@@ -364,7 +373,7 @@ function OverrideSheet({
         </div>
         <div className="sheet-foot">
           <p>
-            <Icon name="stamp" /> This override is permanent and attributed to the certified reviewer. The original AI classification stays in the ledger.
+            <Icon name="stamp" /> The backend records the corrected classification and reviewer rationale in the document audit history.
           </p>
           <Button
             variant="primary"
@@ -372,7 +381,7 @@ function OverrideSheet({
             disabled={!rationale || submitting}
             onClick={handleSave}
           >
-            {submitting ? "Stamping File..." : "Save & Affix Permanent Stamp"}
+            {submitting ? "Saving..." : "Save Classification"}
           </Button>
         </div>
       </aside>
@@ -387,14 +396,14 @@ function DocumentDetailsContent(props: {
   const routeParams = useParams();
   const documentId = unwrapped?.id || (routeParams?.id as string) || "";
   const isDemo = Boolean(documentId && (documentId.startsWith("doc_demo") || documentId === "demo"));
-  const { fetchWithAuth, token } = useAuth();
+  const { fetchWithAuth, token, user, activeOrgId } = useAuth();
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [document, setDocument] = useState<DocumentRecord | null>(null);
   const [loadingDoc, setLoadingDoc] = useState(true);
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null);
   const [showOverride, setShowOverride] = useState(false);
-  const [certified, setCertified] = useState(false);
+  const approved = document?.status === "APPROVED";
   const [rerunning, setRerunning] = useState(false);
   const [copied, setCopied] = useState(false);
   const [filePreview, setFilePreview] = useState<{ documentId: string; url: string } | null>(null);
@@ -475,13 +484,11 @@ function DocumentDetailsContent(props: {
     async function loadData() {
       // 1. Session storage cache check
       try {
-        const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
+        const cacheKey = `kagaz_doc_${user?.user_id || ""}_${activeOrgId || user?.organization_id || ""}_${documentId}`;
+        const cached = sessionStorage.getItem(cacheKey);
         if (cached && !ignore) {
           const parsed = JSON.parse(cached);
           setDocument(parsed);
-          if (parsed.status === "REVIEWER_VERIFIED" || parsed.is_manually_corrected) {
-            setCertified(true);
-          }
         }
       } catch {}
 
@@ -505,15 +512,12 @@ function DocumentDetailsContent(props: {
               organization_id: reviewData.document.organization_id,
               ocr_text_length: metadata.ocr_text_length ?? reviewData.ocr_text?.length ?? 0,
             });
-            if (reviewData.document.status === "APPROVED" || reviewData.document.status === "REVIEWER_VERIFIED") {
-              setCertified(true);
-            }
           }
           if (reviewData.extractions && reviewData.extractions.length > 0) {
             const fieldsObj: Record<string, string | number | string[]> = {};
             const confObj: Record<string, number> = {};
-            reviewData.extractions.forEach((e: { field_name: string; field_value: string; confidence?: number }) => {
-              fieldsObj[e.field_name] = e.field_value;
+            reviewData.extractions.forEach((e: { field_name: string; value: string; confidence?: number }) => {
+              fieldsObj[e.field_name] = e.value;
               confObj[e.field_name] = e.confidence ?? 0.95;
             });
             setExtraction({
@@ -536,7 +540,10 @@ function DocumentDetailsContent(props: {
               summary: latestRun.summary || "Policy validation evaluated against organization covenants.",
               retrieval_outcome: latestRun.retrieval_outcome || "SUCCESS",
               policy_versions: latestRun.policy_versions || [],
-              findings: latestRun.findings || [],
+              findings: (latestRun.findings || []).map((finding: PolicyValidationFinding & { source_references?: PolicyValidationSource[] }) => ({
+                ...finding,
+                sources: finding.sources || finding.source_references || [],
+              })),
               created_at: latestRun.created_at || new Date().toISOString(),
             });
           }
@@ -549,7 +556,6 @@ function DocumentDetailsContent(props: {
           if (res.ok && !ignore) {
             const data = await res.json();
             setDocument(data);
-            if (data.status === "REVIEWER_VERIFIED" || data.status === "APPROVED") setCertified(true);
           }
           const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
           if (extRes.ok && !ignore) {
@@ -584,7 +590,7 @@ function DocumentDetailsContent(props: {
       ignore = true;
       clearTimeout(timer);
     };
-  }, [documentId, fetchWithAuth]);
+  }, [activeOrgId, documentId, fetchWithAuth, user?.organization_id, user?.user_id]);
 
   // FE09: Trigger policy validation on demand
   async function runValidation() {
@@ -723,7 +729,7 @@ function DocumentDetailsContent(props: {
       ? Object.entries(extraction.fields).map(([k, v]) => ({
           key: k.replace(/_/g, " ").toUpperCase(),
           val: typeof v === "number" ? `$${v.toLocaleString()}` : String(v),
-          conf: Math.round((extraction.confidence?.[k] ?? 0.95) * 100),
+          conf: extraction.confidence?.[k] == null ? null : Math.round(extraction.confidence[k] * 100),
         }))
       : isDemo
       ? [
@@ -816,15 +822,15 @@ function DocumentDetailsContent(props: {
               ) : null}
             </p>
           </div>
-          <Badge tone={certified ? "green" : document.status === "UPLOADED" ? undefined : "violet"}>
-            {certified ? "VERIFIED (100%)" : document.status}
+          <Badge tone={approved ? "green" : document.status === "UPLOADED" ? undefined : "violet"}>
+            {document.status}
           </Badge>
         </div>
 
         <div className="doc-actions">
           <p>
             <span className="eyebrow">CLASSIFIED AS</span> {categoryName}{" "}
-            <code>{certified ? "100%" : document.confidence ? `${Math.round(document.confidence * 100)}%` : "AI Evaluated"}</code>
+            <code>{document.confidence !== null && document.confidence !== undefined ? `${Math.round(document.confidence * 100)}%` : "Not available"}</code>
           </p>
           <div>
             <Button
@@ -837,25 +843,6 @@ function DocumentDetailsContent(props: {
             </Button>
             <Button icon="pencil" onClick={() => setShowOverride(true)}>
               Correct Classification
-            </Button>
-            <Button
-              variant="primary"
-              icon="check"
-              onClick={() => {
-                setCertified(true);
-                try {
-                  const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
-                  if (cached) {
-                    const parsed = JSON.parse(cached);
-                    sessionStorage.setItem(
-                      `kagaz_doc_${documentId}`,
-                      JSON.stringify({ ...parsed, status: "REVIEWER_VERIFIED", confidence: 1.0 })
-                    );
-                  }
-                } catch {}
-              }}
-            >
-              {certified ? "Record Certified ✓" : "Certify Record"}
             </Button>
           </div>
         </div>
@@ -950,10 +937,10 @@ function DocumentDetailsContent(props: {
               <i />
             </div>
             <div className="stage current">
-              <span className="stage-dot">{certified ? "✓" : "●"}</span>
+              <span className="stage-dot">●</span>
               <div>
                 <b><code>04</code> Field Extraction</b>
-                <small>{fieldList.length ? `${fieldList.length} fields · ${certified ? "Certified" : "Ready to certify"}` : "No structured fields extracted"}</small>
+                <small>{fieldList.length ? `${fieldList.length} extracted fields` : "No structured fields extracted"}</small>
               </div>
             </div>
           </div>
@@ -1064,10 +1051,10 @@ function DocumentDetailsContent(props: {
                     <strong>{f.val}</strong>
                     <div>
                       <small>Extraction confidence</small>
-                      <code>{f.conf}%</code>
+                      <code>{f.conf == null ? "—" : `${f.conf}%`}</code>
                     </div>
                     <div className="confidence-track">
-                      <i style={{ width: `${f.conf}%` }} />
+                      <i style={{ width: `${f.conf ?? 0}%` }} />
                     </div>
                   </div>
                 ))}
@@ -1083,13 +1070,13 @@ function DocumentDetailsContent(props: {
                 <div>
                   <Icon name="shield" />
                   <b>Policy Compliance Summary</b>
-                  <Badge tone={validationRun?.status === "FAIL" ? "red" : "green"}>
-                    {validationRun?.status || "CHECKED"}
+                  <Badge tone={validationRun?.status === "PASS" ? "green" : validationRun?.status === "FAIL" ? "red" : "amber"}>
+                    {validationRun?.status || "NOT RUN"}
                   </Badge>
                 </div>
                 <p>
                   {validationRun?.summary ||
-                    "Document extractions verified against organizational covenants and compliance registries."}
+                    "No policy validation run is available for this document yet."}
                 </p>
                 <div style={{ marginTop: "14px" }}>
                   <Button variant="ghost" onClick={() => setActiveTab("validation")}>
@@ -1099,7 +1086,7 @@ function DocumentDetailsContent(props: {
               </div>
 
               <p className="audit-note">
-                ⓘ Review extracted fields against source document. Certification affixes your identity to the permanent audit ledger.
+                ⓘ Compare extracted fields with the source file. Use the review workflow to record comments or submit the document for approval.
               </p>
             </section>
           </div>
@@ -1716,16 +1703,16 @@ function DocumentDetailsContent(props: {
           currentCategory={categoryName}
           fetchWithAuth={fetchWithAuth}
           onClose={() => setShowOverride(false)}
-          onSaved={(newCategory) => {
-            setDocument((prev) => (prev ? { ...prev, category: newCategory, confidence: 1.0 } : null));
-            setCertified(true);
+          onSaved={(newCategory, confidence, status) => {
+            setDocument((prev) => (prev ? { ...prev, category: newCategory, confidence, status } : null));
             try {
-              const cached = sessionStorage.getItem(`kagaz_doc_${documentId}`);
+              const cacheKey = `kagaz_doc_${user?.user_id || ""}_${activeOrgId || user?.organization_id || ""}_${documentId}`;
+              const cached = sessionStorage.getItem(cacheKey);
               if (cached) {
                 const parsed = JSON.parse(cached);
                 sessionStorage.setItem(
-                  `kagaz_doc_${documentId}`,
-                  JSON.stringify({ ...parsed, category: newCategory, confidence: 1.0, status: "REVIEWER_VERIFIED" })
+                  cacheKey,
+                  JSON.stringify({ ...parsed, category: newCategory, confidence, status })
                 );
               }
             } catch {}

@@ -24,7 +24,7 @@ function DashboardContent() {
   const [totalDocsCount, setTotalDocsCount] = useState(0);
   const [reviewQueueCount, setReviewQueueCount] = useState(0);
   const [approvalQueueCount, setApprovalQueueCount] = useState(0);
-  const [autoClearedRate, setAutoClearedRate] = useState("—");
+  const [validatedRate, setValidatedRate] = useState("—");
   const [recentDocs, setRecentDocs] = useState<DashboardDoc[]>([]);
 
   const loadDashboardData = useCallback(async () => {
@@ -77,35 +77,29 @@ function DashboardContent() {
       }
 
       if (docsList.length > 0) {
-        const cleared = docsList.filter(
-          (d) =>
-            d.status === "VALIDATED" ||
-            d.status === "APPROVED" ||
-            d.status === "CERTIFIED" ||
-            (d.confidence && d.confidence >= 0.85)
-        ).length;
-        const rate = Math.round((cleared / docsList.length) * 100);
-        setAutoClearedRate(`${rate}%`);
+        const validated = docsList.filter((d) => d.status === "VALIDATED" || d.status === "APPROVED").length;
+        const rate = Math.round((validated / docsList.length) * 100);
+        setValidatedRate(`${rate}%`);
 
         const formatted = docsList.slice(0, 5).map((d) => ({
           id: d.id || d.document_id || "doc_unknown",
           name: d.filename || d.name || "document.pdf",
           date: d.created_at ? formatDate(d.created_at) : "Recently Added",
-          type: d.category || d.document_type || "Classified Document",
-          conf: d.confidence
+          type: d.category || d.document_type || "Unclassified document",
+          conf: d.confidence != null
             ? `${(d.confidence > 1 ? d.confidence : d.confidence * 100).toFixed(1)}%`
             : "—",
-          status: d.status || "CLASSIFIED",
+          status: d.status || "UPLOADED",
         }));
         setRecentDocs(formatted);
       } else {
-        setAutoClearedRate("—");
+        setValidatedRate("—");
         setRecentDocs([]);
       }
     } catch {
       // Keep empty clean view
       setRecentDocs([]);
-      setAutoClearedRate("—");
+      setValidatedRate("—");
     } finally {
       setLoading(false);
     }
@@ -120,7 +114,7 @@ function DashboardContent() {
 
   const stats = [
     { label: "WORKSPACE FILES", value: totalDocsCount.toString(), tone: totalDocsCount > 0 ? "neutral" : "neutral" },
-    { label: "AUTO-CLEARED RATE", value: autoClearedRate, tone: autoClearedRate !== "—" ? "green" : "neutral" },
+    { label: "VALIDATED / APPROVED RATE", value: validatedRate, tone: validatedRate !== "—" ? "green" : "neutral" },
     { label: "AWAITING VERIFICATION", value: reviewQueueCount.toString(), tone: reviewQueueCount > 0 ? "amber" : "neutral" },
     { label: "APPROVALS PENDING", value: approvalQueueCount.toString(), tone: approvalQueueCount > 0 ? "violet" : "neutral" },
   ];

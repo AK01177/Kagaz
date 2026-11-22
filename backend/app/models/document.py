@@ -80,7 +80,7 @@ class Document(Base):
     file_type = Column(String, nullable=False)   # e.g. "application/pdf", "image/png"
     file_size = Column(Integer, nullable=False)   # bytes
 
-    # Storage location (S3 key/path — not the file itself)
+    # Storage location for the uploaded file (currently a local filesystem path).
     storage_path = Column(String, nullable=False)
 
     # Lifecycle & assignment

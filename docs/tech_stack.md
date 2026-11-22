@@ -1,43 +1,20 @@
-### STACK Decisions
+# Technology stack
 
-### Frontend — Next.js + TypeScript
+This describes dependencies and services used by the current code. The architecture page separates implemented parts from longer-term plans.
 
-Type safety and component structure fit a multi-role UI (submitter, reviewer, approver, admin); built-in routing covers the dashboard and approval screens without extra tooling.
+| Area | Current implementation |
+|---|---|
+| Frontend | Next.js, React, TypeScript, and ESLint. |
+| API | Python, FastAPI, and Uvicorn. |
+| Data access | SQLAlchemy ORM and Alembic migrations. |
+| Database | PostgreSQL; pgvector stores policy embeddings. |
+| Authentication | Supabase Auth for credentials and access tokens; Kagaz database memberships and roles for workspace authorization. |
+| File storage | Local disk for document uploads. Policy source files use local disk by default and can use AWS S3 when `S3_POLICY_BUCKET` is configured. |
+| OCR | RapidOCR ONNX Runtime, with optional PaddleOCR compatibility. Scanned PDF rendering uses `pdf2image` and the host's Poppler installation. |
+| Document AI | OpenRouter API calls for classification (using the `~typesafe/jev-latest` decision model) and structured field extraction when configured. |
+| Policy AI | Gemini API for embeddings and policy question answering when `GEMINI_API_KEY` is set. |
+| CI | GitHub Actions compiles Python, generates offline migration SQL, runs a configured subset of backend tests, then lints and builds the frontend. |
 
-### Backend — Python + FastAPI
+## Not currently part of the runtime
 
-Async support keeps the API responsive while OCR/LLM work runs in the background. Python gives direct access to the OCR/LangChain ecosystem with no cross-language bridge.
-
-### Database — PostgreSQL
-
-Core entities (documents, policies, approvals, audit logs) are relational and need ACID guarantees. Mature, well-indexed, and extendable with pgvector instead of adding a second database.
-
-### AI / LLM — Llama / Groq (or equivalent), behind an abstraction layer
-
-Kept behind an internal abstraction so the provider can change without touching business logic — model pricing/availability shifts quickly, and the workflow is the product, not the model.
-
-### OCR — PaddleOCR
-
-Chosen over Tesseract, EasyOCR, and cloud OCR APIs: self-hostable (no per-page cost), strong on tables/complex layouts, multilingual — fits transcripts, invoices, offer letters. Tesseract kept only as an optional fallback.
-
-### RAG — LangChain + pgvector, scoped by `organization_id + domain + policy_version`
-
-LangChain handles embeddings/retrieval so the team isn't building RAG orchestration by hand. pgvector avoids standing up a separate vector database before scale justifies it. The `organization_id + domain + policy_version` scope is a correctness requirement — it's what stops one org's documents being validated against another org's policy.
-
-### Deployment — Docker + Docker Compose, Modular Monolith + Workers, GitHub Actions
-
-A modular monolith (`frontend`, `backend`, `worker`, `postgres`, `redis`) is faster for a student team to build and debug than microservices, with clear module boundaries (`ocr/`, `ai/`, `rag/`, `workflows/`) that leave room to split later. Celery workers scale independently of the API, which is where OCR/LLM load will actually bite first. GitHub Actions runs test/lint/build/deploy on every push.
-
----
-
-## Summary Table
-
-| Component  | Decision                                                            |
-| ---------- | ------------------------------------------------------------------- |
-| Frontend   | Next.js + TypeScript                                                |
-| Backend    | Python + FastAPI                                                    |
-| Database   | PostgreSQL                                                          |
-| AI/LLM     | Llama / Groq (or equivalent), via abstraction layer                 |
-| OCR        | PaddleOCR                                                           |
-| RAG        | LangChain + pgvector                                                |
-| Deployment | Docker + Docker Compose, Modular Monolith + Workers, GitHub Actions |
+The code does not currently start Redis, Celery workers, LangChain, or use the TypeSafe SDK. Classification sends a request to OpenRouter's decision API with a Jev model identifier. Other proposed infrastructure in older documents should not be treated as running until it is implemented.
