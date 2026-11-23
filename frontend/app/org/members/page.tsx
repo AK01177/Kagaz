@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
 import { useAuth } from "../../context/AuthContext";
+import { apiError } from "../../lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 interface AdminUser {
   user_id: string;
@@ -35,23 +35,19 @@ function AdminUsersContent() {
   const [error, setError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
-  // Invite Form State
+  // Invite Info Modal
   const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteName, setInviteName] = useState("");
-  const [inviteRole, setInviteRole] = useState("SUBMITTER");
-  const [submittingInvite, setSubmittingInvite] = useState(false);
-  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setShowInviteModal(false);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowInviteModal(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("SUBMITTER");
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
 
   const loadAdminData = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -59,8 +55,8 @@ function AdminUsersContent() {
     setError(null);
     try {
       const [usersRes, orgRes] = await Promise.allSettled([
-        fetchWithAuth(`${API_URL}/api/admin/users`),
-        fetchWithAuth(`${API_URL}/api/admin/organization`),
+        fetchWithAuth(`/api/admin/users`),
+        fetchWithAuth(`/api/admin/organization`),
       ]);
 
       if (orgRes.status === "fulfilled" && orgRes.value.ok) {
@@ -76,7 +72,7 @@ function AdminUsersContent() {
         }
       } else if (usersRes.status === "fulfilled") {
         const errData = await usersRes.value.json().catch(() => null);
-        const msg = errData?.detail?.message || errData?.error?.message || `HTTP ${usersRes.value.status}`;
+        const msg = apiError(errData, `HTTP ${usersRes.value.status}`);
         setError(`User directory unavailable: ${msg}`);
       } else {
         setError("Network error communicating with user administration service.");
@@ -98,13 +94,39 @@ function AdminUsersContent() {
     return () => clearTimeout(timer);
   }, [loadAdminData]);
 
+  async function handleAddMember(e: React.FormEvent) {
+    e.preventDefault();
+    setInviting(true);
+    setInviteError(null);
+    try {
+      const res = await fetchWithAuth("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setInviteError(apiError(data, `Could not add member (HTTP ${res.status}).`));
+        return;
+      }
+      setShowInviteModal(false);
+      setInviteEmail("");
+      setSuccessNotice(`${data.email} added as ${inviteRole}. Ask them to sign up with this email.`);
+      loadAdminData();
+    } catch {
+      setInviteError("Could not reach the server. Try again.");
+    } finally {
+      setInviting(false);
+    }
+  }
+
   async function handleRoleChange(targetUserId: string, newRole: string) {
     setUpdatingUserId(targetUserId);
     setError(null);
     setSuccessNotice(null);
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/admin/users/${targetUserId}`, {
+      const res = await fetchWithAuth(`/api/admin/users/${targetUserId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -115,7 +137,7 @@ function AdminUsersContent() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.detail?.message || data?.error?.message || `HTTP ${res.status}`);
+        throw new Error(apiError(data, `HTTP ${res.status}`));
       }
 
       setUsers((prev) =>
@@ -129,75 +151,6 @@ function AdminUsersContent() {
     }
   }
 
-  async function handleInviteUser(e: React.FormEvent) {
-    e.preventDefault();
-    if (!inviteEmail.trim()) return;
-    setSubmittingInvite(true);
-    setError(null);
-    setSuccessNotice(null);
-
-    const email = inviteEmail.trim().toLowerCase();
-    const name = inviteName.trim() || email.split("@")[0];
-    const role = inviteRole;
-
-    try {
-      const res = await fetchWithAuth(`${API_URL}/api/admin/users/invite`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          full_name: name,
-          role,
-          organization_id: currentOrg,
-        }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null);
-        if (res.status === 404 || res.status === 405) {
-          throw new Error("MOCK_FALLBACK");
-        }
-        throw new Error(errData?.detail?.message || errData?.detail || `HTTP ${res.status}`);
-      }
-
-      const created = await res.json().catch(() => null);
-      const newUser: AdminUser = {
-        user_id: created?.user_id || `user_${Date.now()}`,
-        email,
-        full_name: name,
-        user_active: true,
-        organization_id: currentOrg,
-        role,
-        membership_active: true,
-      };
-      setUsers((prev) => [newUser, ...prev]);
-      setSuccessNotice(`Invitation dispatched to ${email}. Organization membership provisioned as ${role}.`);
-      setShowInviteModal(false);
-      setInviteEmail("");
-      setInviteName("");
-      setInviteRole("SUBMITTER");
-    } catch {
-      // Optimistic addition for offline / mock mode
-      const newUser: AdminUser = {
-        user_id: `user_${Date.now()}`,
-        email,
-        full_name: name,
-        user_active: true,
-        organization_id: currentOrg,
-        role,
-        membership_active: true,
-      };
-      setUsers((prev) => [newUser, ...prev]);
-      setSuccessNotice(`Invitation dispatched to ${email}. Workspace membership provisioned as ${role}.`);
-      setShowInviteModal(false);
-      setInviteEmail("");
-      setInviteName("");
-      setInviteRole("SUBMITTER");
-    } finally {
-      setSubmittingInvite(false);
-    }
-  }
-
   async function handleToggleActive(targetUserId: string, currentActive: boolean) {
     setUpdatingUserId(targetUserId);
     setError(null);
@@ -206,7 +159,7 @@ function AdminUsersContent() {
     const nextActive = !currentActive;
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/admin/users/${targetUserId}`, {
+      const res = await fetchWithAuth(`/api/admin/users/${targetUserId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -217,7 +170,7 @@ function AdminUsersContent() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.detail?.message || data?.error?.message || `HTTP ${res.status}`);
+        throw new Error(apiError(data, `HTTP ${res.status}`));
       }
 
       setUsers((prev) =>
@@ -501,20 +454,17 @@ function AdminUsersContent() {
         </section>
       </div>
 
-      {/* Invite Member Functional Form Modal */}
+      {/* Invite Member Limitation & Instructions Modal */}
       {showInviteModal && (
         <div
           className="sheet-backdrop"
           onClick={() => setShowInviteModal(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Invite Organization Member"
         >
           <div
             className="library-card"
             style={{
               maxWidth: "520px",
-              margin: "60px auto",
+              margin: "100px auto",
               padding: "28px",
               background: "white",
               boxShadow: "0 20px 40px rgba(0,0,0,0.15)",
@@ -525,116 +475,48 @@ function AdminUsersContent() {
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <Icon name="contact" size={18} />
                 <h3 style={{ margin: 0, font: "20px 'Newsreader', serif" }}>
-                  Invite Organization Member
+                  Add Organization Member
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setShowInviteModal(false)}
                 style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: "var(--muted)" }}
-                aria-label="Close modal"
               >
                 ×
               </button>
             </div>
 
-            <p style={{ fontSize: "12px", color: "var(--body)", lineHeight: 1.5, margin: "0 0 16px" }}>
-              Invite a collaborator to <code>{currentOrg}</code> with specified role-based governance privileges.
-            </p>
-
-            <form onSubmit={handleInviteUser} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              <div>
-                <label htmlFor="invite-email" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "4px" }}>
-                  Work Email Address *
-                </label>
+            <form onSubmit={handleAddMember} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <p style={{ fontSize: "12px", color: "var(--body)", lineHeight: 1.6, margin: 0 }}>
+                Add a person to <b>{orgSummary?.name || "this organization"}</b>. They then sign up on the login page with <b>this same email</b> and will land here with the role you choose.
+              </p>
+              <label style={{ fontSize: "11px", fontWeight: 500 }}>
+                Email
                 <input
-                  id="invite-email"
-                  type="email"
-                  required
-                  placeholder="colleague@organization.com"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  style={{
-                    width: "100%",
-                    height: "36px",
-                    border: "1px solid var(--line2, #e0ddd5)",
-                    borderRadius: "5px",
-                    padding: "0 12px",
-                    fontSize: "12px",
-                    background: "white",
-                  }}
+                  type="email" required value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="name@company.com"
+                  style={{ display: "block", width: "100%", height: "36px", marginTop: "6px", border: "1px solid var(--line2, #e0ddd5)", borderRadius: "5px", padding: "0 12px", fontSize: "12px" }}
                 />
-              </div>
-
-              <div>
-                <label htmlFor="invite-name" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "4px" }}>
-                  Full Name (Optional)
-                </label>
-                <input
-                  id="invite-name"
-                  type="text"
-                  placeholder="e.g. Jane Doe"
-                  value={inviteName}
-                  onChange={(e) => setInviteName(e.target.value)}
-                  style={{
-                    width: "100%",
-                    height: "36px",
-                    border: "1px solid var(--line2, #e0ddd5)",
-                    borderRadius: "5px",
-                    padding: "0 12px",
-                    fontSize: "12px",
-                    background: "white",
-                  }}
-                />
-              </div>
-
-              <div>
-                <label htmlFor="invite-role" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "4px" }}>
-                  Workspace Role *
-                </label>
+              </label>
+              <label style={{ fontSize: "11px", fontWeight: 500 }}>
+                Role
                 <select
-                  id="invite-role"
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value)}
-                  style={{
-                    width: "100%",
-                    height: "36px",
-                    border: "1px solid var(--line2, #e0ddd5)",
-                    borderRadius: "5px",
-                    padding: "0 10px",
-                    fontSize: "12px",
-                    background: "white",
-                    cursor: "pointer",
-                  }}
+                  value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}
+                  style={{ display: "block", width: "100%", height: "36px", marginTop: "6px", border: "1px solid var(--line2, #e0ddd5)", borderRadius: "5px", padding: "0 8px", fontSize: "12px", background: "white" }}
                 >
-                  <option value="SUBMITTER">SUBMITTER (Intake &amp; OCR)</option>
-                  <option value="REVIEWER">REVIEWER (Verification Desk)</option>
-                  <option value="APPROVER">APPROVER (Executive Sign-Off)</option>
-                  <option value="ORG_ADMIN">ORG_ADMIN (Full Governance)</option>
+                  <option value="SUBMITTER">Submitter: uploads documents</option>
+                  <option value="REVIEWER">Reviewer: checks assigned documents</option>
+                  <option value="APPROVER">Approver: approves or rejects</option>
+                  <option value="ORG_ADMIN">Organization Admin: manages members and policies</option>
                 </select>
-              </div>
-
-              <div
-                style={{
-                  background: "var(--surface-secondary, #faf9f6)",
-                  border: "1px solid var(--line)",
-                  borderRadius: "6px",
-                  padding: "10px 14px",
-                  fontSize: "10px",
-                  color: "var(--muted)",
-                  lineHeight: 1.5,
-                }}
-              >
-                <b>Note:</b> An invitation dispatch will be recorded in the audit history. If user identities are managed via external Supabase auth, matching identity tokens will automatically bind upon first sign-in.
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px" }}>
-                <Button variant="secondary" onClick={() => setShowInviteModal(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" variant="primary" icon="contact" disabled={submittingInvite || !inviteEmail.trim()}>
-                  {submittingInvite ? "Sending..." : "Send Workspace Invitation"}
-                </Button>
+              </label>
+              {inviteError && (
+                <p role="alert" style={{ margin: 0, color: "var(--red, #dc2626)", fontSize: "12px" }}>{inviteError}</p>
+              )}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <Button variant="secondary" onClick={() => setShowInviteModal(false)}>Cancel</Button>
+                <Button variant="primary" type="submit" disabled={inviting}>{inviting ? "Adding…" : "Add member"}</Button>
               </div>
             </form>
           </div>

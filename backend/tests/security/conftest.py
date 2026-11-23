@@ -256,7 +256,7 @@ class SecurityWorld:
             org_id=self.org_alpha.id,
             uploaded_by=self.submitter_a1.id,
             filename="alpha_invoice_1.pdf",
-            status=DocumentStatus.EXTRACTED,
+            status=DocumentStatus.SUBMITTED,
             classification="financial",
         )
         self.doc_a2 = self._add_document(
@@ -264,7 +264,7 @@ class SecurityWorld:
             org_id=self.org_alpha.id,
             uploaded_by=self.submitter_a2.id,
             filename="alpha_contract_2.pdf",
-            status=DocumentStatus.EXTRACTED,
+            status=DocumentStatus.SUBMITTED,
             classification="legal",
         )
         self.doc_b = self._add_document(
@@ -272,7 +272,7 @@ class SecurityWorld:
             org_id=self.org_beta.id,
             uploaded_by=self.submitter_b.id,
             filename="beta_confidential.pdf",
-            status=DocumentStatus.EXTRACTED,
+            status=DocumentStatus.SUBMITTED,
             classification="financial",
         )
 

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect } from "react";
-import { Button, Icon } from "../../../components/AppShell";
+import { Button, Icon } from "../../../../components/AppShell";
 import { AssistantMessage } from "../types";
 
 interface AssistantTabProps {

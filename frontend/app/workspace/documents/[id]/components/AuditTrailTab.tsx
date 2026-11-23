@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Button } from "../../../components/AppShell";
+import { Button } from "../../../../components/AppShell";
 import { formatDate } from "@/app/classification";
 import { AuditEvent } from "../types";
 

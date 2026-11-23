@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { AppShell, Button, Badge, Icon } from "../components/AppShell";
-import { ProtectedRoute } from "../components/ProtectedRoute";
-import { useAuth } from "../context/AuthContext";
+import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { useAuth } from "../../context/AuthContext";
+import { apiError } from "../../lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 interface PolicyVersion {
   id: string;
@@ -56,6 +56,12 @@ function PoliciesContent() {
 
   // Upload Form State
   const [showUploadForm, setShowUploadForm] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowUploadForm(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [policyName, setPolicyName] = useState("");
   const [versionStr, setVersionStr] = useState("1.0.0");
@@ -76,10 +82,10 @@ function PoliciesContent() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/policies`);
+      const res = await fetchWithAuth(`/api/policies`);
       if (!res.ok) {
         const errData = await res.json().catch(() => null);
-        throw new Error(errData?.detail?.message || errData?.detail || `HTTP ${res.status}`);
+        throw new Error(apiError(errData, `HTTP ${res.status}`));
       }
       const data: Policy[] = await res.json();
       setPolicies(data);
@@ -97,20 +103,10 @@ function PoliciesContent() {
     return () => clearTimeout(timer);
   }, [loadPolicies]);
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && showUploadForm) {
-        setShowUploadForm(false);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showUploadForm]);
-
   const loadVersions = async (policyId: string) => {
     setLoadingVersions((prev) => ({ ...prev, [policyId]: true }));
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/policies/${policyId}/versions`);
+      const res = await fetchWithAuth(`/api/policies/${policyId}/versions`);
       if (res.ok) {
         // The API names these fields differently from the list below, so map them once here.
         const rows: Array<Record<string, string | number | null>> = await res.json();
@@ -167,7 +163,7 @@ function PoliciesContent() {
     if (description) formData.append("description", description.trim());
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/policies/ingest`, {
+      const res = await fetchWithAuth(`/api/policies/ingest`, {
         method: "POST",
         body: formData,
       });
@@ -175,11 +171,7 @@ function PoliciesContent() {
       const data = await res.json().catch(() => null);
 
       if (!res.ok) {
-        const msg =
-          data?.detail?.message ||
-          data?.detail ||
-          data?.error?.message ||
-          `Ingestion failed with status ${res.status}`;
+        const msg = apiError(data, `Ingestion failed with status ${res.status}`);
         throw new Error(msg);
       }
 
@@ -209,7 +201,7 @@ function PoliciesContent() {
   const handleToggleActive = async (policy: Policy) => {
     try {
       const nextActive = !policy.is_active;
-      const res = await fetchWithAuth(`${API_URL}/api/policies/${policy.id}`, {
+      const res = await fetchWithAuth(`/api/policies/${policy.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: nextActive }),
@@ -217,7 +209,7 @@ function PoliciesContent() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.detail?.message || "Failed to update policy status.");
+        throw new Error(apiError(data, "Failed to update policy status."));
       }
 
       setPolicies((prev) =>
@@ -234,12 +226,12 @@ function PoliciesContent() {
     setError(null);
     try {
       const res = await fetchWithAuth(
-        `${API_URL}/api/policies/${policyId}/versions/${versionId}/retry`,
+        `/api/policies/${policyId}/versions/${versionId}/retry`,
         { method: "POST" }
       );
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.error?.message || data?.detail?.message || "Retry failed.");
+        throw new Error(apiError(data, "Retry failed."));
       }
       const retried = await res.json().catch(() => null);
       if (retried && retried.status !== "ACTIVE") {
@@ -363,11 +355,10 @@ function PoliciesContent() {
             <form onSubmit={handleUploadSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                 <div>
-                  <label htmlFor="policy-name" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Policy Title *
                   </label>
                   <input
-                    id="policy-name"
                     type="text"
                     required
                     placeholder="e.g. Accounts Payable & Tax Compliance Policy"
@@ -386,11 +377,10 @@ function PoliciesContent() {
                 </div>
 
                 <div>
-                  <label htmlFor="policy-version" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Version Tag *
                   </label>
                   <input
-                    id="policy-version"
                     type="text"
                     required
                     placeholder="e.g. 1.0.0 or 2026.Q4"
@@ -411,11 +401,10 @@ function PoliciesContent() {
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                 <div>
-                  <label htmlFor="policy-domain" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Domain / Category
                   </label>
                   <select
-                    id="policy-domain"
                     value={domain}
                     onChange={(e) => setDomain(e.target.value)}
                     style={{
@@ -426,7 +415,6 @@ function PoliciesContent() {
                       padding: "0 12px",
                       fontSize: "12px",
                       background: "white",
-                      cursor: "pointer",
                     }}
                   >
                     <option value="Finance">Finance &amp; Procurement</option>
@@ -439,11 +427,10 @@ function PoliciesContent() {
                 </div>
 
                 <div>
-                  <label htmlFor="policy-applies-to" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Applies to
                   </label>
                   <select
-                    id="policy-applies-to"
                     value={appliesTo}
                     onChange={(e) => setAppliesTo(e.target.value)}
                     style={{
@@ -465,11 +452,10 @@ function PoliciesContent() {
                 </div>
 
                 <div>
-                  <label htmlFor="policy-file" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Select Policy File (PDF, DOCX or TXT) *
                   </label>
                   <input
-                    id="policy-file"
                     ref={fileInputRef}
                     type="file"
                     required
@@ -489,11 +475,10 @@ function PoliciesContent() {
               </div>
 
               <div>
-                <label htmlFor="policy-description" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                   Description / Governance Intent (Optional)
                 </label>
                 <textarea
-                  id="policy-description"
                   rows={2}
                   placeholder="Summary of policy guidelines and applicable review ceilings..."
                   value={description}

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Button, Badge, Icon } from "../../../components/AppShell";
+import { Button, Badge, Icon } from "../../../../components/AppShell";
 import { DocumentRecord, formatFileSize, formatDate } from "@/app/classification";
 
 interface DocumentHeaderProps {

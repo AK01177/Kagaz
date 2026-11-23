@@ -32,7 +32,7 @@ def db():
 @pytest.fixture
 def document(db):
     doc = Document(
-        organization_id="org-a", uploaded_by="u1", filename="claim.pdf", file_type="application/pdf",
+        organization_id="org-a", uploaded_by="u1", assigned_reviewer_id="u1", filename="claim.pdf", file_type="application/pdf",
         file_size=1, storage_path="claim.pdf", classification="financial",
     )
     db.add(doc)
@@ -152,7 +152,7 @@ def test_with_no_evidence_at_all_the_model_is_not_called(db, monkeypatch):
     monkeypatch.setattr(assistant, "_find_policy_rows", lambda *args, **kwargs: [])
     monkeypatch.setattr(assistant, "_REQUEST_HISTORY", {})
     bare = Document(
-        organization_id="org-a", uploaded_by="u1", filename="empty.pdf", file_type="application/pdf",
+        organization_id="org-a", uploaded_by="u1", assigned_reviewer_id="u1", filename="empty.pdf", file_type="application/pdf",
         file_size=1, storage_path="empty.pdf",
     )
     db.add(bare)

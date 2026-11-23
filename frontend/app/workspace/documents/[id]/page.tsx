@@ -3,8 +3,8 @@
 import { use } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { AppShell, Icon } from "../../components/AppShell";
-import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { AppShell, Icon } from "../../../components/AppShell";
+import { ProtectedRoute } from "../../../components/ProtectedRoute";
 
 import { DocumentHeader } from "./components/DocumentHeader";
 import { OverviewTab } from "./components/OverviewTab";
@@ -75,7 +75,7 @@ function DocumentDetailsContent(props: {
           <p style={{ color: "var(--muted)", fontSize: "12px", margin: "0 0 16px" }}>
             The requested document file <code>{documentId}</code> does not exist or has been removed from this workspace.
           </p>
-          <Link href="/documents" className="btn primary" style={{ textDecoration: "none" }}>
+          <Link href="/workspace/documents" className="btn primary" style={{ textDecoration: "none" }}>
             Back to Intake Library
           </Link>
         </div>

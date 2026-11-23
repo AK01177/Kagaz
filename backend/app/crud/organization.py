@@ -1,6 +1,7 @@
 """
 CRUD operations for Organization model.
 """
+import re
 from typing import Optional
 from sqlalchemy.orm import Session
 
@@ -31,3 +32,12 @@ def get_organization_by_slug(db: Session, slug: str) -> Optional[Organization]:
     """Retrieve an Organization by its unique slug."""
     return db.query(Organization).filter(Organization.slug == slug.strip().lower()).first()
 
+
+
+def unique_slug(db: Session, name: str) -> str:
+    """Turn an organization name into a URL-safe slug that no other organization uses."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "org"
+    slug, n = base, 2
+    while get_organization_by_slug(db, slug) is not None:
+        slug, n = f"{base}-{n}", n + 1
+    return slug

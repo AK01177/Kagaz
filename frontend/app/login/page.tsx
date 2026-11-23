@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell, Button, Badge, Icon } from "../components/AppShell";
 import { useAuth } from "../context/AuthContext";
+import { supabase } from "../lib/supabase";
 
 function LoginForm() {
   const router = useRouter();
@@ -17,18 +18,22 @@ function LoginForm() {
     sessionExpired,
     login,
     register,
+    createOrganization,
     logout,
-    switchOrganization,
     clearSessionExpiredNotice,
   } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [orgInput, setOrgInput] = useState("");
   const [fullName, setFullName] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
   const [loading, setLoading] = useState(false);
-  const redirectPath = searchParams.get("redirect") || "/documents";
+  // Signed in with Supabase, but this email is in no organization yet: offer to create one.
+  const [needsOrg, setNeedsOrg] = useState(false);
+  const [orgName, setOrgName] = useState("");
+  const redirectParam = searchParams.get("redirect");
+  // After signing in, everyone picks an organization first (the picker then opens their home page).
+  const pickerPath = redirectParam ? `/org-select?redirect=${encodeURIComponent(redirectParam)}` : "/org-select";
   const wasExpired = searchParams.get("session_expired") === "true" || sessionExpired;
 
   const [notice, setNotice] = useState<{
@@ -71,8 +76,13 @@ function LoginForm() {
 
     const result = isRegistering
       ? await register(fullName, loginEmail, password)
-      : await login(loginEmail, password, orgInput || undefined);
+      : await login(loginEmail, password);
     setLoading(false);
+
+    if (result.needsWorkspace) {
+      setNeedsOrg(true);
+      return;
+    }
 
     if (!result.success) {
       setNotice({
@@ -84,7 +94,7 @@ function LoginForm() {
 
     if (isRegistering && "confirmationRequired" in result && result.confirmationRequired) {
       setPassword("");
-      setNotice({ type: "success", message: "Account created. Check your email if confirmation is enabled, then ask an administrator to provision your Kagaz profile and workspace membership." });
+      setNotice({ type: "success", message: "Account created. Check your email to confirm it, then sign in to set up your organization." });
       return;
     }
     clearSessionExpiredNotice();
@@ -95,29 +105,31 @@ function LoginForm() {
     });
 
     setTimeout(() => {
-      router.push(redirectPath);
+      router.push(pickerPath);
     }, 600);
-  }
-
-  async function handleOrgSwitch(targetOrgId: string) {
-    setNotice(null);
-    const result = await switchOrganization(targetOrgId);
-    if (!result.success) {
-      setNotice({
-        type: "error",
-        message: result.error || "Failed to switch active organization.",
-      });
-    } else {
-      setNotice({
-        type: "success",
-        message: `Active organization context switched to ${targetOrgId}.`,
-      });
-    }
   }
 
   function handleLogout() {
     logout();
     setNotice({ type: "success", message: "Signed out successfully." });
+  }
+
+  const activeOrgName =
+    memberships.find((m) => m.organization_id === (activeOrgId || user?.organization_id))?.organization_name ||
+    activeOrgId ||
+    user?.organization_id;
+
+  async function handleCreateOrganization(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setNotice(null);
+    const result = await createOrganization(orgName.trim());
+    setLoading(false);
+    if (!result.success) {
+      setNotice({ type: "error", message: result.error || "Could not create the organization." });
+      return;
+    }
+    router.push(pickerPath);
   }
 
   const roleColor = (role?: string) => {
@@ -128,13 +140,44 @@ function LoginForm() {
       case "APPROVER":
       case "REVIEWER":
         return "green";
-      case "COMPLIANCE":
-      case "AUDITOR":
-        return "amber";
       default:
         return "green";
     }
   };
+
+  if (needsOrg && !isAuthenticated) {
+    return (
+      <div className="intake-body" style={{ maxWidth: "520px" }}>
+        {notice && (
+          <p role="alert" style={{ padding: "10px 12px", background: "var(--red-bg, #fef2f2)", color: "var(--red, #dc2626)", borderRadius: "5px", fontSize: "12px" }}>
+            {notice.message}
+          </p>
+        )}
+        <div className="library-card" style={{ marginTop: 0, padding: "24px" }}>
+          <span className="eyebrow">ONE LAST STEP</span>
+          <h2 style={{ margin: "6px 0 8px", font: "22px 'Newsreader', serif" }}>Name your organization</h2>
+          <p style={{ margin: "0 0 16px", fontSize: "12px", color: "var(--muted)", lineHeight: 1.5 }}>
+            Your email isn&apos;t part of any organization yet. Create yours and you&apos;ll be its administrator: you can then add your team, upload policies and start processing documents.
+            If you are joining an existing company instead, ask its admin to add your email, then sign in again.
+          </p>
+          <form onSubmit={handleCreateOrganization} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <label style={{ fontSize: "11px", fontWeight: 500 }}>
+              Organization name
+              <input
+                required minLength={2} maxLength={120} value={orgName} onChange={(e) => setOrgName(e.target.value)}
+                placeholder="e.g. Gamma Ltd" autoFocus
+                style={{ display: "block", width: "100%", height: "36px", marginTop: "6px", border: "1px solid var(--line2, #e0ddd5)", borderRadius: "5px", padding: "0 12px", fontSize: "12px" }}
+              />
+            </label>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <Button variant="secondary" onClick={() => { logout(); setNeedsOrg(false); }}>Sign out</Button>
+              <Button variant="primary" type="submit" disabled={loading}>{loading ? "Creating…" : "Create organization"}</Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="intake-body" style={{ maxWidth: "720px" }}>
@@ -218,7 +261,7 @@ function LoginForm() {
           >
             <div>
               <span style={{ color: "var(--muted)", display: "block" }}>Active Organization</span>
-              <b>{activeOrgId || user.organization_id}</b>
+              <b>{activeOrgName}</b>
             </div>
             <div>
               <span style={{ color: "var(--muted)", display: "block" }}>Membership Role</span>
@@ -229,60 +272,6 @@ function LoginForm() {
               <b>Supabase Auth session</b>
             </div>
           </div>
-
-          {/* Multi-Organization Switcher if user has multiple memberships */}
-          {memberships.length > 1 && (
-            <div
-              style={{
-                marginBottom: "20px",
-                padding: "16px",
-                border: "1px solid var(--line2, #e0ddd5)",
-                borderRadius: "6px",
-                background: "white",
-              }}
-            >
-              <label
-                style={{
-                  display: "block",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  marginBottom: "6px",
-                  color: "var(--ink)",
-                }}
-              >
-                Switch Active Organization Context ({memberships.length} available)
-              </label>
-              <p style={{ fontSize: "11px", color: "var(--muted)", margin: "0 0 10px" }}>
-                Select an organization you belong to. The backend strictly validates membership before granting access.
-              </p>
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
-                <select
-                  value={activeOrgId || user.organization_id}
-                  onChange={(e) => handleOrgSwitch(e.target.value)}
-                  style={{
-                    height: "36px",
-                    padding: "0 12px",
-                    fontSize: "12px",
-                    border: "1px solid var(--line2, #e0ddd5)",
-                    borderRadius: "5px",
-                    background: "white",
-                    minWidth: "260px",
-                    cursor: "pointer",
-                  }}
-                  aria-label="Select organization"
-                >
-                  {memberships.map((m) => (
-                    <option key={m.organization_id} value={m.organization_id}>
-                      {m.organization_id} — Role: {m.role}
-                    </option>
-                  ))}
-                </select>
-                <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-                  Current active context: <b>{activeOrgId || user.organization_id}</b>
-                </span>
-              </div>
-            </div>
-          )}
 
           <div
             style={{
@@ -297,11 +286,11 @@ function LoginForm() {
               Sign Out of Workspace
             </Button>
             <Link
-              href={redirectPath}
+              href={pickerPath}
               className="btn primary"
               style={{ textDecoration: "none", fontSize: "12px" }}
             >
-              Continue to Workspace →
+              Choose organization →
             </Link>
           </div>
         </div>
@@ -312,6 +301,13 @@ function LoginForm() {
         <h2 style={{ margin: "6px 0 16px", font: "20px 'Newsreader', serif" }}>
           {isRegistering ? "Create your Kagaz account" : isAuthenticated ? "Sign in with a different account" : "Sign In to Kagaz"}
         </h2>
+
+        {!supabase && (
+          <p role="alert" style={{ margin: "0 0 16px", padding: "10px 12px", background: "var(--red-bg, #fef2f2)", color: "var(--red, #dc2626)", borderRadius: "5px", fontSize: "12px" }}>
+            Sign-in is unavailable: Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and
+            NEXT_PUBLIC_SUPABASE_ANON_KEY in frontend/.env, then restart the dev server.
+          </p>
+        )}
 
         <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {isRegistering && <div>
@@ -373,31 +369,6 @@ function LoginForm() {
             />
           </div>
 
-          {!isRegistering && <div>
-            <label
-              htmlFor="org-input"
-              style={{ display: "block", fontSize: "11px", fontWeight: 500, marginBottom: "6px" }}
-            >
-              Target Organization ID <span style={{ color: "var(--muted)", fontWeight: "normal" }}>(Optional)</span>
-            </label>
-            <input
-              id="org-input"
-              type="text"
-              placeholder="e.g. org_kagaz_primary or leave blank for primary"
-              value={orgInput}
-              onChange={(e) => setOrgInput(e.target.value)}
-              style={{
-                width: "100%",
-                height: "36px",
-                border: "1px solid var(--line2, #e0ddd5)",
-                borderRadius: "5px",
-                padding: "0 12px",
-                background: "white",
-                fontSize: "12px",
-              }}
-            />
-          </div>}
-
           <div
             style={{
               display: "flex",
@@ -409,7 +380,7 @@ function LoginForm() {
             }}
           >
             <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-              {isRegistering ? "Kagaz workspace access is granted through an administrator-managed membership." : "Kagaz validates your organization membership."}
+              {isRegistering ? "Joining a company that already uses Kagaz? Ask its admin to add your email first, then sign in." : "Kagaz checks which organizations your email belongs to."}
             </span>
             <Button type="submit" variant="primary" icon="check" disabled={loading}>
               {loading ? (isRegistering ? "Creating account..." : "Signing in...") : (isRegistering ? "Create Account →" : "Sign In →")}
@@ -440,10 +411,10 @@ export default function LoginPage() {
             <p className="subline">SUPABASE IDENTITY · ORGANIZATION ROLE AUTHORIZATION</p>
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
-            <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>
+            <Link href="/workspace/documents" className="btn secondary" style={{ textDecoration: "none" }}>
               Intake Desk →
             </Link>
-            <Link href="/review" className="btn primary" style={{ textDecoration: "none" }}>
+            <Link href="/workspace/review" className="btn primary" style={{ textDecoration: "none" }}>
               Review Desk →
             </Link>
           </div>

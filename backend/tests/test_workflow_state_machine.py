@@ -166,7 +166,6 @@ class TestWorkflowHappyPathAndHistory:
         rev1_hdr = _auth_header(actors["reviewer_1"], actors["org_a"], "REVIEWER")
         rev2_hdr = _auth_header(actors["reviewer_2"], actors["org_a"], "REVIEWER")
         app_hdr = _auth_header(actors["approver"], actors["org_a"], "APPROVER")
-        adm_hdr = _auth_header(actors["admin"], actors["org_a"], "ORG_ADMIN")
 
         # 1. Submit completed document to queue
         res = client.post(f"/api/documents/{doc.id}/submit", json={"comment": "Initial submit"}, headers=sub_hdr)
@@ -180,7 +179,7 @@ class TestWorkflowHappyPathAndHistory:
         res = client.post(
             f"/api/documents/{doc.id}/assign",
             json={"reviewer_id": actors["reviewer_1"], "comment": "Routing to primary reviewer"},
-            headers=adm_hdr,
+            headers=rev1_hdr,
         )
         assert res.status_code == 200
         body = res.json()
@@ -283,7 +282,7 @@ class TestEligibilityValidationAndErrors:
         actors = _seed_org_actors(db_session)
         doc = _seed_document(db_session, actors["org_a"], actors["submitter"], DocumentStatus.EXTRACTED)
         sub_hdr = _auth_header(actors["submitter"], actors["org_a"], "SUBMITTER")
-        adm_hdr = _auth_header(actors["admin"], actors["org_a"], "ORG_ADMIN")
+        rev1_hdr = _auth_header(actors["reviewer_1"], actors["org_a"], "REVIEWER")
 
         assert client.post(f"/api/documents/{doc.id}/submit", json={}, headers=sub_hdr).status_code == 200
 
@@ -297,7 +296,7 @@ class TestEligibilityValidationAndErrors:
             res = client.post(
                 f"/api/documents/{doc.id}/assign",
                 json={"reviewer_id": invalid_target},
-                headers=adm_hdr,
+                headers=rev1_hdr,
             )
             assert res.status_code == 422
             assert res.json()["error"]["code"] == "INELIGIBLE_REVIEWER"

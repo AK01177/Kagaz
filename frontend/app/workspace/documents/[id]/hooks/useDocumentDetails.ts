@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { useAuth } from "../../../context/AuthContext";
+import { useAuth } from "../../../../context/AuthContext";
+import { apiError } from "../../../../lib/api";
 import { DocumentRecord } from "@/app/classification";
 import {
   ActiveTab,
@@ -13,7 +14,6 @@ import {
   AssistantMessage,
 } from "../types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export function useDocumentDetails(documentId: string, isDemo: boolean) {
   const { fetchWithAuth, token, user, activeOrgId } = useAuth();
@@ -58,12 +58,11 @@ export function useDocumentDetails(documentId: string, isDemo: boolean) {
     if (!documentId || isDemo || !token) return;
     let cancelled = false;
     let objectUrl: string | null = null;
-    fetchWithAuth(`${API_URL}/api/documents/${encodeURIComponent(documentId)}/file`)
+    fetchWithAuth(`/api/documents/${encodeURIComponent(documentId)}/file`)
       .then(async (response) => {
         if (!response.ok) {
           const payload = await response.json().catch(() => null);
-          const message = payload?.error?.message || payload?.detail?.message || payload?.detail;
-          throw new Error(typeof message === "string" ? message : `File request failed (${response.status})`);
+          throw new Error(apiError(payload, `File request failed (${response.status})`));
         }
         return response.blob();
       })
@@ -100,11 +99,11 @@ export function useDocumentDetails(documentId: string, isDemo: boolean) {
       } catch {}
 
       try {
-        const reviewRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/review`);
+        const reviewRes = await fetchWithAuth(`/api/documents/${documentId}/review`);
         if (reviewRes.ok && !ignore) {
           const reviewData = await reviewRes.json();
           if (reviewData.document) {
-            const metadataRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}`);
+            const metadataRes = await fetchWithAuth(`/api/documents/${documentId}`);
             const metadata = metadataRes.ok ? await metadataRes.json() : {};
             setDocument({
               document_id: reviewData.document.document_id || reviewData.document.id,
@@ -134,7 +133,7 @@ export function useDocumentDetails(documentId: string, isDemo: boolean) {
               status: "EXTRACTED",
             });
           } else {
-            const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
+            const extRes = await fetchWithAuth(`/api/documents/${documentId}/extract`);
             if (extRes.ok && !ignore) setExtraction(await extRes.json());
           }
           if (reviewData.policy_validation_runs && reviewData.policy_validation_runs.length > 0) {
@@ -157,15 +156,15 @@ export function useDocumentDetails(documentId: string, isDemo: boolean) {
             setAuditEvents(reviewData.audit_events);
           }
         } else {
-          const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}`);
+          const res = await fetchWithAuth(`/api/documents/${documentId}`);
           if (res.ok && !ignore) setDocument(await res.json());
-          const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
+          const extRes = await fetchWithAuth(`/api/documents/${documentId}/extract`);
           if (extRes.ok && !ignore) setExtraction(await extRes.json());
         }
       } catch {}
 
       try {
-        const auditRes = await fetchWithAuth(`${API_URL}/api/audit/${documentId}`);
+        const auditRes = await fetchWithAuth(`/api/audit/${documentId}`);
         if (auditRes.ok && !ignore) {
           const auditData = await auditRes.json();
           if (auditData.events) setAuditEvents(auditData.events);
@@ -184,7 +183,7 @@ export function useDocumentDetails(documentId: string, isDemo: boolean) {
     setValidating(true);
     setValidationError(null);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/validate-policy`, { method: "POST" });
+      const res = await fetchWithAuth(`/api/documents/${documentId}/validate-policy`, { method: "POST" });
       if (res.ok) {
         setValidationRun(await res.json());
       } else {
@@ -201,7 +200,7 @@ export function useDocumentDetails(documentId: string, isDemo: boolean) {
   async function rerunExtraction() {
     setRerunning(true);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`, { method: "POST" });
+      const res = await fetchWithAuth(`/api/documents/${documentId}/extract`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         setExtraction(data);
@@ -214,7 +213,7 @@ export function useDocumentDetails(documentId: string, isDemo: boolean) {
   async function refreshAuditTrail() {
     setLoadingAudit(true);
     try {
-      const auditRes = await fetchWithAuth(`${API_URL}/api/audit/${documentId}`);
+      const auditRes = await fetchWithAuth(`/api/audit/${documentId}`);
       if (auditRes.ok) {
         const data = await auditRes.json();
         if (data.events) setAuditEvents(data.events);
@@ -240,7 +239,7 @@ export function useDocumentDetails(documentId: string, isDemo: boolean) {
     setQueryingAssistant(true);
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/assistant/query`, {
+      const res = await fetchWithAuth(`/api/documents/${documentId}/assistant/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: query }),

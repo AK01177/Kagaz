@@ -71,10 +71,10 @@ export default function HomePage() {
           </div>
 
           <div className="cta-row" style={{ marginTop: "12px" }}>
-            <Link href="/documents" className="button" style={{ textDecoration: "none", padding: "14px 24px", fontSize: "13px" }}>
+            <Link href="/workspace/documents" className="button" style={{ textDecoration: "none", padding: "14px 24px", fontSize: "13px" }}>
               Deposit File into Intake ↥
             </Link>
-            <Link href="/review" className="button secondary" style={{ textDecoration: "none", padding: "14px 22px", fontSize: "13px" }}>
+            <Link href="/workspace/review" className="button secondary" style={{ textDecoration: "none", padding: "14px 22px", fontSize: "13px" }}>
               Open Human Verification Queue →
             </Link>
             <Link href="/login" className="button secondary" style={{ textDecoration: "none", padding: "14px 18px", fontSize: "13px" }}>
@@ -92,7 +92,7 @@ export default function HomePage() {
               PDF and image files are checked and stored locally by default. Text extraction uses PDF text when available and OCR for scanned pages and images.
             </p>
             <div style={{ marginTop: "20px" }}>
-              <Link href="/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
+              <Link href="/workspace/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
                 Test Intake Dropzone →
               </Link>
             </div>
@@ -105,7 +105,7 @@ export default function HomePage() {
               Automated classification into commercial invoices, legal contracts, HR records, academic transcripts, and financial filings with real-time confidence scores.
             </p>
             <div style={{ marginTop: "20px" }}>
-              <Link href="/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
+              <Link href="/workspace/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
                 Open File Repository →
               </Link>
             </div>
@@ -118,7 +118,7 @@ export default function HomePage() {
               Documents can be routed through review and approval workflows. Reviewers can add comments and request changes; the review screen links to document details for the source file.
             </p>
             <div style={{ marginTop: "20px" }}>
-              <Link href="/review" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
+              <Link href="/workspace/review" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
                 Launch Review Ledger →
               </Link>
             </div>
@@ -140,7 +140,7 @@ export default function HomePage() {
               <span>ACTIVE ARCHIVAL LEDGER</span>
               <h2>Recent Workspace Files</h2>
             </div>
-            <Link href="/documents" style={{ color: "var(--brand)" }}>Enter full workspace →</Link>
+            <Link href="/workspace/documents" style={{ color: "var(--brand)" }}>Enter full workspace →</Link>
           </div>
 
           <div className="table" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
@@ -163,7 +163,7 @@ export default function HomePage() {
               </div>
             ) : (
               recentFiles.map((file, idx) => (
-                <Link key={file.id} href={`/documents/${file.id}`} className="tr" style={{ background: "#FFFFFF", borderBottom: "1px solid var(--line)" }}>
+                <Link key={file.id} href={`/workspace/documents/${file.id}`} className="tr" style={{ background: "#FFFFFF", borderBottom: "1px solid var(--line)" }}>
                   <span className="file-name">
                     <b>{String(idx + 1).padStart(2, "0")}</b> {file.name}
                   </span>
@@ -186,7 +186,7 @@ export default function HomePage() {
             Experience document intake, confidence-based routing, and reviewer verification in action.
           </p>
           <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
-            <Link href="/documents" className="button" style={{ textDecoration: "none", padding: "12px 22px" }}>
+            <Link href="/workspace/documents" className="button" style={{ textDecoration: "none", padding: "12px 22px" }}>
               Start Document Intake →
             </Link>
             <Link href="/login" className="button secondary" style={{ textDecoration: "none", padding: "12px 20px" }}>

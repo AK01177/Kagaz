@@ -169,8 +169,14 @@ def test_role_permission_matrix_defines_every_membership_role_and_capability():
 
     # Every declared Permission is granted to at least one role (ORG_ADMIN/SYSTEM_ADMIN).
     all_permissions = set(Permission)
-    assert ROLE_PERMISSIONS["ORG_ADMIN"] == all_permissions
-    assert ROLE_PERMISSIONS["SYSTEM_ADMIN"] == all_permissions
+    assert set().union(*ROLE_PERMISSIONS.values()) == all_permissions  # every permission is granted to someone
+    # Org admins manage people and policies only; they do not touch documents or decisions.
+    assert Permission.DOCUMENTS_UPLOAD not in ROLE_PERMISSIONS["ORG_ADMIN"]
+    assert Permission.WORKFLOW_DECIDE not in ROLE_PERMISSIONS["ORG_ADMIN"]
+    assert Permission.ADMIN_USERS_MANAGE in ROLE_PERMISSIONS["ORG_ADMIN"]
+    assert Permission.ADMIN_ORGS_MANAGE not in ROLE_PERMISSIONS["ORG_ADMIN"]
+    # System admins can additionally manage organizations.
+    assert ROLE_PERMISSIONS["SYSTEM_ADMIN"] == ROLE_PERMISSIONS["ORG_ADMIN"] | {Permission.ADMIN_ORGS_MANAGE}
 
     # Submitters cannot approve, administer policies, or administer users.
     submitter_perms = get_permissions_for_role("SUBMITTER")

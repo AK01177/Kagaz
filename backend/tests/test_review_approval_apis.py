@@ -223,14 +223,9 @@ class TestPermittedQueues:
         assert res_mine.status_code == 200
         assert {item["document_id"] for item in res_mine.json()["items"]} == {assigned_to_rev1.id}
 
-        # Org Admin sees all Org A review queue items, never Org B
+        # Org admins manage people and policies; they have no review queue
         res_adm = client.get("/api/documents/workflow/review-queue", headers=adm_hdr)
-        assert res_adm.status_code == 200
-        assert {item["document_id"] for item in res_adm.json()["items"]} == {
-            assigned_to_rev1.id,
-            unassigned_submitted.id,
-            assigned_to_rev2.id,
-        }
+        assert res_adm.status_code == 403
 
     def test_approval_queue_filters_for_permitted_approvers(
         self, client: TestClient, db_session: Session

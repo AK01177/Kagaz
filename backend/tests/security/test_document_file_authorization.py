@@ -14,7 +14,7 @@ from tests.security.conftest import SecurityWorld, create_security_token
 def test_authorized_users_can_download_permitted_files(
     client: TestClient, security_world: SecurityWorld
 ) -> None:
-    """Authorized reviewer, admin, and the owning submitter can download permitted document files."""
+    """The owning submitter and a reviewer (document is in the review queue) can download; org admins cannot."""
     # 1. Owning submitter downloads own document
     sub_headers = security_world.headers_for(security_world.submitter_a1)
     sub_resp = client.get(f"/api/documents/{security_world.doc_a1.id}/file", headers=sub_headers)
@@ -28,11 +28,11 @@ def test_authorized_users_can_download_permitted_files(
     assert rev_resp.status_code == 200
     assert b"%PDF" in rev_resp.content
 
-    # 3. Org admin downloads document in same org
+    # 3. Org admin manages people and policies only, so the file stays private
     adm_headers = security_world.headers_for(security_world.admin_a)
     adm_resp = client.get(f"/api/documents/{security_world.doc_a1.id}/file", headers=adm_headers)
-    assert adm_resp.status_code == 200
-    assert b"%PDF" in adm_resp.content
+    assert adm_resp.status_code == 403
+    assert b"%PDF" not in adm_resp.content
 
 
 def test_cross_tenant_file_downloads_are_denied(

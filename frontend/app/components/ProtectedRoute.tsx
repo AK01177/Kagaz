@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../context/AuthContext";
 import { AppShell, Button, Badge, Icon } from "./AppShell";
+import { homeForRole } from "../lib/roles";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -15,11 +16,11 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({
   children,
   allowedRoles,
-  fallbackPath = "/dashboard",
+  fallbackPath,
 }: ProtectedRouteProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const { isAuthenticated, isLoading, sessionExpired, user, logout } = useAuth();
+  const { isAuthenticated, isLoading, orgConfirmed, sessionExpired, user, logout } = useAuth();
 
   useEffect(() => {
     if (!isLoading) {
@@ -27,11 +28,13 @@ export function ProtectedRoute({
         router.push(`/login?session_expired=true&redirect=${encodeURIComponent(pathname)}`);
       } else if (!isAuthenticated) {
         router.push(`/login?redirect=${encodeURIComponent(pathname)}`);
+      } else if (!orgConfirmed) {
+        router.push(`/org-select?redirect=${encodeURIComponent(pathname)}`);
       }
     }
-  }, [isLoading, isAuthenticated, sessionExpired, pathname, router]);
+  }, [isLoading, isAuthenticated, orgConfirmed, sessionExpired, pathname, router]);
 
-  if (isLoading) {
+  if (isLoading || (isAuthenticated && !orgConfirmed)) {
     return (
       <div
         style={{
@@ -249,8 +252,8 @@ export function ProtectedRoute({
               <Button variant="secondary" onClick={() => logout()}>
                 Sign Out
               </Button>
-              <Link href={fallbackPath} className="btn primary" style={{ textDecoration: "none" }}>
-                Return to Overview →
+              <Link href={fallbackPath ?? homeForRole(user.role)} className="btn primary" style={{ textDecoration: "none" }}>
+                Go to my home page →
               </Link>
             </div>
           </div>

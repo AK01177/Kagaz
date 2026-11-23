@@ -45,6 +45,7 @@ class Permission(str, enum.Enum):
     ADMIN_ORG_READ = "admin:org_read"
     ADMIN_USERS_READ = "admin:users_read"
     ADMIN_USERS_MANAGE = "admin:users_manage"
+    ADMIN_ORGS_MANAGE = "admin:orgs_manage"  # create/list organizations (SYSTEM_ADMIN only)
 
 
 _COMMON_READ_PERMISSIONS = frozenset(
@@ -59,7 +60,18 @@ _COMMON_READ_PERMISSIONS = frozenset(
     }
 )
 
-_ORG_ADMIN_PERMISSIONS = frozenset(Permission)
+# Org admins manage people and policies; they do not browse submitters' documents.
+_ORG_ADMIN_PERMISSIONS = frozenset(
+    {
+        Permission.POLICIES_READ,
+        Permission.POLICIES_ADMIN,
+        Permission.NOTIFICATIONS_READ,
+        Permission.ADMIN_ORG_READ,
+        Permission.ADMIN_USERS_READ,
+        Permission.ADMIN_USERS_MANAGE,
+    }
+)
+_SYSTEM_ADMIN_PERMISSIONS = _ORG_ADMIN_PERMISSIONS | {Permission.ADMIN_ORGS_MANAGE}
 
 ROLE_PERMISSIONS: Mapping[str, frozenset[Permission]] = {
     "SUBMITTER": _COMMON_READ_PERMISSIONS
@@ -118,7 +130,7 @@ ROLE_PERMISSIONS: Mapping[str, frozenset[Permission]] = {
         }
     ),
     "ORG_ADMIN": _ORG_ADMIN_PERMISSIONS,
-    "SYSTEM_ADMIN": _ORG_ADMIN_PERMISSIONS,
+    "SYSTEM_ADMIN": _SYSTEM_ADMIN_PERMISSIONS,
 }
 
 PERMISSION_ERROR_DETAILS: Mapping[Permission, tuple[str, str]] = {
@@ -233,6 +245,10 @@ PERMISSION_ERROR_DETAILS: Mapping[Permission, tuple[str, str]] = {
     Permission.ADMIN_USERS_MANAGE: (
         "ADMIN_FORBIDDEN",
         "An active organization administrator account is required.",
+    ),
+    Permission.ADMIN_ORGS_MANAGE: (
+        "SYSTEM_ADMIN_REQUIRED",
+        "A system administrator account is required.",
     ),
 }
 

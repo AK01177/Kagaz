@@ -49,8 +49,14 @@ def test_matrix_defines_every_membership_role_and_capability():
     assert set(ROLE_PERMISSIONS.keys()) == expected_roles
 
     all_permissions = set(Permission)
-    assert ROLE_PERMISSIONS["ORG_ADMIN"] == all_permissions
-    assert ROLE_PERMISSIONS["SYSTEM_ADMIN"] == all_permissions
+    assert set().union(*ROLE_PERMISSIONS.values()) == all_permissions  # every permission is granted to someone
+    # Org admins manage people and policies only; they do not touch documents or decisions.
+    assert Permission.DOCUMENTS_UPLOAD not in ROLE_PERMISSIONS["ORG_ADMIN"]
+    assert Permission.WORKFLOW_DECIDE not in ROLE_PERMISSIONS["ORG_ADMIN"]
+    assert Permission.ADMIN_USERS_MANAGE in ROLE_PERMISSIONS["ORG_ADMIN"]
+    assert Permission.ADMIN_ORGS_MANAGE not in ROLE_PERMISSIONS["ORG_ADMIN"]
+    # System admins can additionally manage organizations.
+    assert ROLE_PERMISSIONS["SYSTEM_ADMIN"] == ROLE_PERMISSIONS["ORG_ADMIN"] | {Permission.ADMIN_ORGS_MANAGE}
 
     # Check Submitters cannot approve, manage policies, or manage users
     submitter_perms = get_permissions_for_role("SUBMITTER")
@@ -96,10 +102,10 @@ def test_matrix_defines_every_membership_role_and_capability():
 def test_roles_with_permission_and_identity_has_permission():
     """Verify reverse role lookup and identity capability checking."""
     upload_roles = roles_with_permission(Permission.DOCUMENTS_UPLOAD)
-    assert upload_roles == {"SUBMITTER", "ORG_ADMIN", "SYSTEM_ADMIN"}
+    assert upload_roles == {"SUBMITTER"}
 
     decide_roles = roles_with_permission(Permission.WORKFLOW_DECIDE)
-    assert decide_roles == {"APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"}
+    assert decide_roles == {"APPROVER"}
 
     assert identity_has_permission({"role": "REVIEWER"}, Permission.DOCUMENTS_CLASSIFY) is True
     assert identity_has_permission({"role": "SUBMITTER"}, Permission.DOCUMENTS_CLASSIFY) is False

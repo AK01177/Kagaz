@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Button, Badge, Icon } from "../../../components/AppShell";
+import { Button, Badge, Icon } from "../../../../components/AppShell";
 import { PolicyValidationRun, PolicyValidationFinding } from "../types";
 
 interface PolicyValidationTabProps {

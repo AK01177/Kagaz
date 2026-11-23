@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Button, Badge, Icon } from "../../../components/AppShell";
-import { VALID_DOCUMENT_TYPES } from "@/app/classification";
+import { Button, Badge, Icon } from "../../../../components/AppShell";
+import { apiError } from "../../../../lib/api";
+import { VALID_DOCUMENT_TYPES, toBackendCategory } from "@/app/classification";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export function OverrideSheet({
   documentId,
@@ -20,7 +20,7 @@ export function OverrideSheet({
   fetchWithAuth: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }) {
   const [rationale, setRationale] = useState("");
-  const [type, setType] = useState("Legal Contract");
+  const [type, setType] = useState(VALID_DOCUMENT_TYPES[0].categoryName);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,27 +36,15 @@ export function OverrideSheet({
 
   async function handleSave() {
     setSubmitting(true);
-    const canonicalMap: Record<string, string> = {
-      "Commercial Invoice": "financial",
-      "Legal Contract": "general_confidential",
-      "Legal Contract & Agreement": "general_confidential",
-      "Academic Record & Transcript": "academics",
-      "Academic Transcript": "academics",
-      "HR Record": "hr_documents",
-      "Financial Report": "financial",
-      invoice: "financial",
-      contract: "general_confidential",
-      academic: "academics",
-      hr: "hr_documents",
-      financial: "financial",
-      general_confidential: "general_confidential",
-      academics: "academics",
-      hr_documents: "hr_documents",
-    };
-    const canonicalCategory = canonicalMap[type] || type.toLowerCase().replace(/ /g, "_");
+    const canonicalCategory = toBackendCategory(type);
+    if (!canonicalCategory) {
+      setError("Choose a valid document type.");
+      setSubmitting(false);
+      return;
+    }
 
     try {
-      const response = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/classification`, {
+      const response = await fetchWithAuth(`/api/documents/${documentId}/classification`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -65,7 +53,7 @@ export function OverrideSheet({
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(result?.error?.message || result?.detail?.message || result?.detail || `Save failed (${response.status}).`);
+        throw new Error(apiError(result, `Save failed (${response.status}).`));
       }
       onSaved(type, result.confidence ?? null, result.status || "CLASSIFIED");
       onClose();

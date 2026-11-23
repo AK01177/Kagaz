@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AppShell, Button, Badge, Icon, IconName } from "../components/AppShell";
-import { ProtectedRoute } from "../components/ProtectedRoute";
-import { useAuth } from "../context/AuthContext";
+import { AppShell, Button, Badge, Icon, IconName } from "../../components/AppShell";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { useAuth } from "../../context/AuthContext";
+import { apiError } from "../../lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 interface ReviewField {
   field: string;
@@ -30,7 +30,7 @@ function DocumentSourceNotice({ item }: { item?: QueueItem }) {
     <div className="receipt-paper" style={{ minHeight: "220px", display: "grid", placeContent: "center", gap: "12px", textAlign: "center" }}>
       <b>{item.name}</b>
       <span>The review queue does not display the source file here.</span>
-      <Link href={`/documents/${item.id}`} className="btn secondary" style={{ textDecoration: "none" }}>
+      <Link href={`/workspace/documents/${item.id}`} className="btn secondary" style={{ textDecoration: "none" }}>
         Open document details ↗
       </Link>
     </div>
@@ -58,7 +58,7 @@ function EmptyQueueView({ onRefresh }: { onRefresh: () => void }) {
             Nothing needs your attention in this queue. When new documents are uploaded or routed for review, they will appear here.
           </p>
           <div style={{ display: "flex", gap: "10px" }}>
-            <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>
+            <Link href="/workspace/documents" className="btn secondary" style={{ textDecoration: "none" }}>
               Intake Dropzone →
             </Link>
             <Button icon="refresh" onClick={onRefresh}>
@@ -115,10 +115,10 @@ function ReviewContent() {
     setLoading(true);
     setActionError(null);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/workflow/review-queue`);
+      const res = await fetchWithAuth(`/api/documents/workflow/review-queue`);
       if (!res.ok) {
         const errData = await res.json().catch(() => null);
-        throw new Error(errData?.detail?.message || `HTTP ${res.status}`);
+        throw new Error(apiError(errData, `HTTP ${res.status}`));
       }
 
       const data = await res.json();
@@ -190,7 +190,7 @@ function ReviewContent() {
 
     async function fetchDocReviewDetail() {
       try {
-        const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDocId}/review`);
+        const res = await fetchWithAuth(`/api/documents/${activeDocId}/review`);
         if (res.ok && !ignore) {
           const detail = await res.json();
           if (Array.isArray(detail.extractions) && detail.extractions.length > 0) {
@@ -251,7 +251,7 @@ function ReviewContent() {
       }
     }, 0);
 
-    fetchWithAuth(`${API_URL}/api/documents/${encodeURIComponent(activeDocId)}/file`)
+    fetchWithAuth(`/api/documents/${encodeURIComponent(activeDocId)}/file`)
       .then(async (response) => {
         if (!response.ok) {
           const payload = await response.json().catch(() => null);
@@ -291,7 +291,7 @@ function ReviewContent() {
     setActionError(null);
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/submit-for-approval`, {
+      const res = await fetchWithAuth(`/api/documents/${activeDoc.id}/submit-for-approval`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ auto_route: true, comment: "Reviewed and routed for executive sign-off" }),
@@ -299,7 +299,7 @@ function ReviewContent() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => null);
-        throw new Error(err?.detail?.message || "Failed to submit document for approval.");
+        throw new Error(apiError(err, "Failed to submit document for approval."));
       }
 
       setSavedNotice(`Document ${activeDoc.name} routed to Approval Ledger.`);
@@ -321,7 +321,7 @@ function ReviewContent() {
     setActionError(null);
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/request-changes`, {
+      const res = await fetchWithAuth(`/api/documents/${activeDoc.id}/request-changes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comment: changesComment.trim() }),
@@ -329,7 +329,7 @@ function ReviewContent() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => null);
-        throw new Error(err?.detail?.message || "Failed to request changes.");
+        throw new Error(apiError(err, "Failed to request changes."));
       }
 
       setSavedNotice(`Changes requested on ${activeDoc.name}. Document returned to submitter.`);
@@ -351,7 +351,7 @@ function ReviewContent() {
     if (!activeDoc || !newComment.trim()) return;
     setSubmittingAction(true);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${activeDoc.id}/comments`, {
+      const res = await fetchWithAuth(`/api/documents/${activeDoc.id}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comment: newComment.trim() }),
@@ -415,7 +415,7 @@ function ReviewContent() {
             <Button icon="refresh" variant="secondary" onClick={loadReviewQueue}>
               Sync Queue
             </Button>
-            <Link href="/approvals" className="btn primary" style={{ textDecoration: "none" }}>
+            <Link href="/workspace/approvals" className="btn primary" style={{ textDecoration: "none" }}>
               Approval Ledger →
             </Link>
           </div>
@@ -542,7 +542,7 @@ function ReviewContent() {
               </div>
               <div style={{ display: "flex", gap: "8px" }}>
                 <Link
-                  href={`/documents/${activeDoc.id}`}
+                  href={`/workspace/documents/${activeDoc.id}`}
                   className="btn secondary"
                   style={{ textDecoration: "none" }}
                 >
@@ -560,7 +560,7 @@ function ReviewContent() {
                 <div className="pane-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                   <span>ORIGINAL DOCUMENT PREVIEW</span>
                   <Link
-                    href={`/documents/${activeDoc.id}`}
+                    href={`/workspace/documents/${activeDoc.id}`}
                     style={{ fontSize: "11px", color: "var(--brand)", textDecoration: "none", fontWeight: 500 }}
                   >
                     Open document details ↗
@@ -587,7 +587,7 @@ function ReviewContent() {
                   ) : (filePreviewFailure?.documentId === activeDocId) ? (
                     <div style={{ color: "var(--muted)", fontSize: "12px", textAlign: "center", padding: "20px" }}>
                       <p style={{ margin: "0 0 8px" }}>Preview unavailable: {filePreviewFailure.message}</p>
-                      <Link href={`/documents/${activeDoc.id}`} className="btn secondary" style={{ textDecoration: "none" }}>
+                      <Link href={`/workspace/documents/${activeDoc.id}`} className="btn secondary" style={{ textDecoration: "none" }}>
                         View in Document Inspector ↗
                       </Link>
                     </div>
@@ -791,14 +791,7 @@ function ReviewContent() {
 export default function ReviewPage() {
   return (
     <ProtectedRoute
-      allowedRoles={[
-        "REVIEWER",
-        "APPROVER",
-        "ORG_ADMIN",
-        "SYSTEM_ADMIN",
-        "COMPLIANCE",
-        "AUDITOR",
-      ]}
+      allowedRoles={["REVIEWER", "APPROVER"]}
     >
       <ReviewContent />
     </ProtectedRoute>

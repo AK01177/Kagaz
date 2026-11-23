@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { AppShell, Button, Badge, Icon } from "../components/AppShell";
-import { ProtectedRoute } from "../components/ProtectedRoute";
-import { useAuth } from "../context/AuthContext";
+import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { useAuth } from "../../context/AuthContext";
+import { apiError } from "../../lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 interface ApprovalQueueItem {
   id: string;
@@ -43,10 +43,10 @@ function ApprovalsContent() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/workflow/approval-queue`);
+      const res = await fetchWithAuth(`/api/documents/workflow/approval-queue`);
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.detail?.message || data?.error?.message || `HTTP ${res.status}`);
+        throw new Error(apiError(data, `HTTP ${res.status}`));
       }
       const data = await res.json();
       setItems(data.items || []);
@@ -102,8 +102,8 @@ function ApprovalsContent() {
 
     const endpoint =
       decisionType === "approve"
-        ? `${API_URL}/api/documents/${selectedDocId}/approve`
-        : `${API_URL}/api/documents/${selectedDocId}/reject`;
+        ? `/api/documents/${selectedDocId}/approve`
+        : `/api/documents/${selectedDocId}/reject`;
 
     try {
       const res = await fetchWithAuth(endpoint, {
@@ -118,10 +118,7 @@ function ApprovalsContent() {
       const data = await res.json().catch(() => null);
 
       if (!res.ok) {
-        const msg =
-          data?.detail?.message ||
-          data?.error?.message ||
-          `Decision failed with status ${res.status}`;
+        const msg = apiError(data, `Decision failed with status ${res.status}`);
         throw new Error(msg);
       }
 
@@ -219,10 +216,10 @@ function ApprovalsContent() {
                 There are currently no documents pending final sign-off in organization <code>{currentOrg}</code>.
               </p>
               <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                <Link href="/review" className="btn primary" style={{ textDecoration: "none" }}>
+                <Link href="/workspace/review" className="btn primary" style={{ textDecoration: "none" }}>
                   Verification Queue →
                 </Link>
-                <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>
+                <Link href="/workspace/documents" className="btn secondary" style={{ textDecoration: "none" }}>
                   Intake Dropzone →
                 </Link>
               </div>
@@ -251,7 +248,7 @@ function ApprovalsContent() {
                       </span>
                       <div>
                         <Link
-                          href={`/documents/${item.id}`}
+                          href={`/workspace/documents/${item.id}`}
                           style={{ color: "var(--ink)", textDecoration: "none", fontWeight: 500 }}
                         >
                           {item.filename}
@@ -407,7 +404,7 @@ function ApprovalsContent() {
 
 export default function ApprovalsPage() {
   return (
-    <ProtectedRoute allowedRoles={["APPROVER", "ORG_ADMIN", "SYSTEM_ADMIN"]}>
+    <ProtectedRoute allowedRoles={["APPROVER"]}>
       <ApprovalsContent />
     </ProtectedRoute>
   );

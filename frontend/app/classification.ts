@@ -107,6 +107,26 @@ export const VALID_DOCUMENT_TYPES: DocumentTypeOption[] = [
   },
 ];
 
+// The backend stores only these 4 categories; the UI offers a finer list, so map it down.
+const BACKEND_CATEGORY_BY_UI_TYPE: Record<string, string> = {
+  invoice: "financial",
+  financial_report: "financial",
+  hr_form: "hr_documents",
+  academic_record: "academics",
+  contract: "general_confidential",
+  identity_document: "general_confidential",
+  policy_document: "general_confidential",
+  other: "general_confidential",
+};
+
+/** Convert a UI type (value, label or backend category) to a category the backend accepts, or null. */
+export function toBackendCategory(input: string): string | null {
+  const known = ["academics", "hr_documents", "financial", "general_confidential"];
+  if (known.includes(input)) return input;
+  const type = VALID_DOCUMENT_TYPES.find((t) => t.value === input || t.categoryName === input || t.label === input);
+  return type ? BACKEND_CATEGORY_BY_UI_TYPE[type.value] : null;
+}
+
 export interface CategoryInfo {
   name: string;
   badge: string;

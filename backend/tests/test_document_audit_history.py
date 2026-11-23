@@ -178,14 +178,6 @@ class TestFullAuditLifecycleAndChronology:
             app_hdr = _auth_header(actors["approver"], actors["org_a"], "APPROVER")
             aud_hdr = _auth_header(actors["auditor_a"], actors["org_a"], "AUDITOR")
 
-            # Classification correction
-            patch_res = client.patch(
-                f"/api/documents/{doc_id}/classification",
-                json={"category": "financial", "notes": "Confirmed invoice classification"},
-                headers=rev1_hdr,
-            )
-            assert patch_res.status_code == 200
-
             # Rule validation
             validate_document(
                 document_id=doc_id,
@@ -204,6 +196,13 @@ class TestFullAuditLifecycleAndChronology:
                 json={"reviewer_id": actors["rev_1"]},
                 headers=rev1_hdr,
             ).status_code == 200
+            # Classification correction (reviewers only work on documents routed to them)
+            patch_res = client.patch(
+                f"/api/documents/{doc_id}/classification",
+                json={"category": "financial", "notes": "Confirmed invoice classification"},
+                headers=rev1_hdr,
+            )
+            assert patch_res.status_code == 200
             assert client.post(
                 f"/api/documents/{doc_id}/comments",
                 json={"comment": "Checking invoice header."},
@@ -239,11 +238,11 @@ class TestFullAuditLifecycleAndChronology:
                 "DOCUMENT_UPLOADED",
                 "DOCUMENT_CLASSIFIED",
                 "EXTRACTION_COMPLETED",
-                "CLASSIFICATION_CORRECTED",
-                "EXTRACTION_COMPLETED",
                 "DOCUMENT_VALIDATED",
                 "DOCUMENT_SUBMITTED",
                 "REVIEWER_ASSIGNED",
+                "CLASSIFICATION_CORRECTED",
+                "EXTRACTION_COMPLETED",
                 "REVIEW_COMMENT_ADDED",
                 "CHANGES_REQUESTED",
                 "DOCUMENT_RESUBMITTED",
