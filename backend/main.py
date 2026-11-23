@@ -1,3 +1,5 @@
+import os
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,9 +27,16 @@ app = FastAPI(
 )
 
 
+# Comma-separated list of browser origins allowed to call the API (set CORS_ORIGINS in .env).
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
