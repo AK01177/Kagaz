@@ -28,6 +28,7 @@ from typing import Optional, Tuple
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from services.document_access import can_view_document
 from app.models.document import Document
 from app.models.extraction import Extraction
 from app.models.policy import Policy, PolicyChunk, PolicyVersion
@@ -107,13 +108,13 @@ def check_document_access(document: Optional[Document], actor: dict) -> Document
     actor_id = str(actor.get("sub") or "").strip()
     actor_role = str(actor.get("role") or "").strip().upper()
 
-    # Submitter may only ask questions about their own uploaded documents
-    if actor_role == "SUBMITTER" and document.uploaded_by != actor_id:
+    # Only people who may view the document may ask about it
+    if not can_view_document(document, actor_id, actor_role):
         raise HTTPException(
             status_code=403,
             detail={
                 "code": "ASSISTANT_FORBIDDEN",
-                "message": "Submitters may only query documents they uploaded.",
+                "message": "You may only query documents you have access to.",
             },
         )
 

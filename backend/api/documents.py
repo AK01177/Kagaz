@@ -57,6 +57,18 @@ class ClassificationCorrectionRequest(BaseModel):
     notes: Optional[str] = Field(None, description="Optional reviewer notes or rationale for correction.")
 
 
+def _reset_status_before_review(doc, has_extraction: bool) -> None:
+    """After re-classifying, set EXTRACTED/CLASSIFIED - but never pull a document back out of review."""
+    from app.models.document import DocumentStatus
+
+    if doc.status in (
+        DocumentStatus.UPLOADED, DocumentStatus.PROCESSING, DocumentStatus.CLASSIFIED,
+        DocumentStatus.EXTRACTED, DocumentStatus.VALIDATED, DocumentStatus.REVIEW_REQUIRED,
+        DocumentStatus.FAILED,
+    ):
+        doc.status = DocumentStatus.EXTRACTED if has_extraction else DocumentStatus.CLASSIFIED
+
+
 # ---------------------------------------------------------------------------
 # GET /api/documents — list documents visible in the active workspace
 # ---------------------------------------------------------------------------
@@ -71,15 +83,30 @@ async def list_documents(
     if db is None:
         raise HTTPException(status_code=503, detail="Document database is unavailable")
 
-    from app.models.document import Document
+    from sqlalchemy import or_
+
+    from app.models.document import Document, DocumentStatus
 
     org_id = str(user.get("organization_id") or "").strip()
     if not org_id:
         raise HTTPException(status_code=403, detail="An active workspace is required")
 
     query = db.query(Document).filter(Document.organization_id == org_id)
-    if str(user.get("role") or "").strip().upper() == "SUBMITTER":
-        query = query.filter(Document.uploaded_by == str(user.get("sub") or ""))
+    role = str(user.get("role") or "").strip().upper()
+    actor_id = str(user.get("sub") or "")
+    if role == "SUBMITTER":
+        query = query.filter(Document.uploaded_by == actor_id)
+    elif role == "REVIEWER":
+        query = query.filter(or_(
+            Document.assigned_reviewer_id == actor_id,
+            (Document.assigned_reviewer_id.is_(None)) & (Document.status == DocumentStatus.SUBMITTED),
+        ))
+    elif role == "APPROVER":
+        query = query.filter(or_(
+            Document.assigned_approver_id == actor_id,
+            (Document.assigned_approver_id.is_(None))
+            & (Document.status.in_([DocumentStatus.IN_REVIEW, DocumentStatus.PENDING_APPROVAL])),
+        ))
 
     documents = query.order_by(Document.upload_timestamp.desc()).limit(limit).all()
     return {
@@ -175,6 +202,25 @@ def _assert_submitter_document_owner(
         )
 
 
+def _assert_document_visible(user: dict, document_id: str, db: Optional[Session]) -> None:
+    """Reviewers and approvers may only open documents assigned to them or waiting in their queue."""
+    role = str(user.get("role") or "").strip().upper()
+    if role not in ("REVIEWER", "APPROVER") or db is None:
+        return
+    from app.models.document import Document
+    from services.document_access import can_view_document
+
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if doc is not None and not can_view_document(doc, str(user.get("sub") or ""), role):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "DOCUMENT_ACCESS_FORBIDDEN",
+                "message": "This document is not assigned to you.",
+            },
+        )
+
+
 def _authorize_document_metadata(
     document_id: str,
     metadata: dict,
@@ -192,6 +238,7 @@ def _authorize_document_metadata(
     verified_org = _assert_document_org_access(resolved_org, user)
     owner = metadata.get("submitter_id") or _lookup_document_owner(document_id, storage, db)
     _assert_submitter_document_owner(user, owner)
+    _assert_document_visible(user, document_id, db)
     return verified_org
 
 
@@ -231,6 +278,7 @@ async def get_document_file(
 
     _assert_document_org_access(_lookup_document_org(document_id, storage, db), user)
     _assert_submitter_document_owner(user, _lookup_document_owner(document_id, storage, db))
+    _assert_document_visible(user, document_id, db)
 
     ext = file_path.suffix.lower()
     media_types = {
@@ -275,6 +323,7 @@ async def get_document(
             if doc is not None:
                 _assert_document_org_access(doc.organization_id, user)
                 _assert_submitter_document_owner(user, doc.uploaded_by)
+                _assert_document_visible(user, document_id, db)
                 data = {
                     "document_id": doc.id,
                     "filename": doc.filename,
@@ -390,7 +439,7 @@ async def correct_classification(
                 prev_status = doc.status.value
                 doc.classification = normalized_category
                 doc.classification_confidence = 1.0
-                doc.status = DocumentStatus.EXTRACTED if extraction is not None else DocumentStatus.CLASSIFIED
+                _reset_status_before_review(doc, extraction is not None)
                 record_audit_event(
                     db,
                     document_id=doc.id,
@@ -468,6 +517,7 @@ async def get_extraction_results(
 
     # Enforce tenant isolation before querying DB extraction tables
     doc_org = _lookup_document_org(document_id, storage, db)
+    _assert_document_visible(user, document_id, db)
     if not metadata and doc_org is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -715,7 +765,7 @@ async def reclassify_document(
                     prev_status = doc.status.value
                     doc.classification = result.category.value
                     doc.classification_confidence = result.confidence
-                    doc.status = DocumentStatus.EXTRACTED if extraction is not None else DocumentStatus.CLASSIFIED
+                    _reset_status_before_review(doc, extraction is not None)
                     record_audit_event(
                         db,
                         document_id=doc.id,
@@ -833,6 +883,7 @@ async def get_document_validation_endpoint(
                 _assert_document_org_access(raw_record.organization_id, user)
                 owner = _lookup_document_owner(document_id, DocumentStorage(), db)
                 _assert_submitter_document_owner(user, owner)
+                _assert_document_visible(user, document_id, db)
                 return raw_record
         except HTTPException:
             raise

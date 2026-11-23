@@ -6,6 +6,7 @@ from api.auth import Permission, require_permission
 from app.db.session import get_db
 from app.models.document import Document
 from app.schemas.policy_validation import PolicyValidationRunResponse
+from services.document_access import can_view_document
 from services.policy_validation import run_policy_validation
 
 router = APIRouter(prefix="/api/documents", tags=["policy-validation"])
@@ -25,6 +26,8 @@ def validate_document_policy(
     ).first()
     if document is None:
         raise HTTPException(404, detail={"code": "DOCUMENT_NOT_FOUND", "message": "Document not found."})
+    if not can_view_document(document, str(identity.get("sub") or ""), identity.get("role")):
+        raise HTTPException(403, detail={"code": "DOCUMENT_ACCESS_FORBIDDEN", "message": "This document is not assigned to you."})
     run = run_policy_validation(db, document, identity)
     return PolicyValidationRunResponse(
         id=run.id,

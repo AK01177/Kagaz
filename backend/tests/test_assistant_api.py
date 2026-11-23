@@ -190,28 +190,25 @@ def test_authorized_submitter_can_ask_about_own_document(client: TestClient, db_
     assert any(s["source_type"] == "DOCUMENT_FIELD" for s in res_data["sources"])
 
 
-def test_reviewer_and_admin_can_ask_about_any_org_document(client: TestClient, db_session: Session):
+def test_assigned_reviewer_can_ask_but_admin_and_unassigned_reviewer_cannot(client: TestClient, db_session: Session):
     data = _seed_test_data(db_session)
+    data["doc_a"].assigned_reviewer_id = data["rev_a"].id
+    db_session.commit()
+    url = f"/api/documents/{data['doc_a'].id}/assistant/query"
 
-    # Reviewer in same org
+    # Reviewer the document is assigned to
     rev_headers = _auth_header(data["rev_a"].id, "REVIEWER", data["org_a"].id)
-    resp = client.post(
-        f"/api/documents/{data['doc_a'].id}/assistant/query",
-        json={"question": "Who is the vendor?"},
-        headers=rev_headers,
-    )
+    resp = client.post(url, json={"question": "Who is the vendor?"}, headers=rev_headers)
     assert resp.status_code == 200
     assert "Acme Supplies LLC" in resp.json()["answer"]
 
-    # Admin in same org
+    # Same-org reviewer it is NOT assigned to
+    other_headers = _auth_header("someone-else", "REVIEWER", data["org_a"].id)
+    assert client.post(url, json={"question": "Who is the vendor?"}, headers=other_headers).status_code == 403
+
+    # Org admins manage people and policies, not documents
     adm_headers = _auth_header(data["adm_a"].id, "ORG_ADMIN", data["org_a"].id)
-    resp_adm = client.post(
-        f"/api/documents/{data['doc_a'].id}/assistant/query",
-        json={"question": "What is the lifecycle status?"},
-        headers=adm_headers,
-    )
-    assert resp_adm.status_code == 200
-    assert "IN_REVIEW" in resp_adm.json()["answer"]
+    assert client.post(url, json={"question": "What is the lifecycle status?"}, headers=adm_headers).status_code == 403
 
 
 def test_unauthorized_submitter_cannot_query_others_document(client: TestClient, db_session: Session):

@@ -23,6 +23,7 @@ from app.models.policy_validation import PolicyValidationRun
 from app.models.user import User
 from app.models.validation import ValidationResult
 from app.models.workflow import AuditEvent, DocumentTransition, ReviewComment, WorkflowAction
+from services.document_access import can_view_document
 from services.audit import build_audit_event, sanitize_audit_text
 from app.schemas.workflow import (
     AuditEventResponse,
@@ -901,33 +902,10 @@ def _enforce_document_read_permission(
     actor_id: str,
     actor_role: str,
 ) -> None:
-    if actor_role in ADMIN_OVERRIDE_ROLES or actor_role in {"AUDITOR", "COMPLIANCE"}:
+    if actor_role in {"AUDITOR", "COMPLIANCE"}:
         return
-    if actor_role == "SUBMITTER":
-        if document.uploaded_by != actor_id:
-            raise WorkflowError(
-                403,
-                "WORKFLOW_FORBIDDEN",
-                "Submitters may only view their own documents.",
-            )
-        return
-    if actor_role == "REVIEWER":
-        if document.assigned_reviewer_id not in (None, actor_id):
-            raise WorkflowError(
-                403,
-                "WORKFLOW_FORBIDDEN",
-                "Document is assigned to another reviewer.",
-            )
-        return
-    if actor_role == "APPROVER":
-        if document.assigned_approver_id not in (None, actor_id):
-            raise WorkflowError(
-                403,
-                "WORKFLOW_FORBIDDEN",
-                "Document is assigned to another approver.",
-            )
-        return
-    raise WorkflowError(403, "WORKFLOW_FORBIDDEN", "Not permitted to view this document.")
+    if not can_view_document(document, actor_id, actor_role):
+        raise WorkflowError(403, "WORKFLOW_FORBIDDEN", "You do not have access to this document.")
 
 
 def _load_ocr_text(document_id: str, storage: Optional[DocumentStorage]) -> Optional[str]:

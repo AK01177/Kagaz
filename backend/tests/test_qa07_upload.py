@@ -56,7 +56,8 @@ def client(monkeypatch, tmp_path):
     saved = app.dependency_overrides.copy()
     app.dependency_overrides[require_submitter] = lambda: identity
     app.dependency_overrides[require_reviewer] = lambda: {**identity, "role": "REVIEWER"}
-    app.dependency_overrides[require_extraction_reader] = lambda: {**identity, "role": "REVIEWER"}
+    # the uploader reads their own extraction (reviewers only see documents routed to them)
+    app.dependency_overrides[require_extraction_reader] = lambda: identity
     monkeypatch.setenv("DOCUMENT_STORAGE_DIR", str(tmp_path))
     try:
         with TestClient(app) as test_client:
