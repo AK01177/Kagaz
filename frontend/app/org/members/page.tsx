@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
 import { ProtectedRoute } from "../../components/ProtectedRoute";
 import { useAuth } from "../../context/AuthContext";
+import { apiError } from "../../lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 interface AdminUser {
   user_id: string;
@@ -37,6 +37,10 @@ function AdminUsersContent() {
 
   // Invite Info Modal
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("SUBMITTER");
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
 
   const loadAdminData = useCallback(async () => {
@@ -45,8 +49,8 @@ function AdminUsersContent() {
     setError(null);
     try {
       const [usersRes, orgRes] = await Promise.allSettled([
-        fetchWithAuth(`${API_URL}/api/admin/users`),
-        fetchWithAuth(`${API_URL}/api/admin/organization`),
+        fetchWithAuth(`/api/admin/users`),
+        fetchWithAuth(`/api/admin/organization`),
       ]);
 
       if (orgRes.status === "fulfilled" && orgRes.value.ok) {
@@ -62,7 +66,7 @@ function AdminUsersContent() {
         }
       } else if (usersRes.status === "fulfilled") {
         const errData = await usersRes.value.json().catch(() => null);
-        const msg = errData?.detail?.message || errData?.error?.message || `HTTP ${usersRes.value.status}`;
+        const msg = apiError(errData, `HTTP ${usersRes.value.status}`);
         setError(`User directory unavailable: ${msg}`);
       } else {
         setError("Network error communicating with user administration service.");
@@ -84,13 +88,39 @@ function AdminUsersContent() {
     return () => clearTimeout(timer);
   }, [loadAdminData]);
 
+  async function handleAddMember(e: React.FormEvent) {
+    e.preventDefault();
+    setInviting(true);
+    setInviteError(null);
+    try {
+      const res = await fetchWithAuth("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setInviteError(apiError(data, `Could not add member (HTTP ${res.status}).`));
+        return;
+      }
+      setShowInviteModal(false);
+      setInviteEmail("");
+      setSuccessNotice(`${data.email} added as ${inviteRole}. Ask them to sign up with this email.`);
+      loadAdminData();
+    } catch {
+      setInviteError("Could not reach the server. Try again.");
+    } finally {
+      setInviting(false);
+    }
+  }
+
   async function handleRoleChange(targetUserId: string, newRole: string) {
     setUpdatingUserId(targetUserId);
     setError(null);
     setSuccessNotice(null);
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/admin/users/${targetUserId}`, {
+      const res = await fetchWithAuth(`/api/admin/users/${targetUserId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -101,7 +131,7 @@ function AdminUsersContent() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.detail?.message || data?.error?.message || `HTTP ${res.status}`);
+        throw new Error(apiError(data, `HTTP ${res.status}`));
       }
 
       setUsers((prev) =>
@@ -123,7 +153,7 @@ function AdminUsersContent() {
     const nextActive = !currentActive;
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/admin/users/${targetUserId}`, {
+      const res = await fetchWithAuth(`/api/admin/users/${targetUserId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -134,7 +164,7 @@ function AdminUsersContent() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => null);
-        throw new Error(data?.detail?.message || data?.error?.message || `HTTP ${res.status}`);
+        throw new Error(apiError(data, `HTTP ${res.status}`));
       }
 
       setUsers((prev) =>
@@ -439,7 +469,7 @@ function AdminUsersContent() {
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <Icon name="contact" size={18} />
                 <h3 style={{ margin: 0, font: "20px 'Newsreader', serif" }}>
-                  Invite Organization Member
+                  Add Organization Member
                 </h3>
               </div>
               <button
@@ -451,34 +481,38 @@ function AdminUsersContent() {
               </button>
             </div>
 
-            <p style={{ fontSize: "12px", color: "var(--body)", lineHeight: 1.6, margin: "0 0 16px" }}>
-              In Kagaz, user identities are cryptographically provisioned at the enterprise identity provider level. Once provisioned, members can be assigned roles within <code>{currentOrg}</code> using the directory role switcher above.
-            </p>
-
-            <div
-              style={{
-                background: "var(--surface-secondary)",
-                border: "1px solid var(--line)",
-                borderRadius: "6px",
-                padding: "14px",
-                fontSize: "11px",
-                marginBottom: "20px",
-              }}
-            >
-              <b>Backend Role Capabilities:</b>
-              <ul style={{ margin: "8px 0 0", paddingLeft: "18px", color: "var(--muted)", lineHeight: 1.6 }}>
-                <li><b>SUBMITTER</b>: Ingest files and run structured rapid extraction.</li>
-                <li><b>REVIEWER</b>: Inspect, override categories, and verify queue items.</li>
-                <li><b>APPROVER</b>: Exercise managerial sign-off and permanent certification.</li>
-                <li><b>ORG_ADMIN</b>: Manage policy governance and organization members.</li>
-              </ul>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              <Button variant="primary" onClick={() => setShowInviteModal(false)}>
-                Understood
-              </Button>
-            </div>
+            <form onSubmit={handleAddMember} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+              <p style={{ fontSize: "12px", color: "var(--body)", lineHeight: 1.6, margin: 0 }}>
+                Add a person to <b>{orgSummary?.name || "this organization"}</b>. They then sign up on the login page with <b>this same email</b> and will land here with the role you choose.
+              </p>
+              <label style={{ fontSize: "11px", fontWeight: 500 }}>
+                Email
+                <input
+                  type="email" required value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="name@company.com"
+                  style={{ display: "block", width: "100%", height: "36px", marginTop: "6px", border: "1px solid var(--line2, #e0ddd5)", borderRadius: "5px", padding: "0 12px", fontSize: "12px" }}
+                />
+              </label>
+              <label style={{ fontSize: "11px", fontWeight: 500 }}>
+                Role
+                <select
+                  value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}
+                  style={{ display: "block", width: "100%", height: "36px", marginTop: "6px", border: "1px solid var(--line2, #e0ddd5)", borderRadius: "5px", padding: "0 8px", fontSize: "12px", background: "white" }}
+                >
+                  <option value="SUBMITTER">Submitter: uploads documents</option>
+                  <option value="REVIEWER">Reviewer: checks assigned documents</option>
+                  <option value="APPROVER">Approver: approves or rejects</option>
+                  <option value="ORG_ADMIN">Organization Admin: manages members and policies</option>
+                </select>
+              </label>
+              {inviteError && (
+                <p role="alert" style={{ margin: 0, color: "var(--red, #dc2626)", fontSize: "12px" }}>{inviteError}</p>
+              )}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                <Button variant="secondary" onClick={() => setShowInviteModal(false)}>Cancel</Button>
+                <Button variant="primary" type="submit" disabled={inviting}>{inviting ? "Adding…" : "Add member"}</Button>
+              </div>
+            </form>
           </div>
         </div>
       )}

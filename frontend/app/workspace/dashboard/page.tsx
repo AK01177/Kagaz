@@ -2,10 +2,10 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { AppShell, Badge, Icon, Button } from "../components/AppShell";
-import { ProtectedRoute } from "../components/ProtectedRoute";
-import { useAuth } from "../context/AuthContext";
-import { formatDate } from "../classification";
+import { AppShell, Badge, Icon, Button } from "../../components/AppShell";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { useAuth } from "../../context/AuthContext";
+import { formatDate } from "../../classification";
 
 interface DashboardDoc {
   id: string;
@@ -143,7 +143,7 @@ function DashboardContent() {
             <Button variant="ghost" icon="refresh" onClick={loadDashboardData}>
               Sync Data
             </Button>
-            <Link href="/documents" className="btn primary" style={{ textDecoration: "none" }}>
+            <Link href="/workspace/documents" className="btn primary" style={{ textDecoration: "none" }}>
               Deposit New File ↥
             </Link>
           </div>
@@ -232,7 +232,7 @@ function DashboardContent() {
                 </p>
               </div>
             </div>
-            <Link href="/review" className="btn primary" style={{ textDecoration: "none" }}>
+            <Link href="/workspace/review" className="btn primary" style={{ textDecoration: "none" }}>
               Open Verification Desk →
             </Link>
           </div>
@@ -240,7 +240,7 @@ function DashboardContent() {
 
         {/* Deposit Quick Panel */}
         <Link
-          href="/documents"
+          href="/workspace/documents"
           className="upload-panel"
           style={{
             textDecoration: "none",
@@ -262,7 +262,7 @@ function DashboardContent() {
               <span className="eyebrow">ACTIVITY STREAM</span>
               <h2>Recent Workspace Files</h2>
             </div>
-            <Link href="/documents" className="btn secondary" style={{ textDecoration: "none" }}>
+            <Link href="/workspace/documents" className="btn secondary" style={{ textDecoration: "none" }}>
               View All {totalDocsCount} Files →
             </Link>
           </div>
@@ -283,7 +283,7 @@ function DashboardContent() {
               </div>
             ) : (
               recentDocs.map((d) => (
-                <Link className="lib-row" key={d.id} href={`/documents/${d.id}`}>
+                <Link className="lib-row" key={d.id} href={`/workspace/documents/${d.id}`}>
                   <span className="doc-name">
                     <span className="doc-icon">
                       <Icon name="file" />

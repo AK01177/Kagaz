@@ -3,17 +3,18 @@
 import { use, useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
-import { ProtectedRoute } from "../../components/ProtectedRoute";
-import { useAuth } from "../../context/AuthContext";
+import { AppShell, Button, Badge, Icon } from "../../../components/AppShell";
+import { ProtectedRoute } from "../../../components/ProtectedRoute";
+import { useAuth } from "../../../context/AuthContext";
+import { apiError } from "../../../lib/api";
 import {
   DocumentRecord,
   VALID_DOCUMENT_TYPES,
   formatFileSize,
   formatDate,
+  toBackendCategory,
 } from "@/app/classification";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 type ActiveTab = "overview" | "validation" | "audit" | "assistant";
 
@@ -271,39 +272,37 @@ function OverrideSheet({
   fetchWithAuth: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }) {
   const [rationale, setRationale] = useState("");
-  const [type, setType] = useState("Legal Contract");
+  const [type, setType] = useState(VALID_DOCUMENT_TYPES[0].categoryName);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSave() {
     setSubmitting(true);
-    const canonicalMap: Record<string, string> = {
-      "Commercial Invoice": "financial",
-      "Legal Contract": "general_confidential",
-      "Legal Contract & Agreement": "general_confidential",
-      "Academic Record & Transcript": "academics",
-      "Academic Transcript": "academics",
-      "HR Record": "hr_documents",
-      "Financial Report": "financial",
-      invoice: "financial",
-      contract: "general_confidential",
-      academic: "academics",
-      hr: "hr_documents",
-      financial: "financial",
-      general_confidential: "general_confidential",
-      academics: "academics",
-      hr_documents: "hr_documents",
-    };
-    const canonicalCategory = canonicalMap[type] || type.toLowerCase().replace(/ /g, "_");
+    const canonicalCategory = toBackendCategory(type);
+    if (!canonicalCategory) {
+      setSaveError("Choose a valid document type.");
+      setSubmitting(false);
+      return;
+    }
 
     try {
-      await fetchWithAuth(`${API_URL}/api/documents/${documentId}/classification`, {
+      const res = await fetchWithAuth(`/api/documents/${documentId}/classification`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ category: canonicalCategory, notes: rationale }),
       });
-    } catch {}
+      if (!res.ok) {
+        setSaveError(apiError(await res.json().catch(() => null), "Could not save the classification."));
+        setSubmitting(false);
+        return;
+      }
+    } catch {
+      setSaveError("Could not reach the server. Try again.");
+      setSubmitting(false);
+      return;
+    }
     onSaved(type);
     setSubmitting(false);
     onClose();
@@ -363,6 +362,7 @@ function OverrideSheet({
           </label>
         </div>
         <div className="sheet-foot">
+          {saveError && <p role="alert" style={{ color: "var(--red, #dc2626)" }}>{saveError}</p>}
           <p>
             <Icon name="stamp" /> This override is permanent and attributed to the certified reviewer. The original AI classification stays in the ledger.
           </p>
@@ -440,12 +440,11 @@ function DocumentDetailsContent(props: {
     if (!documentId || isDemo || !token) return;
     let cancelled = false;
     let objectUrl: string | null = null;
-    fetchWithAuth(`${API_URL}/api/documents/${encodeURIComponent(documentId)}/file`)
+    fetchWithAuth(`/api/documents/${encodeURIComponent(documentId)}/file`)
       .then(async (response) => {
         if (!response.ok) {
           const payload = await response.json().catch(() => null);
-          const message = payload?.error?.message || payload?.detail?.message || payload?.detail;
-          throw new Error(typeof message === "string" ? message : `File request failed (${response.status})`);
+          throw new Error(apiError(payload, `File request failed (${response.status})`));
         }
         return response.blob();
       })
@@ -487,11 +486,11 @@ function DocumentDetailsContent(props: {
 
       // 2. Fetch from review detail endpoint if available (FE10)
       try {
-        const reviewRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/review`);
+        const reviewRes = await fetchWithAuth(`/api/documents/${documentId}/review`);
         if (reviewRes.ok && !ignore) {
           const reviewData = await reviewRes.json();
           if (reviewData.document) {
-            const metadataRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}`);
+            const metadataRes = await fetchWithAuth(`/api/documents/${documentId}`);
             const metadata = metadataRes.ok ? await metadataRes.json() : {};
             setDocument({
               document_id: reviewData.document.document_id || reviewData.document.id,
@@ -524,7 +523,7 @@ function DocumentDetailsContent(props: {
               status: "EXTRACTED",
             });
           } else {
-            const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
+            const extRes = await fetchWithAuth(`/api/documents/${documentId}/extract`);
             if (extRes.ok && !ignore) setExtraction(await extRes.json());
           }
           if (reviewData.policy_validation_runs && reviewData.policy_validation_runs.length > 0) {
@@ -545,13 +544,13 @@ function DocumentDetailsContent(props: {
           }
         } else {
           // Fallback to standard document endpoints
-          const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}`);
+          const res = await fetchWithAuth(`/api/documents/${documentId}`);
           if (res.ok && !ignore) {
             const data = await res.json();
             setDocument(data);
             if (data.status === "REVIEWER_VERIFIED" || data.status === "APPROVED") setCertified(true);
           }
-          const extRes = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`);
+          const extRes = await fetchWithAuth(`/api/documents/${documentId}/extract`);
           if (extRes.ok && !ignore) {
             const extData = await extRes.json();
             setExtraction(extData);
@@ -561,7 +560,7 @@ function DocumentDetailsContent(props: {
 
       // 3. Fetch audit trail (FE11)
       try {
-        const auditRes = await fetchWithAuth(`${API_URL}/api/audit/${documentId}`);
+        const auditRes = await fetchWithAuth(`/api/audit/${documentId}`);
         if (auditRes.ok && !ignore) {
           const auditData = await auditRes.json();
           if (auditData.events) {
@@ -591,7 +590,7 @@ function DocumentDetailsContent(props: {
     setValidating(true);
     setValidationError(null);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/validate-policy`, {
+      const res = await fetchWithAuth(`/api/documents/${documentId}/validate-policy`, {
         method: "POST",
       });
       if (res.ok) {
@@ -599,10 +598,7 @@ function DocumentDetailsContent(props: {
         setValidationRun(data);
       } else {
         const err = await res.json().catch(() => null);
-        setValidationError(
-          err?.detail?.message ||
-            (typeof err?.detail === "string" ? err.detail : "Failed to run policy validation.")
-        );
+        setValidationError(apiError(err, "Failed to run policy validation."));
       }
     } catch {
       setValidationError("Network error while triggering policy validation.");
@@ -615,7 +611,7 @@ function DocumentDetailsContent(props: {
   async function rerunExtraction() {
     setRerunning(true);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/extract`, {
+      const res = await fetchWithAuth(`/api/documents/${documentId}/extract`, {
         method: "POST",
       });
       if (res.ok) {
@@ -633,7 +629,7 @@ function DocumentDetailsContent(props: {
   async function refreshAuditTrail() {
     setLoadingAudit(true);
     try {
-      const auditRes = await fetchWithAuth(`${API_URL}/api/audit/${documentId}`);
+      const auditRes = await fetchWithAuth(`/api/audit/${documentId}`);
       if (auditRes.ok) {
         const data = await auditRes.json();
         if (data.events) setAuditEvents(data.events);
@@ -660,7 +656,7 @@ function DocumentDetailsContent(props: {
     setQueryingAssistant(true);
 
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents/${documentId}/assistant/query`, {
+      const res = await fetchWithAuth(`/api/documents/${documentId}/assistant/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: query }),
@@ -681,9 +677,7 @@ function DocumentDetailsContent(props: {
         setMessages((prev) => [...prev, assistantMsg]);
       } else {
         const err = await res.json().catch(() => null);
-        const errMsg =
-          err?.detail?.message ||
-          (typeof err?.detail === "string" ? err.detail : "Unable to retrieve assistant answer.");
+        const errMsg = apiError(err, "Unable to retrieve assistant answer.");
         setMessages((prev) => [
           ...prev,
           {
@@ -770,7 +764,7 @@ function DocumentDetailsContent(props: {
           <p style={{ color: "var(--muted)", fontSize: "12px", margin: "0 0 16px" }}>
             The requested document file <code>{documentId}</code> does not exist or has been removed from this workspace.
           </p>
-          <Link href="/documents" className="btn primary" style={{ textDecoration: "none" }}>
+          <Link href="/workspace/documents" className="btn primary" style={{ textDecoration: "none" }}>
             Back to Intake Library
           </Link>
         </div>

@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Icon } from "./AppShell";
 import { useAuth } from "../context/AuthContext";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface NotificationItem {
   id: string;
@@ -38,7 +37,7 @@ export function NotificationCenter({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/notifications?limit=25`);
+      const res = await fetchWithAuth(`/api/notifications?limit=25`);
       if (res.ok) {
         const data = await res.json();
         setNotifications(data.items || []);
@@ -82,7 +81,7 @@ export function NotificationCenter({
   const markAsRead = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/notifications/${id}/read`, {
+      const res = await fetchWithAuth(`/api/notifications/${id}/read`, {
         method: "PATCH",
       });
       if (res.ok) {
@@ -98,7 +97,7 @@ export function NotificationCenter({
 
   const markAllAsRead = async () => {
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/notifications/read-all`, {
+      const res = await fetchWithAuth(`/api/notifications/read-all`, {
         method: "POST",
       });
       if (res.ok) {
@@ -273,7 +272,7 @@ export function NotificationCenter({
                     <div style={{ display: "flex", gap: "10px", marginTop: "6px", alignItems: "center" }}>
                       {n.document_id && (
                         <Link
-                          href={`/documents/${n.document_id}`}
+                          href={`/workspace/documents/${n.document_id}`}
                           onClick={() => setIsOpen(false)}
                           style={{
                             fontSize: "10px",

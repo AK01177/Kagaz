@@ -3,13 +3,13 @@
 import { DragEvent, useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AppShell, Button, Badge, Icon } from "../components/AppShell";
-import { ProtectedRoute } from "../components/ProtectedRoute";
-import { formatFileSize, formatDate } from "../classification";
-import { useAuth } from "../context/AuthContext";
+import { AppShell, Button, Badge, Icon } from "../../components/AppShell";
+import { ProtectedRoute } from "../../components/ProtectedRoute";
+import { formatFileSize, formatDate } from "../../classification";
+import { useAuth } from "../../context/AuthContext";
+import { apiError } from "../../lib/api";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 type UploadState = "idle" | "ready" | "uploading" | "success" | "error";
 
@@ -82,7 +82,7 @@ function DocumentsContent() {
     if (!isAuthenticated) return;
     setLoading(true);
     try {
-      const res = await fetchWithAuth(`${API_URL}/api/documents`);
+      const res = await fetchWithAuth(`/api/documents`);
       if (res.ok) {
         const raw = await res.json().catch(() => []);
         const docsList = Array.isArray(raw) ? raw : raw?.documents || [];
@@ -191,18 +191,14 @@ function DocumentsContent() {
     let docId = "";
 
     try {
-      const response = await fetchWithAuth(`${API_URL}/api/documents`, {
+      const response = await fetchWithAuth(`/api/documents`, {
         method: "POST",
         body: formData,
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        const serverMsg =
-          errorData?.detail?.message ||
-          errorData?.detail ||
-          errorData?.error?.message ||
-          `Upload failed with HTTP ${response.status}.`;
+        const serverMsg = apiError(errorData, `Upload failed with HTTP ${response.status}.`);
         setError(serverMsg);
         setState("error");
         return;
@@ -231,7 +227,7 @@ function DocumentsContent() {
       await loadDocuments();
 
       setTimeout(() => {
-        router.push(`/documents/${docId}`);
+        router.push(`/workspace/documents/${docId}`);
       }, 700);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Network error during upload.";
@@ -385,7 +381,7 @@ function DocumentsContent() {
             </div>
 
             {filteredFiles.map((d) => (
-              <Link className="lib-row" key={d.id} href={`/documents/${d.id}`}>
+              <Link className="lib-row" key={d.id} href={`/workspace/documents/${d.id}`}>
                 <span className="doc-name">
                   <span className="doc-icon">
                     <Icon name="file" />
