@@ -20,8 +20,10 @@ export interface NotificationItem {
 
 export function NotificationCenter({
   inline = false,
+  align = "auto",
 }: {
   inline?: boolean;
+  align?: "left" | "right" | "auto";
 }) {
   const { fetchWithAuth, isAuthenticated } = useAuth();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -29,8 +31,56 @@ export function NotificationCenter({
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [dropdownPosition, setDropdownPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  }>({ top: 0, left: 0, width: 360 });
 
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const calculatePosition = useCallback(() => {
+    if (!containerRef.current) return null;
+    const rect = containerRef.current.getBoundingClientRect();
+    const dropdownWidth = Math.min(360, window.innerWidth - 24);
+
+    let left: number;
+    if (align === "left") {
+      left = rect.left;
+    } else if (align === "right") {
+      left = rect.right - dropdownWidth;
+    } else {
+      // Auto: if not enough space to the left of the button, align left
+      if (rect.right - dropdownWidth < 12) {
+        left = rect.left;
+      } else {
+        left = rect.right - dropdownWidth;
+      }
+    }
+
+    // Clamp inside viewport with 12px gutter
+    left = Math.max(12, Math.min(left, window.innerWidth - dropdownWidth - 12));
+    const top = inline ? Math.max(12, rect.top - 448) : rect.bottom + 8;
+
+    return { top, left, width: dropdownWidth };
+  }, [align, inline]);
+
+  const updatePosition = useCallback(() => {
+    const pos = calculatePosition();
+    if (pos) {
+      setDropdownPosition(pos);
+    }
+  }, [calculatePosition]);
+
+  const toggleOpen = () => {
+    if (!isOpen) {
+      const pos = calculatePosition();
+      if (pos) {
+        setDropdownPosition(pos);
+      }
+    }
+    setIsOpen((prev) => !prev);
+  };
 
   const loadNotifications = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -70,13 +120,24 @@ export function NotificationCenter({
         setIsOpen(false);
       }
     }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
     if (isOpen) {
       document.addEventListener("mousedown", handleClickOutside);
+      window.addEventListener("keydown", handleKeyDown);
+      window.addEventListener("resize", updatePosition);
+      window.addEventListener("scroll", updatePosition, true);
     }
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [isOpen]);
+  }, [isOpen, updatePosition]);
 
   const markAsRead = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -115,9 +176,10 @@ export function NotificationCenter({
     <div ref={containerRef} style={{ position: "relative", display: "inline-block" }}>
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggleOpen}
         title="Notifications"
         aria-label="Notifications"
+        aria-expanded={isOpen}
         style={{
           background: "transparent",
           border: "none",
@@ -156,19 +218,18 @@ export function NotificationCenter({
 
       {isOpen && (
         <div
+          role="dialog"
+          aria-label="Notifications"
           style={{
-            position: "absolute",
-            top: inline ? "auto" : "100%",
-            bottom: inline ? "100%" : "auto",
-            right: 0,
-            marginTop: inline ? 0 : "8px",
-            marginBottom: inline ? "8px" : 0,
-            width: "360px",
-            maxHeight: "440px",
+            position: "fixed",
+            top: `${dropdownPosition.top}px`,
+            left: `${dropdownPosition.left}px`,
+            width: `${dropdownPosition.width}px`,
+            maxHeight: "min(440px, calc(100vh - 32px))",
             background: "white",
             border: "1px solid var(--line2, #e0ddd5)",
             borderRadius: "8px",
-            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05)",
+            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.05)",
             zIndex: 1000,
             display: "flex",
             flexDirection: "column",

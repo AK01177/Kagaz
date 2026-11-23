@@ -37,9 +37,9 @@ export function Header() {
         </Link>
       </nav>
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        {isAuthenticated && <NotificationCenter />}
+        {isAuthenticated && <NotificationCenter align="right" />}
         <Link
-          href="/login"
+          href={isAuthenticated ? homeForRole(user?.role) : "/login"}
           className="session"
           style={{ textDecoration: "none" }}
           title={isAuthenticated ? `Active in ${activeOrgId || user?.organization_id}` : "Sign in to workspace"}

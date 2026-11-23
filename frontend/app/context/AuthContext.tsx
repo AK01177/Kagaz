@@ -44,7 +44,12 @@ const ORG_CONFIRMED_KEY = "kagaz_org_confirmed";
 export function clearStoredSession() {
   for (const key of ["kagaz_token", "kagaz_active_org", "kagaz_user_email", "kagaz_user_role", "kagaz_user_name", ORG_CONFIRMED_KEY]) {
     try { localStorage.removeItem(key); sessionStorage.removeItem(key); } catch { /* restricted storage */ }
-  }
+  }
+  try {
+    for (const key of Object.keys(sessionStorage)) {
+      if (key.startsWith("kagaz_doc_")) sessionStorage.removeItem(key);
+    }
+  } catch { /* restricted storage */ }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

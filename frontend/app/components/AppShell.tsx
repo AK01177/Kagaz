@@ -157,7 +157,7 @@ export function Sidebar() {
       : userRole === "REVIEWER"
       ? [
           { href: "/workspace/dashboard", label: "Overview", icon: "grid" },
-          { href: "/workspace/review", label: "Verification Desk", icon: "stamp", count: true },
+          { href: "/workspace/review", label: "Verification Queue", icon: "stamp", count: true },
         ]
       : userRole === "APPROVER"
       ? [
@@ -194,7 +194,7 @@ export function Sidebar() {
         </Link>
         <span className="brand-dot" />
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
-          {!isCollapsed && <NotificationCenter />}
+          {!isCollapsed && <NotificationCenter align="left" />}
           <button
             type="button"
             className="collapse"
@@ -265,7 +265,7 @@ export function Sidebar() {
             <Icon name={link.icon} />
             {!isCollapsed && (
               <>
-                {link.label} {link.count && isAuthenticated && badgeCount !== null && badgeCount > 0 && <em>{badgeCount}</em>}
+                <span className="nav-label">{link.label} {link.count && isAuthenticated && badgeCount !== null && badgeCount > 0 && <em>{badgeCount}</em>}</span>
               </>
             )}
           </Link>

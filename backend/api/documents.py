@@ -517,11 +517,11 @@ async def get_extraction_results(
 
     # Enforce tenant isolation before querying DB extraction tables
     doc_org = _lookup_document_org(document_id, storage, db)
-    _assert_document_visible(user, document_id, db)
     if not metadata and doc_org is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
     _assert_document_org_access(metadata.get("organization_id") or doc_org, user)
+    _assert_document_visible(user, document_id, db)
 
     fields: dict = metadata.get("extracted_fields", {})
     confidence: dict = metadata.get("extracted_confidence", {})

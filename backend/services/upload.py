@@ -53,23 +53,23 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
     if db is None:
         return True
     try:
-        from app.models.document import DocumentStatus
-        from app.crud.document import create_document_metadata
-        from app.schemas.document import DocumentMetadataCreate
+        from app.models.document import Document, DocumentStatus
+        from app.models.extraction import Extraction
+        from services.audit import build_audit_event, record_extraction_audit
 
         def _to_uuid(v):
             try:
-                return uuid.UUID(str(v))
+                return str(uuid.UUID(str(v)))
             except Exception:
-                return uuid.uuid5(uuid.NAMESPACE_DNS, str(v))
+                return str(uuid.uuid5(uuid.NAMESPACE_DNS, str(v)))
 
-        if response.get("status") == "EXTRACTED":
-            doc_status = DocumentStatus.EXTRACTED
-        elif response.get("status") == "CLASSIFIED":
-            doc_status = DocumentStatus.CLASSIFIED
-        else:
-            doc_status = DocumentStatus.UPLOADED
-        doc_data = DocumentMetadataCreate(
+        status_map = {
+            "EXTRACTED": DocumentStatus.EXTRACTED,
+            "CLASSIFIED": DocumentStatus.CLASSIFIED,
+            "FAILED": DocumentStatus.FAILED,
+        }
+        doc_status = status_map.get(response.get("status"), DocumentStatus.UPLOADED)
+        persisted_doc = Document(
             id=document_id,
             organization_id=_to_uuid(user["organization_id"]),
             uploaded_by=_to_uuid(user["sub"]),
@@ -81,20 +81,8 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
             classification=response.get("category"),
             classification_confidence=response.get("confidence"),
         )
-        persisted_doc = create_document_metadata(db, doc_data, document_id=document_id)
-        if extraction is not None:
-            from services.extraction_persistence import persist_extraction_result
-            persist_extraction_result(
-                db,
-                document_id,
-                extraction,
-                organization_id=persisted_doc.organization_id,
-            )
-
-        from services.audit import record_audit_event, record_extraction_audit
-
-        record_audit_event(
-            db,
+        db.add(persisted_doc)
+        audit_rows = [build_audit_event(
             document_id=persisted_doc.id,
             organization_id=persisted_doc.organization_id,
             event_type="DOCUMENT_UPLOADED",
@@ -103,11 +91,9 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
             actor_role=str(user.get("role") or "SUBMITTER"),
             to_status="UPLOADED",
             details={"filename": filename, "file_type": mime, "file_size": size},
-            commit=False,
-        )
+        )]
         if response.get("category") and response.get("status") in ("CLASSIFIED", "EXTRACTED"):
-            record_audit_event(
-                db,
+            audit_rows.append(build_audit_event(
                 document_id=persisted_doc.id,
                 organization_id=persisted_doc.organization_id,
                 event_type="DOCUMENT_CLASSIFIED",
@@ -120,24 +106,39 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
                     "category": response.get("category"),
                     "confidence": response.get("confidence"),
                 },
-                commit=False,
-            )
+            ))
         if extraction is not None:
             raw_fields = extraction.to_flat_dict() if hasattr(extraction, "to_flat_dict") else {}
             non_empty_names = sorted(k for k, v in raw_fields.items() if v is not None)
+            confidences = extraction.get_field_confidences()
+            for field_name in non_empty_names:
+                raw_value = raw_fields[field_name]
+                value = ", ".join(str(item) for item in raw_value) if isinstance(raw_value, list) else str(raw_value).strip()
+                if value:
+                    db.add(Extraction(
+                        document_id=persisted_doc.id,
+                        field_name=field_name,
+                        value=value,
+                        confidence=confidences.get(field_name, 0.0),
+                    ))
             record_extraction_audit(
                 db,
                 document_id=persisted_doc.id,
                 organization_id=persisted_doc.organization_id,
                 document_type=response.get("category"),
                 field_names=non_empty_names,
+                actor_id="system",
+                actor_type="SYSTEM",
+                actor_role="SYSTEM",
                 from_status="CLASSIFIED",
                 to_status="EXTRACTED",
                 commit=False,
             )
+        db.add_all(audit_rows)
         db.commit()
         return True
     except Exception as db_err:
+        db.rollback()
         logger.warning("Failed to persist to DB for %s: %s", document_id, db_err)
         return False
 
@@ -281,7 +282,8 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
 
             response["file_size"] = size
 
-            # DB-03: Persist document and extractions to DB if available
+            # Persist before publishing metadata so a failed database write can
+            # downgrade the local result from EXTRACTED to CLASSIFIED.
             if db is not None:
                 persisted = _persist_to_db(
                     db,
@@ -315,6 +317,14 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
             staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             staged_metadata.replace(metadata_path)
 
+    except UploadError:
+        if published_document:
+            try:
+                document_path.unlink(missing_ok=True)
+                metadata_path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Could not clean up failed upload %s", document_id)
+        raise
     except OSError as exc:
         if published_document:
             try:

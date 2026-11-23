@@ -37,6 +37,12 @@ function AdminUsersContent() {
 
   // Invite Info Modal
   const [showInviteModal, setShowInviteModal] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowInviteModal(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("SUBMITTER");
   const [inviteError, setInviteError] = useState<string | null>(null);

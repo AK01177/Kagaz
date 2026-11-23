@@ -56,6 +56,12 @@ function PoliciesContent() {
 
   // Upload Form State
   const [showUploadForm, setShowUploadForm] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowUploadForm(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [policyName, setPolicyName] = useState("");
   const [versionStr, setVersionStr] = useState("1.0.0");
@@ -196,7 +202,7 @@ function PoliciesContent() {
     try {
       const nextActive = !policy.is_active;
       const res = await fetchWithAuth(`/api/policies/${policy.id}`, {
-        method: "PATCH",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_active: nextActive }),
       });

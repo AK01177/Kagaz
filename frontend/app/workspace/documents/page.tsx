@@ -43,26 +43,6 @@ function validateFile(file: File): string | null {
   return null;
 }
 
-function detectDocumentCategory(filename: string): { category: string; confidence: number | null } {
-  const name = filename.toLowerCase();
-  if (name.includes("academic") || name.includes("transcript") || name.includes("diploma") || name.includes("student")) {
-    return { category: "Academic Record & Transcript", confidence: null };
-  }
-  if (name.includes("hr") || name.includes("employee") || name.includes("resume") || name.includes("candidate") || name.includes("payroll")) {
-    return { category: "HR Record", confidence: null };
-  }
-  if (name.includes("invoice") || name.includes("bill") || name.includes("receipt") || name.includes("inv") || name.includes("supplier")) {
-    return { category: "Commercial Invoice", confidence: null };
-  }
-  if (name.includes("contract") || name.includes("agreement") || name.includes("nda") || name.includes("vendor")) {
-    return { category: "Legal Contract", confidence: null };
-  }
-  if (name.includes("financial") || name.includes("expense") || name.includes("tax") || name.includes("audit") || name.includes("report")) {
-    return { category: "Financial Report", confidence: null };
-  }
-  return { category: "Enterprise Document", confidence: null };
-}
-
 function DocumentsContent() {
   const router = useRouter();
   const { fetchWithAuth, user, activeOrgId, isAuthenticated } = useAuth();
@@ -102,16 +82,18 @@ function DocumentsContent() {
               name: d.filename || d.name || "document.pdf",
               id: d.id || d.document_id || "doc_unknown",
               date: d.created_at ? formatDate(d.created_at) : "Recent",
-              genre: d.category || d.document_type || "Classified Document",
-              confidence: d.confidence
+              genre: d.category || d.document_type || "Unclassified document",
+              confidence: d.confidence != null
                 ? `${(d.confidence > 1 ? d.confidence : d.confidence * 100).toFixed(1)}%`
                 : "—",
-              status: d.status || "CLASSIFIED",
+              status: d.status || "UPLOADED",
             })
           );
           setFiles(items);
           return;
         }
+        setFiles([]);
+        return;
       }
     } catch {
       // Fallback to local session storage
@@ -120,7 +102,8 @@ function DocumentsContent() {
     }
 
     try {
-      const keys = Object.keys(sessionStorage).filter((k) => k.startsWith("kagaz_doc_"));
+      const cachePrefix = `kagaz_doc_${user?.user_id || ""}_${activeOrgId || user?.organization_id || ""}_`;
+      const keys = Object.keys(sessionStorage).filter((k) => k.startsWith(cachePrefix));
       if (keys.length > 0) {
         const loaded: FileItem[] = [];
         for (const k of keys) {
@@ -129,10 +112,10 @@ function DocumentsContent() {
             loaded.push({
               name: item.filename,
               id: item.document_id,
-              date: "Recently Added",
-              genre: item.category || "Classified File",
-              confidence: item.confidence ? `${(item.confidence * 100).toFixed(1)}%` : "—",
-              status: item.status || "CLASSIFIED",
+              date: item.uploaded_at ? formatDate(item.uploaded_at) : "Recently Added",
+              genre: item.category || "Unclassified document",
+              confidence: item.confidence != null ? `${(item.confidence * 100).toFixed(1)}%` : "—",
+              status: item.status || "UPLOADED",
             });
           }
         }
@@ -143,7 +126,7 @@ function DocumentsContent() {
       }
     } catch {}
     setFiles([]);
-  }, [fetchWithAuth, isAuthenticated]);
+  }, [activeOrgId, fetchWithAuth, isAuthenticated, user]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -187,7 +170,6 @@ function DocumentsContent() {
     const formData = new FormData();
     formData.append("file", file);
 
-    const { category, confidence } = detectDocumentCategory(file.name);
     let docId = "";
 
     try {
@@ -205,22 +187,28 @@ function DocumentsContent() {
       }
 
       const body = await response.json().catch(() => ({}));
-      docId =
-        body.document_id ||
-        `doc_${Math.random().toString(36).substring(2, 8)}${Date.now().toString(36).substring(4)}`;
+      docId = body.document_id;
+      if (!docId) {
+        setError("The upload completed without a document ID. Refresh the document list before retrying.");
+        setState("error");
+        return;
+      }
 
       const record = {
         document_id: docId,
         filename: file.name,
         file_size: file.size,
-        status: "CLASSIFIED",
-        category,
-        confidence,
-        created_at: new Date().toISOString(),
+        status: body.status || "UPLOADED",
+        category: body.category || null,
+        confidence: body.confidence ?? null,
+        uploaded_at: body.uploaded_at || new Date().toISOString(),
+        organization_id: activeOrgId || user?.organization_id,
+        submitter_id: user?.user_id,
       };
 
       try {
-        sessionStorage.setItem(`kagaz_doc_${docId}`, JSON.stringify(record));
+        const cacheKey = `kagaz_doc_${user?.user_id || ""}_${activeOrgId || user?.organization_id || ""}_${docId}`;
+        sessionStorage.setItem(cacheKey, JSON.stringify(record));
       } catch {}
 
       setState("success");
@@ -359,10 +347,12 @@ function DocumentsContent() {
                   </button>
                 ))}
               </div>
-              <label className="search">
+              <label className="search" htmlFor="doc-search-input">
                 <Icon name="search" size={13} />
                 <input
+                  id="doc-search-input"
                   placeholder="Find a document…"
+                  aria-label="Find a document"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />

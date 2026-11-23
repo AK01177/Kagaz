@@ -61,10 +61,10 @@ export default function HomePage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "24px", marginTop: "24px" }}>
             <div>
               <h1>
-                From unstructured files to <em>certified certainty.</em>
+                From unstructured files to <em>clearer workflows.</em>
               </h1>
               <p>
-                Kagaz transforms incoming documents into classified, policy-cleared, and permanently audited records through neural layout intelligence and accredited human judgment.
+                Kagaz accepts documents, extracts text and fields, classifies them when AI services are configured, and supports policy checks and review workflows.
               </p>
             </div>
             <div className="spec">SPEC: PDF · PNG · JPG · JPEG · TAXONOMY V2.4 · 10 MB CEILING</div>
@@ -89,7 +89,7 @@ export default function HomePage() {
             <span className="feature-num">01 · INGESTION &amp; EXTRACTION</span>
             <h3>Strict File Intake</h3>
             <p>
-              Byte-level PDF verification, SHA-256 fingerprinting, layout analysis, and optical text extraction. Every document is anchored to an encrypted enterprise scope.
+              PDF and image files are checked and stored locally by default. Text extraction uses PDF text when available and OCR for scanned pages and images.
             </p>
             <div style={{ marginTop: "20px" }}>
               <Link href="/workspace/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
@@ -99,7 +99,7 @@ export default function HomePage() {
           </div>
 
           <div className="feature-card" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
-            <span className="feature-num">02 · NEURAL CLASSIFICATION</span>
+            <span className="feature-num">02 · AI CLASSIFICATION</span>
             <h3>Deterministic Taxonomy</h3>
             <p>
               Automated classification into commercial invoices, legal contracts, HR records, academic transcripts, and financial filings with real-time confidence scores.
@@ -115,7 +115,7 @@ export default function HomePage() {
             <span className="feature-num">03 · HUMAN VERIFICATION</span>
             <h3>Reviewer Override Desk</h3>
             <p>
-              Low-confidence files are flagged for human review. Certified reviewers examine physical excerpts, correct fields, and stamp files with permanent audit trails.
+              Documents can be routed through review and approval workflows. Reviewers can add comments and request changes; the review screen links to document details for the source file.
             </p>
             <div style={{ marginTop: "20px" }}>
               <Link href="/workspace/review" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
