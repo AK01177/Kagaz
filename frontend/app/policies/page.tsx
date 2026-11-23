@@ -97,6 +97,16 @@ function PoliciesContent() {
     return () => clearTimeout(timer);
   }, [loadPolicies]);
 
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && showUploadForm) {
+        setShowUploadForm(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showUploadForm]);
+
   const loadVersions = async (policyId: string) => {
     setLoadingVersions((prev) => ({ ...prev, [policyId]: true }));
     try {
@@ -353,10 +363,11 @@ function PoliciesContent() {
             <form onSubmit={handleUploadSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                 <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label htmlFor="policy-name" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Policy Title *
                   </label>
                   <input
+                    id="policy-name"
                     type="text"
                     required
                     placeholder="e.g. Accounts Payable & Tax Compliance Policy"
@@ -375,10 +386,11 @@ function PoliciesContent() {
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label htmlFor="policy-version" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Version Tag *
                   </label>
                   <input
+                    id="policy-version"
                     type="text"
                     required
                     placeholder="e.g. 1.0.0 or 2026.Q4"
@@ -399,10 +411,11 @@ function PoliciesContent() {
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                 <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label htmlFor="policy-domain" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Domain / Category
                   </label>
                   <select
+                    id="policy-domain"
                     value={domain}
                     onChange={(e) => setDomain(e.target.value)}
                     style={{
@@ -413,6 +426,7 @@ function PoliciesContent() {
                       padding: "0 12px",
                       fontSize: "12px",
                       background: "white",
+                      cursor: "pointer",
                     }}
                   >
                     <option value="Finance">Finance &amp; Procurement</option>
@@ -425,10 +439,11 @@ function PoliciesContent() {
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label htmlFor="policy-applies-to" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Applies to
                   </label>
                   <select
+                    id="policy-applies-to"
                     value={appliesTo}
                     onChange={(e) => setAppliesTo(e.target.value)}
                     style={{
@@ -450,10 +465,11 @@ function PoliciesContent() {
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label htmlFor="policy-file" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Select Policy File (PDF, DOCX or TXT) *
                   </label>
                   <input
+                    id="policy-file"
                     ref={fileInputRef}
                     type="file"
                     required
@@ -473,10 +489,11 @@ function PoliciesContent() {
               </div>
 
               <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                <label htmlFor="policy-description" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                   Description / Governance Intent (Optional)
                 </label>
                 <textarea
+                  id="policy-description"
                   rows={2}
                   placeholder="Summary of policy guidelines and applicable review ceilings..."
                   value={description}

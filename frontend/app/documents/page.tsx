@@ -351,10 +351,12 @@ function DocumentsContent() {
                   </button>
                 ))}
               </div>
-              <label className="search">
+              <label className="search" htmlFor="doc-search-input">
                 <Icon name="search" size={13} />
                 <input
+                  id="doc-search-input"
                   placeholder="Find a document…"
+                  aria-label="Find a document"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />

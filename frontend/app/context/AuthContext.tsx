@@ -5,6 +5,24 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+export const IS_MOCK_AUTH =
+  process.env.NEXT_PUBLIC_MOCK_AUTH === "true" ||
+  process.env.NEXT_PUBLIC_MOCK_AUTH === "1" ||
+  !supabase;
+
+export const DEFAULT_DEV_USER: AuthUser = {
+  user_id: "dev-admin-01",
+  email: "admin@kagaz.local",
+  name: "Workspace Lead (Dev)",
+  role: "ORG_ADMIN",
+  organization_id: "ACME-CORP",
+  active: true,
+};
+
+export const DEFAULT_DEV_MEMBERSHIPS: OrganizationMembership[] = [
+  { organization_id: "ACME-CORP", role: "ORG_ADMIN" },
+  { organization_id: "RESEARCH-LABS", role: "REVIEWER" },
+];
 
 export interface AuthUser {
   user_id: string;
@@ -45,17 +63,33 @@ export function clearStoredSession() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
-  const [memberships, setMemberships] = useState<OrganizationMembership[]>([]);
-  const [isLoading, setIsLoading] = useState(() => Boolean(supabase));
+  const [token, setToken] = useState<string | null>(() => (IS_MOCK_AUTH ? "mock-dev-token" : null));
+  const [user, setUser] = useState<AuthUser | null>(() => (IS_MOCK_AUTH ? DEFAULT_DEV_USER : null));
+  const [activeOrgId, setActiveOrgId] = useState<string | null>(() =>
+    IS_MOCK_AUTH ? DEFAULT_DEV_USER.organization_id : null
+  );
+  const [memberships, setMemberships] = useState<OrganizationMembership[]>(() =>
+    IS_MOCK_AUTH ? DEFAULT_DEV_MEMBERSHIPS : []
+  );
+  const [isLoading, setIsLoading] = useState(() => (IS_MOCK_AUTH ? false : Boolean(supabase)));
   const [sessionExpired, setSessionExpired] = useState(false);
 
   const loadIdentity = useCallback(async (
     session: Session | null,
     targetOrg?: string | null,
   ): Promise<{ success: boolean; error?: string }> => {
+    if (IS_MOCK_AUTH) {
+      const org = targetOrg || DEFAULT_DEV_USER.organization_id;
+      setToken("mock-dev-token");
+      setUser({ ...DEFAULT_DEV_USER, organization_id: org });
+      setActiveOrgId(org);
+      setMemberships([
+        { organization_id: org, role: DEFAULT_DEV_USER.role },
+        { organization_id: "RESEARCH-LABS", role: "REVIEWER" },
+      ]);
+      setSessionExpired(false);
+      return { success: true };
+    }
     if (!session || !supabase) {
       setToken(null); setUser(null); setActiveOrgId(null); setMemberships([]);
       return { success: false, error: "No active Supabase session was returned." };
@@ -97,7 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (IS_MOCK_AUTH || !supabase) return;
     let active = true;
     supabase.auth.getSession().then(({ data }) => {
       if (active) void loadIdentity(data.session, localStorage.getItem("kagaz_active_org"));
@@ -109,6 +143,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [loadIdentity]);
 
   const login = useCallback(async (email: string, password: string, organizationId?: string) => {
+    if (IS_MOCK_AUTH) {
+      const org = organizationId || DEFAULT_DEV_USER.organization_id;
+      const devUser: AuthUser = {
+        ...DEFAULT_DEV_USER,
+        email: email.trim().toLowerCase() || DEFAULT_DEV_USER.email,
+        name: email.split("@")[0] || DEFAULT_DEV_USER.name,
+        organization_id: org,
+      };
+      setUser(devUser);
+      setToken("mock-dev-token");
+      setActiveOrgId(org);
+      setMemberships([
+        { organization_id: org, role: devUser.role },
+        { organization_id: "RESEARCH-LABS", role: "REVIEWER" },
+      ]);
+      setSessionExpired(false);
+      return { success: true };
+    }
     if (!supabase) return { success: false, error: "Supabase is not configured. Set the frontend Supabase URL and anon key." };
     const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
     if (error) return { success: false, error: error.message };
@@ -118,6 +170,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [loadIdentity]);
 
   const register = useCallback(async (name: string, email: string, password: string) => {
+    if (IS_MOCK_AUTH) {
+      const devUser: AuthUser = {
+        user_id: `dev-${Date.now()}`,
+        email: email.trim().toLowerCase() || "newuser@kagaz.local",
+        name: name.trim() || "Kagaz Developer",
+        role: "ORG_ADMIN",
+        organization_id: "ACME-CORP",
+        active: true,
+      };
+      setUser(devUser);
+      setToken("mock-dev-token");
+      setActiveOrgId("ACME-CORP");
+      setMemberships([{ organization_id: "ACME-CORP", role: "ORG_ADMIN" }]);
+      setSessionExpired(false);
+      return { success: true, confirmationRequired: false };
+    }
     if (!supabase) return { success: false, error: "Supabase is not configured. Set the frontend Supabase URL and anon key." };
     const { data, error } = await supabase.auth.signUp({
       email: email.trim().toLowerCase(), password,
@@ -129,12 +197,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback((options?: { reason?: string }) => {
+    if (IS_MOCK_AUTH) {
+      clearStoredSession();
+      setToken(null);
+      setUser(null);
+      setActiveOrgId(null);
+      setMemberships([]);
+      if (options?.reason === "expired") setSessionExpired(true);
+      return;
+    }
     if (supabase) void supabase.auth.signOut();
     clearStoredSession(); setToken(null); setUser(null); setActiveOrgId(null); setMemberships([]);
     if (options?.reason === "expired") setSessionExpired(true);
   }, []);
 
   const switchOrganization = useCallback(async (organizationId: string) => {
+    if (IS_MOCK_AUTH) {
+      setActiveOrgId(organizationId);
+      if (user) setUser({ ...user, organization_id: organizationId });
+      try { localStorage.setItem("kagaz_active_org", organizationId); } catch { /* restricted storage */ }
+      return { success: true };
+    }
     if (!token || !memberships.some((membership) => membership.organization_id === organizationId)) return { success: false, error: "You are not a member of that organization." };
     const response = await fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}`, "X-Organization-Id": organizationId } });
     if (!response.ok) return { success: false, error: "Unable to switch organization. Confirm your membership with an administrator." };
@@ -143,15 +226,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setActiveOrgId(profile.organization_id);
     try { localStorage.setItem("kagaz_active_org", profile.organization_id); } catch { /* restricted storage */ }
     return { success: true };
-  }, [token, memberships]);
+  }, [token, memberships, user]);
 
   const fetchWithAuth = useCallback(async (input: RequestInfo | URL, init?: RequestInit) => {
     const headers = new Headers(init?.headers || {});
     if (token) headers.set("Authorization", `Bearer ${token}`);
     if (activeOrgId) headers.set("X-Organization-Id", activeOrgId);
-    const response = await fetch(input, { ...init, headers });
-    if (response.status === 401) logout({ reason: "expired" });
-    return response;
+    try {
+      const response = await fetch(input, { ...init, headers });
+      if (response.status === 401 && !IS_MOCK_AUTH) logout({ reason: "expired" });
+      return response;
+    } catch (err) {
+      throw err;
+    }
   }, [token, activeOrgId, logout]);
 
   const value: AuthContextType = {

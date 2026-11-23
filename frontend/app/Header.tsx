@@ -73,20 +73,20 @@ export function Header({ queueCount }: HeaderProps) {
           className={isReview ? "active" : ""}
           style={isReview ? { color: "var(--ink)", fontWeight: 600 } : undefined}
         >
-          Review {displayCount !== null && displayCount > 0 && <span className="nav-count">{displayCount}</span>}
+          Verification Queue {displayCount !== null && displayCount > 0 && <span className="nav-count">{displayCount}</span>}
         </Link>
         <Link
-          href="/login"
-          className={isLogin ? "active" : ""}
-          style={isLogin ? { color: "var(--ink)", fontWeight: 600 } : undefined}
+          href={isAuthenticated ? "/dashboard" : "/login"}
+          className={pathname === "/dashboard" || isLogin ? "active" : ""}
+          style={(pathname === "/dashboard" || isLogin) ? { color: "var(--ink)", fontWeight: 600 } : undefined}
         >
-          {isAuthenticated ? "Workspace" : "Sign In"}
+          {isAuthenticated ? "Overview" : "Sign In"}
         </Link>
       </nav>
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        {isAuthenticated && <NotificationCenter />}
+        {isAuthenticated && <NotificationCenter align="right" />}
         <Link
-          href="/login"
+          href={isAuthenticated ? "/dashboard" : "/login"}
           className="session"
           style={{ textDecoration: "none" }}
           title={isAuthenticated ? `Active in ${activeOrgId || user?.organization_id}` : "Sign in to workspace"}

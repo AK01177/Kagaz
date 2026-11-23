@@ -213,7 +213,7 @@ export function Sidebar() {
         </Link>
         <span className="brand-dot" />
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
-          {!isCollapsed && <NotificationCenter />}
+          {!isCollapsed && <NotificationCenter align="left" />}
           <button
             type="button"
             className="collapse"
@@ -291,15 +291,15 @@ export function Sidebar() {
       <nav className="side-nav">
         <Link href="/dashboard" className={isDashboard ? "active" : ""} title="Overview">
           <Icon name="grid" />
-          {!isCollapsed && "Overview"}
+          {!isCollapsed && <span className="nav-label">Overview</span>}
         </Link>
 
         <Link href="/documents" className={isIntake ? "active" : ""} title="Files">
           <Icon name="file" />
           {!isCollapsed && (
-            <>
+            <span className="nav-label">
               Files {intakeCount !== null && intakeCount > 0 && <em>{intakeCount}</em>}
-            </>
+            </span>
           )}
         </Link>
 
@@ -307,16 +307,16 @@ export function Sidebar() {
           href="/review"
           className={isReview ? "active" : ""}
           style={!canAccessReview && isAuthenticated ? { opacity: 0.6 } : undefined}
-          title={!canAccessReview && isAuthenticated ? "Requires Reviewer or Admin role" : "Verification Desk"}
+          title={!canAccessReview && isAuthenticated ? "Requires Reviewer or Admin role" : "Verification Queue"}
         >
           <Icon name="stamp" />
           {!isCollapsed && (
-            <>
-              Verification Desk{" "}
+            <span className="nav-label">
+              Verification Queue{" "}
               {canAccessReview && reviewCount !== null && reviewCount > 0 ? (
                 <em className="amber-count">{reviewCount}</em>
               ) : null}
-            </>
+            </span>
           )}
         </Link>
 
@@ -328,12 +328,12 @@ export function Sidebar() {
         >
           <Icon name="check" />
           {!isCollapsed && (
-            <>
+            <span className="nav-label">
               Approvals{" "}
               {canAccessApprovals && approvalCount !== null && approvalCount > 0 ? (
                 <em>{approvalCount}</em>
               ) : null}
-            </>
+            </span>
           )}
         </Link>
 
@@ -344,7 +344,7 @@ export function Sidebar() {
           title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : "Policy Governance"}
         >
           <Icon name="shield" />
-          {!isCollapsed && "Policy Governance"}
+          {!isCollapsed && <span className="nav-label">Policy Governance</span>}
         </Link>
 
         <Link
@@ -354,12 +354,16 @@ export function Sidebar() {
           title={!canAccessAdmin && isAuthenticated ? "Requires Organization Admin role" : "User Management"}
         >
           <Icon name="contact" />
-          {!isCollapsed && "User Management"}
+          {!isCollapsed && <span className="nav-label">User Management</span>}
         </Link>
 
         <Link href="/login" className={isLogin ? "active" : ""} title="Session & Switchboard">
           <Icon name="book" />
-          {!isCollapsed && (isAuthenticated ? "Switchboard" : "Sign In")}
+          {!isCollapsed && (
+            <span className="nav-label">
+              {isAuthenticated ? "Switchboard" : "Sign In"}
+            </span>
+          )}
         </Link>
       </nav>
 
