@@ -1,0 +1,45 @@
+# Render Blueprint for the backend API. The frontend is deployed on Vercel (see docs/deployment.md).
+# Database: use the Supabase Postgres connection string as DATABASE_URL (pgvector is available there).
+services:
+  - type: web
+    name: kagaz-api
+    runtime: docker
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS   # your Vercel URL, https only
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: S3_DOCUMENT_BUCKET
+        sync: false
+      - key: S3_POLICY_BUCKET
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kagaz-redis
+          property: connectionString
+
+  - type: keyvalue
+    name: kagaz-redis
+    plan: free
+    ipAllowList: []   # internal connections only
+    maxmemoryPolicy: allkeys-lru
