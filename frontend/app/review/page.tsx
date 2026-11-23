@@ -243,8 +243,13 @@ function ReviewContent() {
     if (!activeDocId) return;
     let cancelled = false;
     let objectUrl: string | null = null;
-    setLoadingPreview(true);
-    setFilePreviewFailure(null);
+
+    const timer = setTimeout(() => {
+      if (!cancelled) {
+        setLoadingPreview(true);
+        setFilePreviewFailure(null);
+      }
+    }, 0);
 
     fetchWithAuth(`${API_URL}/api/documents/${encodeURIComponent(activeDocId)}/file`)
       .then(async (response) => {
@@ -274,6 +279,7 @@ function ReviewContent() {
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [activeDocId, fetchWithAuth]);

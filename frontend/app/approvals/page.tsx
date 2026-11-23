@@ -64,14 +64,11 @@ function ApprovalsContent() {
     return () => clearTimeout(timer);
   }, [loadApprovalQueue]);
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        closeDecisionModal();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+  const closeDecisionModal = useCallback(() => {
+    setSelectedDocId(null);
+    setDecisionType(null);
+    setReasonInput("");
+    setCommentInput("");
   }, []);
 
   const openDecisionModal = (docId: string, type: "approve" | "reject") => {
@@ -81,12 +78,15 @@ function ApprovalsContent() {
     setCommentInput("");
   };
 
-  const closeDecisionModal = () => {
-    setSelectedDocId(null);
-    setDecisionType(null);
-    setReasonInput("");
-    setCommentInput("");
-  };
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        closeDecisionModal();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [closeDecisionModal]);
 
   const submitDecision = async (e: React.FormEvent) => {
     e.preventDefault();
