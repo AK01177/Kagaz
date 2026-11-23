@@ -7,6 +7,7 @@ from typing import Annotated, Callable, Collection, Optional
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -20,7 +21,8 @@ try:
         roles_with_permission,
     )
     from app.db.session import get_db
-    from app.models.membership import Membership
+    from app.crud.organization import unique_slug
+    from app.models.membership import Membership, MembershipRole
     from app.models.organization import Organization
     from app.models.user import User
 except ImportError:
@@ -33,7 +35,8 @@ except ImportError:
         roles_with_permission,
     )
     from backend.app.db.session import get_db
-    from backend.app.models.membership import Membership
+    from backend.app.crud.organization import unique_slug
+    from backend.app.models.membership import Membership, MembershipRole
     from backend.app.models.organization import Organization
     from backend.app.models.user import User
 
@@ -113,15 +116,17 @@ def _resolve_active_membership(
 def _list_active_memberships(db: Session, *, user_id: str) -> list[dict[str, str]]:
     rows = (
         _active_memberships_query(db, user_id=user_id)
+        .add_columns(Organization.name)
         .order_by(Membership.created_at.asc(), Membership.id.asc())
         .all()
     )
     return [
         {
-            "organization_id": row.organization_id,
-            "role": row.role.value if hasattr(row.role, "value") else str(row.role),
+            "organization_id": membership.organization_id,
+            "organization_name": org_name,
+            "role": membership.role.value if hasattr(membership.role, "value") else str(membership.role),
         }
-        for row in rows
+        for membership, org_name in rows
     ]
 
 
@@ -290,6 +295,64 @@ def list_authenticated_memberships(
         "active_organization_id": identity["organization_id"],
         "memberships": memberships,
     }
+
+
+class CreateOrganizationRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+
+
+@router.post("/organizations", status_code=201)
+def create_my_organization(
+    payload: CreateOrganizationRequest,
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer)],
+    db: Annotated[Optional[Session], Depends(get_auth_db)] = None,
+) -> dict:
+    """Self-service sign-up: a signed-in person with no workspace creates one and becomes its ORG_ADMIN.
+
+    Deliberately works without a membership (that is the situation it fixes), so it checks the
+    Supabase token itself. People who already belong to an organization must be added by an admin.
+    """
+    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials.strip():
+        raise _unauthenticated()
+    auth_user = _supabase_user_from_token(credentials.credentials.strip())
+    if not auth_user.get("email_confirmed_at"):
+        raise HTTPException(status_code=403, detail={
+            "code": "EMAIL_NOT_CONFIRMED", "message": "Confirm your email address before creating an organization."
+        })
+    if db is None:
+        raise HTTPException(status_code=503, detail={
+            "code": "AUTH_DATABASE_UNAVAILABLE", "message": "Organization storage is unavailable."
+        })
+
+    email = str(auth_user["email"]).strip().lower()
+    subject = str(auth_user["id"])
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if user is not None and user.provider == "supabase" and user.provider_subject not in (None, subject):
+        raise HTTPException(status_code=409, detail={
+            "code": "IDENTITY_ALREADY_LINKED", "message": "This Kagaz profile is linked to another identity provider account."
+        })
+    if user is not None and _list_active_memberships(db, user_id=user.id):
+        raise HTTPException(status_code=409, detail={
+            "code": "ALREADY_HAS_WORKSPACE",
+            "message": "You already belong to an organization. Ask its administrator to add you to another.",
+        })
+    if user is not None and not user.is_active:
+        raise HTTPException(status_code=403, detail={"code": "ACCOUNT_INACTIVE", "message": "An active account is required."})
+
+    if user is None:
+        full_name = (auth_user.get("user_metadata") or {}).get("full_name")
+        user = User(email=email, full_name=full_name, is_active=True)
+        db.add(user)
+    user.provider, user.provider_subject = "supabase", subject
+    db.flush()
+
+    name = payload.name.strip()
+    org = Organization(name=name, slug=unique_slug(db, name), is_active=True)
+    db.add(org)
+    db.flush()
+    db.add(Membership(user_id=user.id, organization_id=org.id, role=MembershipRole.ORG_ADMIN, is_active=True))
+    db.commit()
+    return {"organization_id": org.id, "organization_name": org.name, "role": MembershipRole.ORG_ADMIN.value}
 
 
 def _require_permission_access(

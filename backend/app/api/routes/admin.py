@@ -4,16 +4,21 @@ from __future__ import annotations
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from api.auth import Permission, require_permission
+from app.crud.organization import unique_slug
 from app.db.session import get_db
 from app.models.membership import Membership, MembershipRole
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.admin import (
+    AdminMemberCreateRequest,
     AdminMemberResponse,
     AdminMemberUpdateRequest,
+    AdminOrganizationCreateRequest,
+    AdminOrganizationListResponse,
     AdminOrganizationResponse,
     AdminUserListResponse,
 )
@@ -195,3 +200,99 @@ def update_organization_member(
         ),
         membership_active=bool(membership.is_active),
     )
+
+
+def _member_response(membership: Membership, user: User) -> AdminMemberResponse:
+    return AdminMemberResponse(
+        user_id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        user_active=bool(user.is_active),
+        organization_id=membership.organization_id,
+        role=membership.role.value if hasattr(membership.role, "value") else str(membership.role),
+        membership_active=bool(membership.is_active),
+    )
+
+
+def _get_or_create_user(session: Session, email: str, full_name: Optional[str]) -> User:
+    """Find the profile for this email, or create one that links to Supabase on first sign-in."""
+    email = email.strip().lower()
+    user = session.query(User).filter(func.lower(User.email) == email).first()
+    if user is None:
+        user = User(email=email, full_name=full_name, is_active=True)
+        session.add(user)
+        session.flush()
+    return user
+
+
+def _org_response(session: Session, org: Organization) -> AdminOrganizationResponse:
+    count = session.query(Membership).filter(
+        Membership.organization_id == org.id, Membership.is_active.is_(True)
+    ).count()
+    return AdminOrganizationResponse(
+        organization_id=org.id, name=org.name, slug=org.slug,
+        is_active=bool(org.is_active), active_member_count=count,
+    )
+
+
+@router.post("/users", response_model=AdminMemberResponse, status_code=201)
+def add_organization_member(
+    payload: AdminMemberCreateRequest,
+    identity: Annotated[dict, Depends(require_permission(Permission.ADMIN_USERS_MANAGE))],
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+) -> AdminMemberResponse:
+    """Add a person to the administrator's organization. They sign up with this email to get in."""
+    session = _require_db(db)
+    org_id = _enforce_target_org(identity, None)
+
+    if payload.role == MembershipRole.SYSTEM_ADMIN and str(identity.get("role")).upper() != "SYSTEM_ADMIN":
+        raise HTTPException(status_code=403, detail={
+            "code": "SYSTEM_ADMIN_REQUIRED",
+            "message": "Only a system administrator may grant the SYSTEM_ADMIN role.",
+        })
+
+    user = _get_or_create_user(session, payload.email, payload.full_name)
+    existing = session.query(Membership).filter(
+        Membership.user_id == user.id, Membership.organization_id == org_id
+    ).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail={
+            "code": "MEMBER_ALREADY_EXISTS",
+            "message": "This person is already a member of the organization. Update their role instead.",
+        })
+    membership = Membership(user_id=user.id, organization_id=org_id, role=payload.role, is_active=True)
+    session.add(membership)
+    session.commit()
+    session.refresh(membership)
+    return _member_response(membership, user)
+
+
+@router.get("/organizations", response_model=AdminOrganizationListResponse)
+def list_organizations(
+    identity: Annotated[dict, Depends(require_permission(Permission.ADMIN_ORGS_MANAGE))],
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+) -> AdminOrganizationListResponse:
+    """List every organization on the platform (system administrators only)."""
+    session = _require_db(db)
+    orgs = session.query(Organization).order_by(Organization.name.asc()).all()
+    return AdminOrganizationListResponse(organizations=[_org_response(session, o) for o in orgs])
+
+
+@router.post("/organizations", response_model=AdminOrganizationResponse, status_code=201)
+def create_organization(
+    payload: AdminOrganizationCreateRequest,
+    identity: Annotated[dict, Depends(require_permission(Permission.ADMIN_ORGS_MANAGE))],
+    db: Annotated[Optional[Session], Depends(get_db)] = None,
+) -> AdminOrganizationResponse:
+    """Create an organization and make the given email its first ORG_ADMIN."""
+    session = _require_db(db)
+    org = Organization(name=payload.name.strip(), slug=unique_slug(session, payload.name), is_active=True)
+    session.add(org)
+    session.flush()
+    admin_user = _get_or_create_user(session, payload.admin_email, payload.admin_name)
+    session.add(Membership(
+        user_id=admin_user.id, organization_id=org.id, role=MembershipRole.ORG_ADMIN, is_active=True,
+    ))
+    session.commit()
+    session.refresh(org)
+    return _org_response(session, org)
