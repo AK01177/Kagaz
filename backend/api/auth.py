@@ -40,6 +40,8 @@ except ImportError:
     from backend.app.models.organization import Organization
     from backend.app.models.user import User
 
+from services.token_cache import cache_user, get_cached_user
+
 bearer = HTTPBearer(auto_error=False)
 
 # Roles allowed to perform document classification/extraction review mutations
@@ -57,6 +59,9 @@ def _unauthenticated(message: str = "A valid bearer token is required.") -> HTTP
 
 def _supabase_user_from_token(raw_token: str) -> dict:
     """Ask Supabase Auth to validate the access token and return its user record."""
+    cached = get_cached_user(raw_token)
+    if cached:
+        return cached
     project_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
     if not project_url or not anon_key:
@@ -77,6 +82,7 @@ def _supabase_user_from_token(raw_token: str) -> dict:
     user = response.json()
     if not isinstance(user, dict) or not user.get("id") or not user.get("email"):
         raise _unauthenticated()
+    cache_user(raw_token, user)
     return user
 
 
