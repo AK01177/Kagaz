@@ -111,14 +111,10 @@ def test_filename_cannot_control_storage_path(client, pdf, tmp_path):
 
 
 def test_metadata_failure_rolls_back_document(client, pdf, monkeypatch, tmp_path):
-    original = Path.replace
+    def fail_metadata(*args, **kwargs):
+        raise OSError("simulated storage failure")
 
-    def fail_metadata(path, target):
-        if path.name == "metadata.json":
-            raise OSError("simulated storage failure")
-        return original(path, target)
-
-    monkeypatch.setattr(Path, "replace", fail_metadata)
+    monkeypatch.setattr("services.upload.save_metadata", fail_metadata)
     response = client.post("/api/documents", files={"file": ("invoice.pdf", pdf, "application/pdf")})
     assert response.status_code == 500
     assert response.json()["error"]["code"] == "STORAGE_FAILURE"
@@ -409,14 +405,11 @@ def test_service_skips_classification_when_extraction_fails(monkeypatch, storage
 
 def test_service_rolls_back_document_on_metadata_write_failure(monkeypatch, storage, user, pdf_bytes):
     mock_processing(monkeypatch)
-    original_replace = Path.replace
 
-    def replace_with_metadata_failure(source, target):
-        if source.name == "metadata.json":
-            raise OSError("simulated metadata storage failure")
-        return original_replace(source, target)
+    def fail_metadata(*args, **kwargs):
+        raise OSError("simulated metadata storage failure")
 
-    monkeypatch.setattr(Path, "replace", replace_with_metadata_failure)
+    monkeypatch.setattr(upload, "save_metadata", fail_metadata)
 
     with pytest.raises(upload.UploadError) as exc:
         upload.save_upload(make_upload("invoice.pdf", pdf_bytes), storage, user)

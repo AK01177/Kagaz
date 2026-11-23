@@ -4,6 +4,7 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 from storage.document_storage import DocumentStorage
+from storage.s3_document_storage import get_document_storage
 
 # AI-08: extended to include image formats alongside PDF
 SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
@@ -31,7 +32,7 @@ def extract_text(document_id: str, storage: DocumentStorage | None = None) -> st
     Raises DocumentNotFoundError if the document is missing, and
     ExtractionError (or a subclass) if it exists but cannot be processed.
     """
-    storage = storage or DocumentStorage()
+    storage = storage or get_document_storage()
 
     path = storage.resolve(document_id)
     suffix = path.suffix.lower()

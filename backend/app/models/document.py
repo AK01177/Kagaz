@@ -13,6 +13,7 @@ from sqlalchemy import (
     Enum,
     Float,
     Integer,
+    JSON,
     String,
     Text,
 )
@@ -97,6 +98,9 @@ class Document(Base):
     # Populated once classification runs (BE-04) — nullable until then
     classification = Column(String, nullable=True)            # e.g. "invoice", "transcript"
     classification_confidence = Column(Float, nullable=True)  # 0.0–1.0
+
+    # Processing results (extracted fields, validation, ...). Replaces the local metadata JSON file.
+    metadata_json = Column(JSON, nullable=True)
 
     # Relationships
     extractions = relationship(

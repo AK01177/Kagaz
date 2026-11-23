@@ -17,6 +17,8 @@ class S3PolicyStorage:
     database lookups that hand out document ids, exactly as with local storage.
     """
 
+    prefix = POLICY_PREFIX
+
     def __init__(self, bucket: str, region: str | None = None, client=None):
         self.bucket = bucket
         if client is None:
@@ -27,7 +29,7 @@ class S3PolicyStorage:
         self._cache = TemporaryDirectory(prefix="policy_s3_")
 
     def key_for(self, document_id: str, extension: str) -> str:
-        return f"{POLICY_PREFIX}{document_id}{extension}"
+        return f"{self.prefix}{document_id}{extension}"
 
     def storage_path_for(self, document_id: str, extension: str) -> str:
         return f"s3://{self.bucket}/{self.key_for(document_id, extension)}"
@@ -57,7 +59,7 @@ class S3PolicyStorage:
 
     def _find_key(self, document_id: str) -> str | None:
         response = self.client.list_objects_v2(
-            Bucket=self.bucket, Prefix=f"{POLICY_PREFIX}{document_id}.", MaxKeys=1
+            Bucket=self.bucket, Prefix=f"{self.prefix}{document_id}.", MaxKeys=1
         )
         contents = response.get("Contents") or []
         return contents[0]["Key"] if contents else None
