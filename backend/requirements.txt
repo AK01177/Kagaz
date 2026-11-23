@@ -21,3 +21,5 @@ numpy
 python-docx
 boto3
 moto[s3]
+redis
+fakeredis

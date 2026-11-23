@@ -1,4 +1,3 @@
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -9,6 +8,7 @@ from uuid import uuid4
 from fastapi import UploadFile
 from pypdf import PdfReader
 
+from services.document_metadata import discard_metadata, save_metadata
 from storage.document_storage import DocumentStorage
 
 
@@ -48,7 +48,7 @@ class UploadError(Exception):
         self.code = code
 
 
-def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, path: Path, user: dict, response: dict, extraction=None) -> bool:
+def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, storage_path: str, user: dict, response: dict, extraction=None) -> bool:
     """Persist Document and optional Extraction records to PostgreSQL (DB-03)."""
     if db is None:
         return True
@@ -76,7 +76,7 @@ def _persist_to_db(db, document_id: str, filename: str, mime: str, size: int, pa
             filename=filename,
             file_type=mime,
             file_size=size,
-            storage_path=str(path.resolve()),
+            storage_path=storage_path,
             status=doc_status,
             classification=response.get("category"),
             classification_confidence=response.get("confidence"),
@@ -193,17 +193,11 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
         "status": "UPLOADED",
         "uploaded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    # Store with the correct extension derived from the upload filename
-    document_path = storage.base_dir / f"{document_id}{ext}"
-    # Keep metadata outside the document glob used by the extraction service.
-    metadata_dir = storage.base_dir / "metadata"
-    metadata_path = metadata_dir / f"{document_id}.json"
     published_document = False
 
     try:
-        storage.base_dir.mkdir(parents=True, exist_ok=True)
-        metadata_dir.mkdir(exist_ok=True)
-        with TemporaryDirectory(prefix="upload_", dir=storage.base_dir) as staging:
+        # Stage in a temporary folder, validate, then hand the file to storage (local disk or S3).
+        with TemporaryDirectory(prefix="upload_") as staging:
             staged_document = Path(staging) / f"document{ext}"
             size = 0
             with staged_document.open("wb") as destination:
@@ -221,7 +215,11 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
             else:
                 _validate_image(staged_document, ext)
 
-            staged_document.replace(document_path)
+            try:
+                storage_path = storage.store(staged_document, document_id, ext)
+            except Exception as exc:
+                logger.exception("Failed to store upload %s", document_id)
+                raise UploadError(500, "STORAGE_FAILURE", "The document could not be stored.") from exc
             published_document = True
 
             extracted_fields = None
@@ -291,7 +289,7 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
                     filename=filename,
                     mime=canonical_mime,
                     size=size,
-                    path=document_path,
+                    storage_path=storage_path,
                     user=user,
                     response=response,
                     extraction=extraction_obj if extracted_fields else None,
@@ -304,7 +302,7 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
             metadata = {
                 **response,
                 "file_size": size,
-                "storage_path": str(document_path.resolve()),
+                "storage_path": storage_path,
                 "submitter_id": user["sub"],
                 "organization_id": user["organization_id"],
                 "ocr_text_length": len(ocr_text),
@@ -313,24 +311,22 @@ def save_upload(file: UploadFile, storage: DocumentStorage, user: dict, db: any 
                 metadata["extracted_fields"] = extracted_fields
                 metadata["extracted_confidence"] = extracted_confidences
                 metadata["status"] = "EXTRACTED"
-            staged_metadata = Path(staging) / "metadata.json"
-            staged_metadata.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-            staged_metadata.replace(metadata_path)
+            save_metadata(document_id, metadata, storage, db)
 
     except UploadError:
         if published_document:
             try:
-                document_path.unlink(missing_ok=True)
-                metadata_path.unlink(missing_ok=True)
-            except OSError:
+                storage.delete(document_id, ext)
+                discard_metadata(document_id, storage)
+            except Exception:
                 logger.exception("Could not clean up failed upload %s", document_id)
         raise
     except OSError as exc:
         if published_document:
             try:
-                document_path.unlink(missing_ok=True)
-                metadata_path.unlink(missing_ok=True)
-            except OSError:
+                storage.delete(document_id, ext)
+                discard_metadata(document_id, storage)
+            except Exception:
                 logger.exception("Could not clean up failed upload %s", document_id)
         logger.exception("Failed to store upload %s", document_id)
         raise UploadError(500, "STORAGE_FAILURE", "The document could not be stored.") from exc

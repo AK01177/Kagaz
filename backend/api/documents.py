@@ -10,12 +10,11 @@ Sprint 3 additions:
 - DB-03: PostgreSQL document metadata and extraction persistence integration.
 """
 from datetime import datetime, timezone
-import json
 import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -39,7 +38,9 @@ from services.structured_extraction import (
     extract_structured_fields,
 )
 from services.upload import UploadError, save_upload
+from services.document_metadata import load_metadata, save_metadata
 from storage.document_storage import DocumentNotFoundError, DocumentStorage
+from storage.s3_document_storage import S3DocumentStorage, get_document_storage
 from sqlalchemy.orm import Session
 
 from app.crud.validation import get_validation_result
@@ -138,7 +139,7 @@ async def upload_document(
     try:
         if file is None:
             raise UploadError(400, "INVALID_FILE", "A file is required.")
-        return await run_in_threadpool(save_upload, file, DocumentStorage(), user, db=db)
+        return await run_in_threadpool(save_upload, file, get_document_storage(), user, db=db)
     except UploadError as exc:
         return JSONResponse(
             status_code=exc.status_code,
@@ -162,16 +163,21 @@ def _assert_document_org_access(doc_org: Optional[str], user: dict) -> str:
     )
 
 
+def _read_metadata(document_id: str, storage, db: Optional[Session]) -> Optional[dict]:
+    """Load a document's stored metadata (None if it has none); an unreadable copy is a 500."""
+    try:
+        return load_metadata(document_id, storage, db)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Could not read metadata")
+
+
 def _lookup_document_owner(document_id: str, storage: DocumentStorage, db: Optional[Session]) -> Optional[str]:
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                owner = json.load(f).get("submitter_id")
-                if isinstance(owner, str) and owner.strip():
-                    return owner.strip()
-        except Exception:
-            pass
+    try:
+        owner = (load_metadata(document_id, storage, db) or {}).get("submitter_id")
+        if isinstance(owner, str) and owner.strip():
+            return owner.strip()
+    except Exception:
+        pass
     if db is not None:
         try:
             from app.models.document import Document
@@ -243,15 +249,12 @@ def _authorize_document_metadata(
 
 
 def _lookup_document_org(document_id: str, storage: DocumentStorage, db: Optional[Session]) -> Optional[str]:
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                meta_org = json.load(f).get("organization_id")
-                if isinstance(meta_org, str) and meta_org.strip():
-                    return meta_org.strip()
-        except Exception:
-            return None
+    try:
+        meta_org = (load_metadata(document_id, storage, db) or {}).get("organization_id")
+        if isinstance(meta_org, str) and meta_org.strip():
+            return meta_org.strip()
+    except Exception:
+        return None
     if db is not None:
         try:
             from app.models.document import Document
@@ -270,9 +273,15 @@ async def get_document_file(
     user: Annotated[dict, Depends(require_document_reader)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
-    storage = DocumentStorage()
+    storage = get_document_storage()
+    s3_file = None
     try:
-        file_path = storage.resolve(document_id)
+        if isinstance(storage, S3DocumentStorage):
+            s3_file = storage.open_stream(document_id)
+            if s3_file is None:
+                raise DocumentNotFoundError(document_id)
+        else:
+            file_path = storage.resolve(document_id)
     except DocumentNotFoundError:
         raise HTTPException(status_code=404, detail="Document file not found")
 
@@ -280,17 +289,23 @@ async def get_document_file(
     _assert_submitter_document_owner(user, _lookup_document_owner(document_id, storage, db))
     _assert_document_visible(user, document_id, db)
 
-    ext = file_path.suffix.lower()
     media_types = {
         ".pdf": "application/pdf",
         ".png": "image/png",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
     }
-    media_type = media_types.get(ext, "application/octet-stream")
+    if s3_file is not None:
+        ext, body = s3_file
+        name = f"{document_id}{ext}"
+        return StreamingResponse(
+            body.iter_chunks(64 * 1024),
+            media_type=media_types.get(ext.lower(), "application/octet-stream"),
+            headers={"Content-Disposition": f'inline; filename="{name}"'},
+        )
     return FileResponse(
         path=str(file_path),
-        media_type=media_type,
+        media_type=media_types.get(file_path.suffix.lower(), "application/octet-stream"),
         filename=file_path.name,
         headers={"Content-Disposition": f'inline; filename="{file_path.name}"'},
     )
@@ -302,16 +317,11 @@ async def get_document(
     user: Annotated[dict, Depends(require_document_reader)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
+    storage = get_document_storage()
 
-    # Return persisted metadata JSON if available (matches QA-03 specification)
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-        except Exception:
-            raise HTTPException(status_code=500, detail="Could not read metadata")
+    # Return persisted metadata if available (matches QA-03 specification)
+    metadata = _read_metadata(document_id, storage, db)
+    if metadata is not None:
         _authorize_document_metadata(document_id, metadata, storage, db, user)
         return metadata
 
@@ -368,16 +378,10 @@ async def correct_classification(
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     """Correct a document's classification."""
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if not metadata_path.exists():
+    storage = get_document_storage()
+    metadata = _read_metadata(document_id, storage, db)
+    if metadata is None:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not read metadata")
 
     _authorize_document_metadata(document_id, metadata, storage, db, user)
 
@@ -486,8 +490,7 @@ async def correct_classification(
             logger.debug("DB classification update fallback for %s: %s", document_id, e)
 
     try:
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
+        save_metadata(document_id, metadata, storage, db)
     except Exception:
         raise HTTPException(status_code=500, detail="Could not update document metadata")
 
@@ -505,15 +508,8 @@ async def get_extraction_results(
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     """Return stored structured extraction fields for a document."""
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    metadata = {}
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                metadata = json.load(f)
-        except Exception:
-            raise HTTPException(status_code=500, detail="Could not read metadata")
+    storage = get_document_storage()
+    metadata = _read_metadata(document_id, storage, db) or {}
 
     # Enforce tenant isolation before querying DB extraction tables
     doc_org = _lookup_document_org(document_id, storage, db)
@@ -569,16 +565,10 @@ async def run_extraction(
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
     """Re-run structured field extraction for an already-classified document."""
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if not metadata_path.exists():
+    storage = get_document_storage()
+    metadata = _read_metadata(document_id, storage, db)
+    if metadata is None:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not read metadata")
 
     _authorize_document_metadata(document_id, metadata, storage, db, user)
 
@@ -692,8 +682,7 @@ async def run_extraction(
     metadata["ocr_text_length"] = len(text)
 
     try:
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
+        save_metadata(document_id, metadata, storage, db)
     except Exception:
         raise HTTPException(status_code=500, detail="Could not update metadata")
 
@@ -717,15 +706,10 @@ async def reclassify_document(
     user: Annotated[dict, Depends(require_classifier)],
     db: Annotated[Session | None, Depends(get_db)] = None,
 ):
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if not metadata_path.exists():
+    storage = get_document_storage()
+    metadata = _read_metadata(document_id, storage, db)
+    if metadata is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not read metadata")
 
     _authorize_document_metadata(document_id, metadata, storage, db, user)
 
@@ -816,8 +800,7 @@ async def reclassify_document(
         raise HTTPException(status_code=500, detail=f"Classification failed: {exc}")
 
     try:
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
+        save_metadata(document_id, metadata, storage, db)
     except Exception:
         raise HTTPException(status_code=500, detail="Could not update metadata")
 
@@ -833,16 +816,10 @@ async def validate_document_endpoint(
     db: Annotated[Optional[Session], Depends(get_db)] = None,
 ):
     """BE-09: Validate extracted fields against domain policies and record audit results."""
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if not metadata_path.exists():
+    storage = get_document_storage()
+    metadata = _read_metadata(document_id, storage, db)
+    if metadata is None:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not read metadata")
 
     user_org = _authorize_document_metadata(document_id, metadata, storage, db, user)
 
@@ -881,7 +858,7 @@ async def get_document_validation_endpoint(
             raw_record = get_validation_result(db, document_id=document_id)
             if raw_record is not None:
                 _assert_document_org_access(raw_record.organization_id, user)
-                owner = _lookup_document_owner(document_id, DocumentStorage(), db)
+                owner = _lookup_document_owner(document_id, get_document_storage(), db)
                 _assert_submitter_document_owner(user, owner)
                 _assert_document_visible(user, document_id, db)
                 return raw_record
@@ -891,19 +868,13 @@ async def get_document_validation_endpoint(
             pass
 
     # Fallback to local metadata storage
-    storage = DocumentStorage()
-    metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-    if not metadata_path.exists():
+    storage = get_document_storage()
+    metadata = _read_metadata(document_id, storage, db)
+    if metadata is None:
         doc_org = _lookup_document_org(document_id, storage, db)
         if doc_org is not None:
             _assert_document_org_access(doc_org, user)
         raise HTTPException(status_code=404, detail="Validation result not found")
-
-    try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Could not read metadata")
 
     _authorize_document_metadata(document_id, metadata, storage, db, user)
 

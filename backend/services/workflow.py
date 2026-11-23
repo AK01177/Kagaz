@@ -8,13 +8,12 @@ state changes alongside append-only transition history.
 """
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.models.document import Document, DocumentStatus
 from app.models.extraction import Extraction
@@ -41,7 +40,9 @@ from app.schemas.workflow import (
     ReviewValidationEvidenceResponse,
     ValidationSummaryResponse,
 )
+from services.document_metadata import load_metadata, save_metadata
 from storage.document_storage import DocumentStorage
+from storage.s3_document_storage import get_document_storage
 
 logger = logging.getLogger(__name__)
 
@@ -303,18 +304,17 @@ def _enforce_assignee_ownership(
 def _sync_sidecar_metadata(document: Document, storage: Optional[DocumentStorage] = None) -> None:
     """Mirror workflow status and assignees to local JSON metadata sidecar after DB commit."""
     try:
-        doc_storage = storage or DocumentStorage()
-        metadata_path = doc_storage.base_dir / "metadata" / f"{document.id}.json"
-        if not metadata_path.exists():
+        doc_storage = storage or get_document_storage()
+        meta = load_metadata(document.id, doc_storage, object_session(document))
+        if meta is None:
             return
-        meta = json.loads(metadata_path.read_text(encoding="utf-8"))
         meta["status"] = document.status.value
         meta["assigned_reviewer_id"] = document.assigned_reviewer_id
         meta["assigned_approver_id"] = document.assigned_approver_id
         meta["revision_number"] = document.revision_number
         if document.workflow_updated_at is not None:
             meta["workflow_updated_at"] = document.workflow_updated_at.isoformat()
-        metadata_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        save_metadata(document.id, meta, doc_storage, object_session(document))
     except Exception as exc:
         logger.debug("Non-fatal sidecar workflow sync failure for %s: %s", document.id, exc)
 
@@ -908,12 +908,11 @@ def _enforce_document_read_permission(
         raise WorkflowError(403, "WORKFLOW_FORBIDDEN", "You do not have access to this document.")
 
 
-def _load_ocr_text(document_id: str, storage: Optional[DocumentStorage]) -> Optional[str]:
+def _load_ocr_text(document_id: str, storage: Optional[DocumentStorage], db: Optional[Session] = None) -> Optional[str]:
     try:
-        doc_storage = storage or DocumentStorage()
-        meta_path = doc_storage.base_dir / "metadata" / f"{document_id}.json"
-        if meta_path.exists():
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        doc_storage = storage or get_document_storage()
+        meta = load_metadata(document_id, doc_storage, db)
+        if meta is not None:
             ocr = meta.get("ocr_text")
             if isinstance(ocr, str) and ocr.strip():
                 return ocr
@@ -1093,7 +1092,7 @@ def get_document_review_detail(
     return DocumentReviewDetailResponse(
         document=_to_queue_item(document),
         extractions=[ReviewExtractionItemResponse.model_validate(row) for row in extraction_rows],
-        ocr_text=_load_ocr_text(document.id, storage),
+        ocr_text=_load_ocr_text(document.id, storage, object_session(document)),
         validation=ReviewValidationEvidenceResponse.model_validate(validation_row) if validation_row else None,
         policy_validation_runs=[
             ReviewPolicyValidationRunResponse(

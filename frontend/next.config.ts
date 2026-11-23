@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Self-contained server output, used by the Docker image (ignored on Vercel).
+  output: "standalone",
   // Old URLs from before the admin / org / workspace split keep working.
   async redirects() {
     return [

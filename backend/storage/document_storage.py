@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 
 
@@ -31,6 +32,16 @@ class DocumentStorage:
         if path is None:
             raise DocumentNotFoundError(document_id)
         return path
+
+    def store(self, local_path: Path, document_id: str, extension: str) -> str:
+        """Copy a validated file into storage and return the value for Document.storage_path."""
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        destination = self.base_dir / f"{document_id}{extension}"
+        shutil.copyfile(local_path, destination)
+        return str(destination.resolve())
+
+    def delete(self, document_id: str, extension: str) -> None:
+        (self.base_dir / f"{document_id}{extension}").unlink(missing_ok=True)
 
     def _find(self, document_id: str) -> Path | None:
         if not self.base_dir.is_dir():

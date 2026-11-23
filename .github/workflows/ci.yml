@@ -80,6 +80,17 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build ./backend
+      - name: Build frontend image
+        run: docker build ./frontend --build-arg NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=dummy --build-arg NEXT_PUBLIC_API_URL=http://backend:8001
+
   frontend:
     name: Frontend - install & build
     runs-on: ubuntu-latest

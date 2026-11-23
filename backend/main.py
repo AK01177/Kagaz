@@ -37,6 +37,15 @@ cors_origins = [
     if origin.strip()
 ]
 
+if os.getenv("ENVIRONMENT", "development").lower() == "production":
+    # Fail at startup instead of running half-configured or with insecure origins.
+    missing = [n for n in ("DATABASE_URL", "SUPABASE_URL", "SUPABASE_ANON_KEY") if not os.getenv(n)]
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+    insecure = [o for o in cors_origins if not o.startswith("https://")]
+    if not cors_origins or insecure:
+        raise RuntimeError(f"CORS_ALLOWED_ORIGINS must be https URLs in production, got: {insecure or 'nothing'}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,

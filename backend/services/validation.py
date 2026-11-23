@@ -3,7 +3,6 @@ BE-09: Document Validation Service.
 Evaluates extracted document fields against active organization domain policies.
 Generates PASS, FAIL, or REVIEW_REQUIRED verdicts with issue details and policy evidence.
 """
-import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
@@ -13,7 +12,9 @@ from app.crud.policy import list_policies
 from app.crud.validation import get_validation_result, save_validation_result
 from app.models.document import Document
 from app.models.policy import Policy
+from services.document_metadata import load_metadata, save_metadata
 from storage.document_storage import DocumentStorage
+from storage.s3_document_storage import get_document_storage
 
 logger = logging.getLogger(__name__)
 
@@ -185,11 +186,9 @@ def validate_document(
 
     # 7. Update JSON sidecar metadata for fast local read
     try:
-        storage = storage or DocumentStorage()
-        metadata_path = storage.base_dir / "metadata" / f"{document_id}.json"
-        if metadata_path.exists():
-            with open(metadata_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
+        storage = storage or get_document_storage()
+        meta = load_metadata(document_id, storage, db)
+        if meta is not None:
             meta["validation"] = result
             # Validation findings stay separate from human workflow/approval state:
             # only set pre-review sidecar status when the document is not already in workflow.
@@ -198,8 +197,7 @@ def validate_document(
                     meta["status"] = "VALIDATED"
                 elif status == "REVIEW_REQUIRED":
                     meta["status"] = "REVIEW_REQUIRED"
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, indent=2)
+            save_metadata(document_id, meta, storage, db)
     except Exception as e:
         logger.debug("Failed updating JSON metadata with validation for %s: %s", document_id, e)
 
