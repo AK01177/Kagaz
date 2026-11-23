@@ -104,6 +104,11 @@ function ReviewContent() {
   const [showCommentModal, setShowCommentModal] = useState(false);
   const [newComment, setNewComment] = useState("");
 
+  // Authenticated file preview for active document
+  const [filePreview, setFilePreview] = useState<{ documentId: string; url: string } | null>(null);
+  const [filePreviewFailure, setFilePreviewFailure] = useState<{ documentId: string; message: string } | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+
   const currentOrg = activeOrgId || user?.organization_id || "Enterprise Workspace";
 
   const loadReviewQueue = useCallback(async () => {
@@ -222,6 +227,62 @@ function ReviewContent() {
       ignore = true;
     };
   }, [activeDocId, activeDocName, fetchWithAuth]);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setShowChangesModal(false);
+        setShowCommentModal(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!activeDocId) return;
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const timer = setTimeout(() => {
+      if (!cancelled) {
+        setLoadingPreview(true);
+        setFilePreviewFailure(null);
+      }
+    }, 0);
+
+    fetchWithAuth(`${API_URL}/api/documents/${encodeURIComponent(activeDocId)}/file`)
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          const message = payload?.error?.message || payload?.detail?.message || payload?.detail;
+          throw new Error(typeof message === "string" ? message : `File request failed (${response.status})`);
+        }
+        return response.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setFilePreview({ documentId: activeDocId, url: objectUrl });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setFilePreviewFailure({
+            documentId: activeDocId,
+            message: error instanceof Error ? error.message : "Could not load the source file.",
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPreview(false);
+      });
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [activeDocId, fetchWithAuth]);
 
   // Submit for Approval
   const handleSubmitForApproval = async () => {
@@ -397,10 +458,12 @@ function ReviewContent() {
         {/* Left Queue Rail */}
         <aside className="queue-rail">
           <div className="queue-filters">
-            <label className="search">
+            <label className="search" htmlFor="review-search-input">
               <Icon name="search" size={13} />
               <input
+                id="review-search-input"
                 placeholder="Find a document…"
+                aria-label="Find a document"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -492,15 +555,75 @@ function ReviewContent() {
             </div>
 
             <div className="correction-work">
-              {/* Source document link */}
-              <div className="receipt-side">
-                <div className="pane-title">
-                  <span>ORIGINAL DOCUMENT</span>
+              {/* Source document preview */}
+              <div className="receipt-side" style={{ display: "flex", flexDirection: "column" }}>
+                <div className="pane-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <span>ORIGINAL DOCUMENT PREVIEW</span>
+                  <Link
+                    href={`/documents/${activeDoc.id}`}
+                    style={{ fontSize: "11px", color: "var(--brand)", textDecoration: "none", fontWeight: 500 }}
+                  >
+                    Open document details ↗
+                  </Link>
                 </div>
-                <div className="receipt-viewer">
-                  <DocumentSourceNotice item={activeDoc} />
+                <div
+                  className="receipt-viewer"
+                  style={{
+                    flex: 1,
+                    minHeight: "480px",
+                    border: "1px solid var(--line2, #e0ddd5)",
+                    borderRadius: "6px",
+                    background: "#fbfbf9",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    overflow: "hidden",
+                  }}
+                >
+                  {loadingPreview ? (
+                    <div style={{ color: "var(--muted)", fontSize: "12px", textAlign: "center", padding: "20px" }}>
+                      Loading source document preview...
+                    </div>
+                  ) : (filePreviewFailure?.documentId === activeDocId) ? (
+                    <div style={{ color: "var(--muted)", fontSize: "12px", textAlign: "center", padding: "20px" }}>
+                      <p style={{ margin: "0 0 8px" }}>Preview unavailable: {filePreviewFailure.message}</p>
+                      <Link href={`/documents/${activeDoc.id}`} className="btn secondary" style={{ textDecoration: "none" }}>
+                        View in Document Inspector ↗
+                      </Link>
+                    </div>
+                  ) : (filePreview?.documentId === activeDocId && filePreview.url) ? (
+                    activeDoc.name.match(/\.(png|jpg|jpeg|webp)$/i) ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={filePreview.url}
+                        alt={activeDoc.name}
+                        style={{
+                          maxWidth: "100%",
+                          maxHeight: "650px",
+                          objectFit: "contain",
+                          borderRadius: "4px",
+                        }}
+                      />
+                    ) : (
+                      <iframe
+                        src={`${filePreview.url}#toolbar=0`}
+                        title={activeDoc.name}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          minHeight: "540px",
+                          border: "none",
+                          backgroundColor: "#fff",
+                        }}
+                      />
+                    )
+                  ) : (
+                    <DocumentSourceNotice item={activeDoc} />
+                  )}
                 </div>
-                <p>Open document details to compare extracted fields with the uploaded file.</p>
+                <p style={{ fontSize: "11px", color: "var(--muted)", marginTop: "8px" }}>
+                  Inspect the source document side-by-side with extracted fields before approval.
+                </p>
               </div>
 
               {/* Extracted fields */}
@@ -562,7 +685,7 @@ function ReviewContent() {
 
       {/* Request Changes Modal */}
       {showChangesModal && activeDoc && (
-        <div className="sheet-backdrop" onMouseDown={() => setShowChangesModal(false)}>
+        <div className="sheet-backdrop" onMouseDown={() => setShowChangesModal(false)} role="dialog" aria-modal="true" aria-label="Request Submitter Changes">
           <aside className="override-sheet" onMouseDown={(e) => e.stopPropagation()}>
             <div className="sheet-bar">
               <span>
@@ -614,7 +737,7 @@ function ReviewContent() {
 
       {/* Add Comment Modal */}
       {showCommentModal && activeDoc && (
-        <div className="sheet-backdrop" onMouseDown={() => setShowCommentModal(false)}>
+        <div className="sheet-backdrop" onMouseDown={() => setShowCommentModal(false)} role="dialog" aria-modal="true" aria-label="Add Audit Comment">
           <aside className="override-sheet" onMouseDown={(e) => e.stopPropagation()}>
             <div className="sheet-bar">
               <span>

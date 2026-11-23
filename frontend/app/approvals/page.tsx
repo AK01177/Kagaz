@@ -64,6 +64,13 @@ function ApprovalsContent() {
     return () => clearTimeout(timer);
   }, [loadApprovalQueue]);
 
+  const closeDecisionModal = useCallback(() => {
+    setSelectedDocId(null);
+    setDecisionType(null);
+    setReasonInput("");
+    setCommentInput("");
+  }, []);
+
   const openDecisionModal = (docId: string, type: "approve" | "reject") => {
     setSelectedDocId(docId);
     setDecisionType(type);
@@ -71,12 +78,15 @@ function ApprovalsContent() {
     setCommentInput("");
   };
 
-  const closeDecisionModal = () => {
-    setSelectedDocId(null);
-    setDecisionType(null);
-    setReasonInput("");
-    setCommentInput("");
-  };
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        closeDecisionModal();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [closeDecisionModal]);
 
   const submitDecision = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -286,7 +296,13 @@ function ApprovalsContent() {
 
         {/* Decision Modal / Sheet */}
         {selectedDocId && decisionType && (
-          <div className="sheet-backdrop" onMouseDown={closeDecisionModal}>
+          <div
+            className="sheet-backdrop"
+            onMouseDown={closeDecisionModal}
+            role="dialog"
+            aria-modal="true"
+            aria-label={decisionType === "approve" ? "Approve Document Modal" : "Reject Document Modal"}
+          >
             <aside
               className="override-sheet"
               onMouseDown={(e) => e.stopPropagation()}
@@ -297,7 +313,7 @@ function ApprovalsContent() {
                   <Icon name={decisionType === "approve" ? "check" : "alert"} />
                   {decisionType === "approve" ? "APPROVE DOCUMENT" : "REJECT DOCUMENT"}
                 </span>
-                <button type="button" onClick={closeDecisionModal}>
+                <button type="button" onClick={closeDecisionModal} aria-label="Close dialog">
                   ×
                 </button>
               </div>
@@ -315,10 +331,11 @@ function ApprovalsContent() {
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label htmlFor="decision-reason" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Reason for {decisionType === "approve" ? "Approval" : "Rejection"} *
                   </label>
                   <input
+                    id="decision-reason"
                     type="text"
                     required
                     placeholder={
@@ -341,10 +358,11 @@ function ApprovalsContent() {
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
+                  <label htmlFor="decision-comment" style={{ display: "block", fontSize: "11px", fontWeight: 600, marginBottom: "6px" }}>
                     Internal Governance Comment (Optional)
                   </label>
                   <textarea
+                    id="decision-comment"
                     rows={3}
                     placeholder="Provide details or instructions for submitter / compliance..."
                     value={commentInput}

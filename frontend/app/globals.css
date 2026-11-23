@@ -1378,13 +1378,12 @@ footer {
   .hero h1 {
     font-size: 42px;
   }
-  .tr {
-    grid-template-columns: 1.5fr 1fr;
+  .table-wrap, .table {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
-  .tr > *:nth-child(3),
-  .tr > *:nth-child(4),
-  .tr > *:nth-child(5) {
-    display: none;
+  .tr {
+    min-width: 500px;
   }
   .detail-grid, .review-layout, .inspection-grid {
     grid-template-columns: 1fr;
@@ -1695,7 +1694,6 @@ footer {
 .badge.amber{background:var(--warning-bg);color:var(--warning)}
 .badge.violet{background:var(--brand-surface);color:var(--brand)}
 .badge.red{background:var(--error-bg);color:var(--error)}
-.badge.red{background:var(--red-bg);color:var(--red)}
 .intake-body{padding:24px 32px}
 .upload-panel{width:100%;min-height:180px;border:1px dashed var(--line2);border-radius:8px;background:white;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;padding:24px}
 .upload-panel:hover{border-color:var(--violet)}
@@ -1887,26 +1885,28 @@ footer {
   .record-lock{display:none}
   .inspector-grid{grid-template-columns:1fr;height:auto}
   .source-pane{border-right:0}
-  .review-body{grid-template-columns:250px 1fr}
+  .review-body{grid-template-columns:280px 1fr}
   .correction-work{grid-template-columns:1fr}
-  .receipt-side{display:none}
-  .lib-row{grid-template-columns:2fr 1fr 1fr}
-  .lib-row>*:nth-child(3),.lib-row>*:nth-child(4){display:none}
+  .library-card,.library-table{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .lib-row{min-width:620px}
 }
 @media(max-width:760px){
   .sidebar{width:64px;min-width:64px;padding:20px 8px}
-  .brand{font-size:0}
-  .brand:after{content:'K.';font-size:24px}
-  .org,.side-label,.side-nav a:not(.active),.side-nav a,.side-nav button{font-size:0}
-  .side-nav a,.side-nav button{justify-content:center}
-  .side-nav em,.side-bottom{display:none}
+  .brand-dot{display:none}
+  .brand{font-size:18px}
+  .org,.side-label,.nav-label{display:none}
+  .side-nav a,.side-nav button{justify-content:center;padding:0 8px}
+  .side-nav em{display:none}
+  .side-bottom{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .side-note,.backend,.profile>div{display:none}
+  .profile{padding:0;justify-content:center}
   .workspace{width:calc(100% - 64px)}
-  .page-head,.review-head{padding:20px;height:auto}
-  .head-main{align-items:flex-start;gap:20px}
-  .head-main .btn{display:none}
+  .page-head,.review-head{padding:16px 20px;height:auto}
+  .head-main{display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+  .head-main>div:last-child{display:flex;flex-wrap:wrap;gap:8px;width:100%}
   .intake-body{padding:18px}
-  .review-body{grid-template-columns:1fr;height:auto}
-  .queue-rail{display:none}
+  .review-body{display:flex;flex-direction:column;height:auto}
+  .queue-rail{display:block;width:100%;border-right:0;border-bottom:1px solid var(--line);max-height:240px;overflow-y:auto}
   .active-review{padding:18px}
   .pipeline{overflow:auto}
   .stage{min-width:210px}
@@ -1915,6 +1915,8 @@ footer {
   .doc-actions>div{flex-wrap:wrap;justify-content:flex-end}
   .sheet-backdrop .override-sheet{width:100%}
   .field-grid{grid-template-columns:1fr}
+  .library-card,.library-table{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .lib-row{min-width:620px}
 }
 
 /* Document Workspace Tabs (FE09, FE10, FE11, FE12) */
