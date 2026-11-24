@@ -113,10 +113,42 @@ function DashboardContent() {
   }, [loadDashboardData]);
 
   const stats = [
-    { label: "WORKSPACE FILES", value: totalDocsCount.toString(), tone: totalDocsCount > 0 ? "neutral" : "neutral" },
-    { label: "VALIDATED / APPROVED RATE", value: validatedRate, tone: validatedRate !== "—" ? "green" : "neutral" },
-    { label: "AWAITING VERIFICATION", value: reviewQueueCount.toString(), tone: reviewQueueCount > 0 ? "amber" : "neutral" },
-    { label: "APPROVALS PENDING", value: approvalQueueCount.toString(), tone: approvalQueueCount > 0 ? "violet" : "neutral" },
+    {
+      label: "TOTAL INGESTED",
+      sub: "Active repository volume",
+      value: totalDocsCount.toString(),
+      icon: "file" as const,
+      color: "var(--brand)",
+      bg: "var(--brand-surface)",
+      badge: "Realtime",
+    },
+    {
+      label: "VALIDATED RATE",
+      sub: "Policy clearance score",
+      value: validatedRate,
+      icon: "check" as const,
+      color: "var(--success)",
+      bg: "var(--success-bg)",
+      badge: validatedRate !== "—" ? "Compliant" : "Calculating",
+    },
+    {
+      label: "AWAITING VERIFICATION",
+      sub: "Review queue backlog",
+      value: reviewQueueCount.toString(),
+      icon: "stamp" as const,
+      color: reviewQueueCount > 0 ? "var(--warning)" : "var(--muted)",
+      bg: reviewQueueCount > 0 ? "var(--warning-bg)" : "var(--surface-secondary)",
+      badge: reviewQueueCount > 0 ? "Action Required" : "Clear",
+    },
+    {
+      label: "APPROVALS PENDING",
+      sub: "Sign-off authorizations",
+      value: approvalQueueCount.toString(),
+      icon: "shield" as const,
+      color: approvalQueueCount > 0 ? "var(--violet)" : "var(--muted)",
+      bg: approvalQueueCount > 0 ? "var(--violet-bg)" : "var(--surface-secondary)",
+      badge: approvalQueueCount > 0 ? "Pending" : "Zero Queued",
+    },
   ];
 
   return (
@@ -124,21 +156,21 @@ function DashboardContent() {
       <header className="page-head">
         <div className="crumb">
           <Icon name="grid" size={14} /> Workspace <span>/</span> Overview
-          <div className="sync">
-            <span className="brand-dot" /> {loading ? "Syncing Workspace..." : "Authenticated · Real-Time"}
+          <div className="record-lock">
+            <span className="brand-dot" /> {loading ? "Syncing..." : "Authenticated Enclave Active"}
           </div>
         </div>
         <div className="head-main">
           <div>
             <h1>Workspace Overview</h1>
-            <p className="subline">{currentOrg.toUpperCase()} · ARCHIVAL INTELLIGENCE HUB</p>
+            <p className="subline">{currentOrg.toUpperCase()} · AUTONOMOUS DOCUMENT OPERATIONS</p>
           </div>
-          <div style={{ display: "flex", gap: "10px" }}>
-            <Button variant="ghost" icon="refresh" onClick={loadDashboardData}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            <Button variant="ghost" icon="refresh" onClick={loadDashboardData} disabled={loading}>
               Sync Data
             </Button>
             <Link href="/workspace/documents" className="btn primary" style={{ textDecoration: "none" }}>
-              Deposit New File ↥
+              <Icon name="inbox" size={15} /> Deposit File ↥
             </Link>
           </div>
         </div>
@@ -149,52 +181,76 @@ function DashboardContent() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: "16px",
-            marginBottom: "24px",
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: "18px",
+            marginBottom: "28px",
           }}
         >
           {stats.map((s) => (
             <div
               key={s.label}
               style={{
-                background: "white",
+                background: "#FFFFFF",
                 border: "1px solid var(--line)",
-                borderRadius: "8px",
-                padding: "20px",
-                boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+                borderRadius: "12px",
+                padding: "22px 24px",
+                boxShadow: "var(--shadow-xs)",
+                transition: "all 0.25s var(--ease-spring)",
+                position: "relative",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.boxShadow = "var(--shadow-md)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "none";
+                e.currentTarget.style.boxShadow = "var(--shadow-xs)";
               }}
             >
-              <span
-                style={{
-                  display: "block",
-                  fontSize: "10px",
-                  fontWeight: 600,
-                  letterSpacing: "0.8px",
-                  color: "var(--muted)",
-                  marginBottom: "8px",
-                  fontFamily: "'Inter', sans-serif",
-                }}
-              >
-                {s.label}
-              </span>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "14px" }}>
+                <span
+                  style={{
+                    width: "38px",
+                    height: "38px",
+                    borderRadius: "10px",
+                    background: s.bg,
+                    display: "grid",
+                    placeItems: "center",
+                    color: s.color,
+                  }}
+                >
+                  <Icon name={s.icon} size={18} />
+                </span>
+                <span
+                  style={{
+                    font: "600 10px 'JetBrains Mono', monospace",
+                    padding: "3px 8px",
+                    borderRadius: "9999px",
+                    background: s.bg,
+                    color: s.color,
+                  }}
+                >
+                  {s.badge}
+                </span>
+              </div>
               <strong
                 style={{
                   display: "block",
-                  fontSize: "26px",
+                  fontSize: "30px",
+                  fontWeight: 600,
                   fontFamily: "'JetBrains Mono', monospace",
-                  color:
-                    s.tone === "amber"
-                      ? "var(--amber)"
-                      : s.tone === "green"
-                      ? "var(--green)"
-                      : s.tone === "violet"
-                      ? "var(--violet)"
-                      : "var(--ink)",
+                  color: "var(--ink)",
+                  marginBottom: "4px",
                 }}
               >
                 {s.value}
               </strong>
+              <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", color: "var(--muted)", textTransform: "uppercase" }}>
+                {s.label}
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--secondary)", marginTop: "2px" }}>
+                {s.sub}
+              </div>
             </div>
           ))}
         </div>
@@ -203,31 +259,46 @@ function DashboardContent() {
         {reviewQueueCount > 0 && (
           <div
             style={{
-              background: "var(--amber-bg)",
-              border: "1px solid #eadcc4",
-              borderRadius: "8px",
-              padding: "16px 20px",
+              background: "linear-gradient(135deg, rgba(217, 119, 6, 0.08) 0%, rgba(245, 158, 11, 0.03) 100%), #FFFFFF",
+              border: "1px solid var(--warning-border)",
+              borderRadius: "12px",
+              padding: "20px 24px",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              marginBottom: "24px",
+              marginBottom: "28px",
               flexWrap: "wrap",
-              gap: "12px",
+              gap: "16px",
+              boxShadow: "var(--shadow-xs)",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <Icon name="alert" size={18} />
+            <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+              <span
+                style={{
+                  width: "42px",
+                  height: "42px",
+                  borderRadius: "10px",
+                  background: "var(--warning-bg)",
+                  border: "1px solid var(--warning-border)",
+                  color: "var(--warning)",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <Icon name="alert" size={20} />
+              </span>
               <div>
-                <b style={{ color: "var(--amber)", fontSize: "12px" }}>
-                  {reviewQueueCount} {reviewQueueCount === 1 ? "file requires" : "files require"} human verification
+                <b style={{ color: "var(--ink)", fontSize: "14px", fontWeight: 600 }}>
+                  {reviewQueueCount} {reviewQueueCount === 1 ? "document requires" : "documents require"} human verification
                 </b>
-                <p style={{ margin: "4px 0 0", color: "#8b744e", fontSize: "11px" }}>
-                  Low confidence extractions or policy variances require human accreditation before downstream ledger clearance.
+                <p style={{ margin: "4px 0 0", color: "var(--secondary)", fontSize: "12px", lineHeight: 1.5 }}>
+                  Low-confidence extractions or policy variances require human accreditation before downstream ledger clearance.
                 </p>
               </div>
             </div>
             <Link href="/workspace/review" className="btn primary" style={{ textDecoration: "none" }}>
-              Open Verification Desk →
+              <Icon name="stamp" size={15} /> Open Verification Desk →
             </Link>
           </div>
         )}
@@ -239,14 +310,16 @@ function DashboardContent() {
           style={{
             textDecoration: "none",
             color: "inherit",
-            marginBottom: "24px",
+            marginBottom: "28px",
             cursor: "pointer",
           }}
         >
-          <span className="upload-icon">↥</span>
-          <h2>Deposit a file for intelligence.</h2>
-          <p>Drop a PDF or image here to launch RapidOCR and genre classification.</p>
-          <span className="upload-spec">PDF · PNG · JPG · JPEG · MAXIMUM 10 MB</span>
+          <span className="upload-icon">
+            <Icon name="inbox" size={24} />
+          </span>
+          <h2>Deposit a file into the archival pipeline.</h2>
+          <p>Drop a PDF or image here to launch RapidOCR and deterministic genre classification.</p>
+          <span className="upload-spec">PDF · PNG · JPG · JPEG · CEILING 10 MB</span>
         </Link>
 
         {/* Recent Files Table */}
@@ -271,27 +344,27 @@ function DashboardContent() {
             </div>
 
             {recentDocs.length === 0 ? (
-              <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--muted)" }}>
-                <p style={{ margin: "0 0 6px", fontSize: "13px", fontWeight: 500 }}>No files deposited in this workspace yet.</p>
-                <small style={{ fontSize: "11px" }}>Deposit a file above to begin RapidOCR ingestion, classification, and validation.</small>
+              <div style={{ padding: "48px 20px", textAlign: "center", color: "var(--muted)" }}>
+                <p style={{ margin: "0 0 6px", fontSize: "14px", fontWeight: 600, color: "var(--ink)" }}>No files deposited in this workspace yet.</p>
+                <small style={{ fontSize: "12px", color: "var(--secondary)" }}>Deposit a file above to begin RapidOCR ingestion, classification, and validation.</small>
               </div>
             ) : (
               recentDocs.map((d) => (
                 <Link className="lib-row" key={d.id} href={`/workspace/documents/${d.id}`}>
                   <span className="doc-name">
                     <span className="doc-icon">
-                      <Icon name="file" />
+                      <Icon name="file" size={16} />
                     </span>
                     <b>{d.name}</b>
                   </span>
                   <code>{d.id}</code>
-                  <span>{d.date}</span>
-                  <span>{d.type}</span>
+                  <span style={{ color: "var(--secondary)", fontSize: "12px" }}>{d.date}</span>
+                  <span style={{ fontWeight: 500, color: "var(--ink)" }}>{d.type}</span>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                     <Badge tone={d.status === "NEEDS REVIEW" ? "amber" : "green"}>
                       {d.conf}
                     </Badge>
-                    <small style={{ color: "var(--muted)", fontSize: "10px" }}>{d.status}</small>
+                    <small style={{ color: "var(--muted)", fontSize: "11px", fontWeight: 500 }}>{d.status}</small>
                   </div>
                 </Link>
               ))

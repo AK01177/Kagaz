@@ -33,17 +33,23 @@ export function DocumentHeader({
     }
   }
 
+  const confidenceNum = document.confidence !== null && document.confidence !== undefined
+    ? Math.round(document.confidence > 1 ? document.confidence : document.confidence * 100)
+    : null;
+
   return (
     <header className="inspector-head">
       <div className="crumb">
         <Icon name="folder" size={14} /> Library <span>/</span> {categoryName} <span>/</span>{" "}
         <code>{document.filename}</code>
-        <div className="record-lock">⌂ Private workspace record</div>
+        <div className="record-lock">
+          <span className="brand-dot" /> Private Enclave Record
+        </div>
       </div>
 
       <div className="identity">
         <span className="doc-icon large">
-          <Icon name="file" size={20} />
+          <Icon name="file" size={22} />
         </span>
         <div>
           <h1>{document.filename}</h1>
@@ -52,13 +58,24 @@ export function DocumentHeader({
             <button
               type="button"
               onClick={copyId}
-              style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              style={{
+                background: "var(--surface-secondary)",
+                border: "1px solid var(--line)",
+                borderRadius: "4px",
+                cursor: "pointer",
+                padding: "2px 6px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                fontSize: "11px",
+                color: "var(--secondary)"
+              }}
               title="Copy ID"
               aria-label="Copy document ID"
             >
               <Icon name="copy" size={12} />
+              {copied ? <span style={{ color: "var(--success)", fontWeight: 600 }}>Copied!</span> : <span>Copy</span>}
             </button>{" "}
-            {copied ? <small style={{ color: "var(--green)" }}>Copied!</small> : null}
             {document.file_size ? (
               <>
                 <i /> <code>{formatFileSize(document.file_size)}</code>
@@ -77,14 +94,13 @@ export function DocumentHeader({
       </div>
 
       <div className="doc-actions">
-        <p>
-          <span className="eyebrow">CLASSIFIED AS</span> {categoryName}{" "}
-          <code>
-            {document.confidence !== null && document.confidence !== undefined
-              ? `${Math.round(document.confidence * 100)}%`
-              : "Not available"}
-          </code>
-        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span className="eyebrow">CLASSIFIED AS</span>
+          <span style={{ fontWeight: 600, color: "var(--ink)" }}>{categoryName}</span>
+          <Badge tone={confidenceNum && confidenceNum >= 85 ? "green" : "amber"}>
+            {confidenceNum !== null ? `${confidenceNum}% Confidence` : "Not evaluated"}
+          </Badge>
+        </div>
         <div>
           <Button
             variant="ghost"
@@ -94,7 +110,7 @@ export function DocumentHeader({
           >
             {rerunning ? "Re-running..." : "Re-run Extraction"}
           </Button>
-          <Button icon="pencil" onClick={onOpenOverride}>
+          <Button variant="primary" icon="pencil" onClick={onOpenOverride}>
             Correct Classification
           </Button>
         </div>
