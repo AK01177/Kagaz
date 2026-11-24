@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Header, Footer } from "./Header";
 import { useAuth } from "./context/AuthContext";
 import { formatDate } from "./classification";
+import { Icon } from "./components/AppShell";
 
 interface RecentFile {
   id: string;
@@ -54,30 +55,34 @@ export default function HomePage() {
   return (
     <>
       <Header />
-      <main className="page" style={{ background: "#FFFFFF" }}>
+      <main className="page">
         {/* Hero Section */}
-        <div className="landing-hero" style={{ background: "#FFFFFF" }}>
-          <div className="section-mark">§ 00 · ARCHIVAL DOCUMENT INTELLIGENCE</div>
+        <div className="landing-hero">
+          <div className="section-mark">
+            <Icon name="shield" size={13} /> § 00 · ARCHIVAL DOCUMENT INTELLIGENCE
+          </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "24px", marginTop: "24px" }}>
             <div>
               <h1>
                 From unstructured files to <em>clearer workflows.</em>
               </h1>
               <p>
-                Kagaz accepts documents, extracts text and fields, classifies them when AI services are configured, and supports policy checks and review workflows.
+                Kagaz ingests corporate filings, extracts key-value schemas, classifies genres via deterministic AI, and powers automated policy governance loops.
               </p>
             </div>
-            <div className="spec">SPEC: PDF · PNG · JPG · JPEG · TAXONOMY V2.4 · 10 MB CEILING</div>
+            <div className="spec">
+              SPEC: PDF · PNG · JPG · JPEG · TAXONOMY V2.4 · 10 MB CEILING
+            </div>
           </div>
 
-          <div className="cta-row" style={{ marginTop: "12px" }}>
-            <Link href="/workspace/documents" className="button" style={{ textDecoration: "none", padding: "14px 24px", fontSize: "13px" }}>
-              Deposit File into Intake ↥
+          <div className="cta-row" style={{ marginTop: "24px" }}>
+            <Link href="/workspace/documents" className="button primary" style={{ textDecoration: "none", padding: "12px 24px", fontSize: "13px" }}>
+              <Icon name="inbox" size={15} /> Deposit File into Intake
             </Link>
-            <Link href="/workspace/review" className="button secondary" style={{ textDecoration: "none", padding: "14px 22px", fontSize: "13px" }}>
-              Open Human Verification Queue →
+            <Link href="/workspace/review" className="button secondary" style={{ textDecoration: "none", padding: "12px 20px", fontSize: "13px" }}>
+              <Icon name="stamp" size={15} /> Open Verification Desk →
             </Link>
-            <Link href="/login" className="button secondary" style={{ textDecoration: "none", padding: "14px 18px", fontSize: "13px" }}>
+            <Link href="/login" className="button ghost" style={{ textDecoration: "none", padding: "12px 18px", fontSize: "13px" }}>
               Sign In to Workspace
             </Link>
           </div>
@@ -85,66 +90,66 @@ export default function HomePage() {
 
         {/* 3 Pillars of the Kagaz Engine */}
         <section className="landing-features">
-          <div className="feature-card" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
+          <div className="feature-card">
             <span className="feature-num">01 · INGESTION &amp; EXTRACTION</span>
             <h3>Strict File Intake</h3>
             <p>
-              PDF and image files are checked and stored locally by default. Text extraction uses PDF text when available and OCR for scanned pages and images.
+              PDF and high-resolution scans are verified and cached within your organization&apos;s enclave. Robust dual-engine pipeline extracts native digital text and runs local OCR for scanned imagery.
             </p>
-            <div style={{ marginTop: "20px" }}>
-              <Link href="/workspace/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
+            <div style={{ marginTop: "24px" }}>
+              <Link href="/workspace/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "5px" }}>
                 Test Intake Dropzone →
               </Link>
             </div>
           </div>
 
-          <div className="feature-card" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
-            <span className="feature-num">02 · AI CLASSIFICATION</span>
-            <h3>Deterministic Taxonomy</h3>
+          <div className="feature-card">
+            <span className="feature-num">02 · DETERMINISTIC TAXONOMY</span>
+            <h3>AI Multi-Genre Classifier</h3>
             <p>
-              Automated classification into commercial invoices, legal contracts, HR records, academic transcripts, and financial filings with real-time confidence scores.
+              Classifies commercial invoices, legal contracts, HR records, academic credentials, and regulatory filings with confidence scores and automated routing queues.
             </p>
-            <div style={{ marginTop: "20px" }}>
-              <Link href="/workspace/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
+            <div style={{ marginTop: "24px" }}>
+              <Link href="/workspace/documents" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "5px" }}>
                 Open File Repository →
               </Link>
             </div>
           </div>
 
-          <div className="feature-card" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
+          <div className="feature-card">
             <span className="feature-num">03 · HUMAN VERIFICATION</span>
             <h3>Reviewer Override Desk</h3>
             <p>
-              Documents can be routed through review and approval workflows. Reviewers can add comments and request changes; the review screen links to document details for the source file.
+              Flagged, low-confidence, or policy-violating documents route to human reviewers. Corrections, rationale notes, and certified decisions are logged into an immutable audit trail.
             </p>
-            <div style={{ marginTop: "20px" }}>
-              <Link href="/workspace/review" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 500 }}>
-                Launch Review Ledger →
+            <div style={{ marginTop: "24px" }}>
+              <Link href="/workspace/review" style={{ color: "var(--brand)", fontSize: "12px", textDecoration: "none", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                Launch Verification Desk →
               </Link>
             </div>
           </div>
         </section>
 
         {/* Manifesto Quote */}
-        <section className="manifesto-quote" style={{ background: "#FFFFFF", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+        <section className="manifesto-quote">
           <blockquote>
             &ldquo;Classification is derived from document structure, legal covenants, and semantic markers &mdash; not filename alone.&rdquo;
           </blockquote>
-          <cite style={{ color: "var(--brand)" }}>Kagaz Archival Standard · Rule 12.B</cite>
+          <cite>Kagaz Archival Standard · Rule 12.B</cite>
         </section>
 
         {/* Live Workspace Ledger Sample */}
-        <section className="ledger-section" style={{ marginTop: "40px" }}>
+        <section className="ledger-section">
           <div className="section-heading">
             <div>
               <span>ACTIVE ARCHIVAL LEDGER</span>
               <h2>Recent Workspace Files</h2>
             </div>
-            <Link href="/workspace/documents" style={{ color: "var(--brand)" }}>Enter full workspace →</Link>
+            <Link href="/workspace/documents">Enter full workspace →</Link>
           </div>
 
-          <div className="table" style={{ background: "#FFFFFF", border: "1px solid var(--line)" }}>
-            <div className="tr th" style={{ background: "#FFFFFF", borderBottom: "1px solid var(--line)" }}>
+          <div className="table">
+            <div className="tr th">
               <span>File name</span>
               <span>Unique ID</span>
               <span>Timestamp</span>
@@ -153,24 +158,24 @@ export default function HomePage() {
             </div>
 
             {loadingFiles ? (
-              <div style={{ padding: "32px 20px", textAlign: "center", color: "var(--muted)" }}>
+              <div style={{ padding: "36px 20px", textAlign: "center", color: "var(--muted)" }}>
                 Loading recent files...
               </div>
             ) : recentFiles.length === 0 ? (
-              <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--muted)" }}>
-                <p style={{ margin: "0 0 6px", fontSize: "13px", fontWeight: 500 }}>No files deposited in this workspace yet.</p>
-                <small style={{ fontSize: "11px" }}>Deposit a file in the Intake dropzone to begin extraction and classification.</small>
+              <div style={{ padding: "48px 20px", textAlign: "center", color: "var(--muted)" }}>
+                <p style={{ margin: "0 0 6px", fontSize: "14px", fontWeight: 600, color: "var(--ink)" }}>No files deposited in this workspace yet.</p>
+                <small style={{ fontSize: "12px", color: "var(--muted)" }}>Deposit a file in the Intake dropzone to begin extraction and classification.</small>
               </div>
             ) : (
               recentFiles.map((file, idx) => (
-                <Link key={file.id} href={`/workspace/documents/${file.id}`} className="tr" style={{ background: "#FFFFFF", borderBottom: "1px solid var(--line)" }}>
+                <Link key={file.id} href={`/workspace/documents/${file.id}`} className="tr">
                   <span className="file-name">
                     <b>{String(idx + 1).padStart(2, "0")}</b> {file.name}
                   </span>
                   <code>{file.id}</code>
-                  <code>{file.date}</code>
-                  <span>{file.category}</span>
-                  <span className="inspect" style={{ color: "var(--brand)" }}>Inspect File →</span>
+                  <span style={{ color: "var(--secondary)", fontSize: "12px" }}>{file.date}</span>
+                  <span style={{ fontWeight: 500, color: "var(--ink)" }}>{file.category}</span>
+                  <span className="inspect">Inspect File →</span>
                 </Link>
               ))
             )}
@@ -178,15 +183,23 @@ export default function HomePage() {
         </section>
 
         {/* Call to action card */}
-        <div style={{ marginTop: "64px", padding: "40px", background: "#FFFFFF", border: "1px solid var(--line)", textAlign: "center", borderRadius: "8px" }}>
-          <h2 style={{ font: "400 34px 'Newsreader', serif", color: "var(--ink)", marginBottom: "12px" }}>
-            Ready to index enterprise files?
+        <div style={{
+          marginTop: "64px",
+          padding: "48px 36px",
+          background: "linear-gradient(135deg, rgba(79, 70, 229, 0.04) 0%, rgba(14, 165, 233, 0.04) 100%), #FFFFFF",
+          border: "1px solid var(--brand-border)",
+          textAlign: "center",
+          borderRadius: "14px",
+          boxShadow: "var(--shadow-sm)"
+        }}>
+          <h2 style={{ font: "600 30px 'Newsreader', Georgia, serif", color: "var(--ink)", marginBottom: "10px" }}>
+            Ready to index enterprise documents?
           </h2>
-          <p style={{ color: "var(--muted)", maxWidth: "540px", margin: "0 auto 24px", fontSize: "14px" }}>
+          <p style={{ color: "var(--secondary)", maxWidth: "560px", margin: "0 auto 24px", fontSize: "14px", lineHeight: 1.6 }}>
             Experience document intake, confidence-based routing, and reviewer verification in action.
           </p>
           <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
-            <Link href="/workspace/documents" className="button" style={{ textDecoration: "none", padding: "12px 22px" }}>
+            <Link href="/workspace/documents" className="button primary" style={{ textDecoration: "none", padding: "12px 24px" }}>
               Start Document Intake →
             </Link>
             <Link href="/login" className="button secondary" style={{ textDecoration: "none", padding: "12px 20px" }}>

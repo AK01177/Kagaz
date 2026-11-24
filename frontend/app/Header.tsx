@@ -16,7 +16,7 @@ export function Header() {
   const displayName = user?.name || user?.email?.split("@")[0];
 
   return (
-    <header className="header" style={{ background: "#FFFFFF", borderBottom: "1px solid var(--line)" }}>
+    <header className="header">
       <Link className="wordmark" href="/">
         Kagaz<span>.</span>
       </Link>
@@ -24,19 +24,17 @@ export function Header() {
         <Link
           href="/"
           className={isHome ? "active" : ""}
-          style={isHome ? { color: "var(--ink)", fontWeight: 600 } : undefined}
         >
           Manifesto
         </Link>
         <Link
           href={isAuthenticated ? homeForRole(user?.role) : "/login"}
           className={isLogin ? "active" : ""}
-          style={isLogin ? { color: "var(--ink)", fontWeight: 600 } : undefined}
         >
-          {isAuthenticated ? "Open workspace" : "Sign In"}
+          {isAuthenticated ? "Open Workspace" : "Sign In"}
         </Link>
       </nav>
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
         {isAuthenticated && <NotificationCenter align="right" />}
         <Link
           href={isAuthenticated ? homeForRole(user?.role) : "/login"}
@@ -44,7 +42,7 @@ export function Header() {
           style={{ textDecoration: "none" }}
           title={isAuthenticated ? `Active in ${activeOrgId || user?.organization_id}` : "Sign in to workspace"}
         >
-          <i style={isAuthenticated ? { background: "var(--green)" } : undefined} />{" "}
+          <i style={isAuthenticated ? { background: "var(--success)" } : undefined} />
           {isAuthenticated && displayName ? displayName : "Sign In"}
         </Link>
       </div>
@@ -55,9 +53,12 @@ export function Header() {
 export function Footer() {
   return (
     <footer>
-      <span>KAGAZ DOCUMENT INTELLIGENCE</span>
-      <span>Private workspace · Encrypted at rest</span>
-      <code>SESSION 7F-8823</code>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <span style={{ fontWeight: 600, color: "var(--ink)" }}>KAGAZ</span>
+        <span>· Archival Document Intelligence &amp; Governance</span>
+      </div>
+      <span>Private Enclave · End-to-End Cryptographic Audit Ledger</span>
+      <code>VERIFIED BUILD 2.4.0</code>
     </footer>
   );
 }

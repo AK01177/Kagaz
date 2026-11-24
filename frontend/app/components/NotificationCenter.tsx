@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Icon } from "./AppShell";
 import { useAuth } from "../context/AuthContext";
 
-
 export interface NotificationItem {
   id: string;
   recipient_user_id: string;
@@ -50,7 +49,6 @@ export function NotificationCenter({
     } else if (align === "right") {
       left = rect.right - dropdownWidth;
     } else {
-      // Auto: if not enough space to the left of the button, align left
       if (rect.right - dropdownWidth < 12) {
         left = rect.left;
       } else {
@@ -58,7 +56,6 @@ export function NotificationCenter({
       }
     }
 
-    // Clamp inside viewport with 12px gutter
     left = Math.max(12, Math.min(left, window.innerWidth - dropdownWidth - 12));
     const top = inline ? Math.max(12, rect.top - 448) : rect.bottom + 8;
 
@@ -71,16 +68,6 @@ export function NotificationCenter({
       setDropdownPosition(pos);
     }
   }, [calculatePosition]);
-
-  const toggleOpen = () => {
-    if (!isOpen) {
-      const pos = calculatePosition();
-      if (pos) {
-        setDropdownPosition(pos);
-      }
-    }
-    setIsOpen((prev) => !prev);
-  };
 
   const loadNotifications = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -100,77 +87,114 @@ export function NotificationCenter({
     }
   }, [fetchWithAuth, isAuthenticated]);
 
+  const toggleOpen = () => {
+    if (!isOpen) {
+      const pos = calculatePosition();
+      if (pos) {
+        setDropdownPosition(pos);
+      }
+      loadNotifications();
+    }
+    setIsOpen((prev) => !prev);
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       loadNotifications();
     }, 0);
     const interval = setInterval(() => {
       loadNotifications();
-    }, 30000); // Polling every 30s
+    }, 30000);
     return () => {
       clearTimeout(timer);
       clearInterval(interval);
     };
   }, [loadNotifications]);
 
-  // Click outside to close
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
+    if (!isOpen) return;
+
+    function handleScrollOrResize() {
+      updatePosition();
     }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setIsOpen(false);
-      }
-    }
-    if (isOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      window.addEventListener("keydown", handleKeyDown);
-      window.addEventListener("resize", updatePosition);
-      window.addEventListener("scroll", updatePosition, true);
-    }
+
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    window.addEventListener("resize", handleScrollOrResize);
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+      window.removeEventListener("resize", handleScrollOrResize);
     };
   }, [isOpen, updatePosition]);
 
-  const markAsRead = async (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        const dialog = document.querySelector('[role="dialog"][aria-label="Notifications"]');
+        if (dialog && !dialog.contains(event.target as Node)) {
+          setIsOpen(false);
+        }
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const markAllAsRead = async () => {
     try {
-      const res = await fetchWithAuth(`/api/notifications/${id}/read`, {
+      const res = await fetchWithAuth(`/api/notifications/mark-read`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        setNotifications((prev) =>
+          prev.map((n) => ({ ...n, is_read: true }))
+        );
+        setUnreadCount(0);
+      }
+    } catch {}
+  };
+
+  const markOneAsRead = async (notificationId: string) => {
+    try {
+      const res = await fetchWithAuth(`/api/notifications/${notificationId}/read`, {
         method: "PATCH",
       });
       if (res.ok) {
         setNotifications((prev) =>
-          prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
+          prev.map((n) => (n.id === notificationId ? { ...n, is_read: true } : n))
         );
         setUnreadCount((prev) => Math.max(0, prev - 1));
       }
-    } catch {
-      // Ignored
-    }
+    } catch {}
   };
 
-  const markAllAsRead = async () => {
+  const formatRelativeTime = (isoString: string) => {
     try {
-      const res = await fetchWithAuth(`/api/notifications/read-all`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-        setUnreadCount(0);
-      }
+      const date = new Date(isoString);
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMins / 60);
+      const diffDays = Math.floor(diffHours / 24);
+
+      if (diffMins < 1) return "just now";
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString();
     } catch {
-      // Ignored
+      return isoString;
     }
   };
-
-  if (!isAuthenticated) return null;
 
   return (
     <div ref={containerRef} style={{ position: "relative", display: "inline-block" }}>
@@ -181,16 +205,17 @@ export function NotificationCenter({
         aria-label="Notifications"
         aria-expanded={isOpen}
         style={{
-          background: "transparent",
-          border: "none",
+          background: isOpen ? "rgba(255, 255, 255, 0.12)" : "rgba(255, 255, 255, 0.05)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
           cursor: "pointer",
           position: "relative",
           padding: "6px 8px",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: isOpen ? "var(--ink, #1f2328)" : "var(--muted, #666)",
-          borderRadius: "4px",
+          color: isOpen ? "#FFFFFF" : "#CBD5E1",
+          borderRadius: "6px",
+          transition: "all 0.15s ease",
         }}
       >
         <Icon name="alert" size={15} />
@@ -198,17 +223,19 @@ export function NotificationCenter({
           <span
             style={{
               position: "absolute",
-              top: "2px",
-              right: "2px",
-              background: "var(--red, #dc2626)",
-              color: "white",
-              fontSize: "9px",
+              top: "-4px",
+              right: "-4px",
+              background: "var(--brand)",
+              color: "#FFFFFF",
+              fontSize: "10px",
               fontWeight: 700,
-              padding: "1px 4px",
-              borderRadius: "10px",
-              lineHeight: 1,
-              minWidth: "14px",
+              padding: "1px 5px",
+              borderRadius: "9999px",
+              lineHeight: 1.2,
+              minWidth: "16px",
               textAlign: "center",
+              boxShadow: "0 0 8px rgba(79, 70, 229, 0.5)",
+              animation: "pulseGlow 2.5s infinite ease-in-out",
             }}
           >
             {unreadCount > 9 ? "9+" : unreadCount}
@@ -225,34 +252,34 @@ export function NotificationCenter({
             top: `${dropdownPosition.top}px`,
             left: `${dropdownPosition.left}px`,
             width: `${dropdownPosition.width}px`,
-            maxHeight: "min(440px, calc(100vh - 32px))",
-            background: "white",
-            border: "1px solid var(--line2, #e0ddd5)",
-            borderRadius: "8px",
-            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.05)",
+            maxHeight: "min(460px, calc(100vh - 32px))",
+            background: "#FFFFFF",
+            border: "1px solid var(--line)",
+            borderRadius: "12px",
+            boxShadow: "var(--shadow-xl), 0 0 0 1px rgba(15, 23, 42, 0.05)",
             zIndex: 1000,
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
-            fontFamily: "var(--font-sans, system-ui)",
+            animation: "scaleIn 0.2s var(--ease-spring)",
           }}
         >
           {/* Header */}
           <div
             style={{
-              padding: "12px 16px",
-              borderBottom: "1px solid var(--line2, #e0ddd5)",
+              padding: "14px 18px",
+              borderBottom: "1px solid var(--line)",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              background: "var(--side, #f8f7f4)",
+              background: "var(--surface-secondary)",
             }}
           >
-            <div>
-              <b style={{ fontSize: "12px", color: "var(--ink, #1f2328)" }}>Notifications</b>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <b style={{ fontSize: "13px", color: "var(--ink)" }}>Notifications</b>
               {unreadCount > 0 && (
-                <span style={{ fontSize: "10px", color: "var(--muted)", marginLeft: "6px" }}>
-                  ({unreadCount} unread)
+                <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--brand)", background: "var(--brand-surface)", padding: "1px 6px", borderRadius: "9999px" }}>
+                  {unreadCount} unread
                 </span>
               )}
             </div>
@@ -264,9 +291,9 @@ export function NotificationCenter({
                   background: "transparent",
                   border: "none",
                   fontSize: "11px",
-                  color: "var(--sage, #4f6b5c)",
+                  color: "var(--brand)",
                   cursor: "pointer",
-                  fontWeight: 500,
+                  fontWeight: 600,
                 }}
               >
                 Mark all read
@@ -275,94 +302,129 @@ export function NotificationCenter({
           </div>
 
           {/* List Content */}
-          <div style={{ overflowY: "auto", flex: 1, padding: "8px 0" }}>
+          <div style={{ overflowY: "auto", flex: 1, padding: "4px 0" }}>
             {loading && notifications.length === 0 ? (
-              <div style={{ padding: "24px", textAlign: "center", fontSize: "11px", color: "var(--muted)" }}>
-                Loading notifications...
+              <div style={{ padding: "28px", textAlign: "center", fontSize: "12px", color: "var(--muted)" }}>
+                Loading activity events...
               </div>
             ) : error ? (
-              <div style={{ padding: "16px", fontSize: "11px", color: "var(--red, #dc2626)", textAlign: "center" }}>
+              <div style={{ padding: "20px", textAlign: "center", fontSize: "12px", color: "var(--error)" }}>
                 {error}
               </div>
             ) : notifications.length === 0 ? (
-              <div style={{ padding: "32px 16px", textAlign: "center", color: "var(--muted)" }}>
-                <Icon name="check" size={20} />
-                <p style={{ margin: "8px 0 0", fontSize: "12px" }}>All caught up!</p>
-                <small style={{ fontSize: "10px" }}>No workflow notifications at this time.</small>
-              </div>
-            ) : (
-              notifications.map((n) => (
-                <div
-                  key={n.id}
+              <div style={{ padding: "36px 20px", textAlign: "center", color: "var(--muted)" }}>
+                <span
                   style={{
-                    padding: "10px 16px",
-                    borderBottom: "1px solid var(--line2, #f0eee8)",
-                    background: n.is_read ? "transparent" : "#faf8f5",
-                    display: "flex",
-                    gap: "10px",
-                    alignItems: "flex-start",
-                    transition: "background 0.2s",
+                    width: "36px",
+                    height: "36px",
+                    borderRadius: "50%",
+                    background: "var(--success-bg)",
+                    color: "var(--success)",
+                    display: "grid",
+                    placeItems: "center",
+                    margin: "0 auto 10px",
                   }}
                 >
-                  <div
+                  <Icon name="check" size={18} />
+                </span>
+                <p style={{ margin: "0 0 2px", fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>All caught up</p>
+                <small style={{ fontSize: "11px", color: "var(--secondary)" }}>No unread notifications for this workspace.</small>
+              </div>
+            ) : (
+              notifications.map((item) => (
+                <div
+                  key={item.id}
+                  onClick={() => !item.is_read && markOneAsRead(item.id)}
+                  style={{
+                    padding: "12px 18px",
+                    borderBottom: "1px solid var(--border-subtle)",
+                    background: item.is_read ? "transparent" : "var(--brand-surface)",
+                    cursor: "pointer",
+                    display: "flex",
+                    gap: "12px",
+                    alignItems: "flex-start",
+                    transition: "background 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = item.is_read ? "var(--surface-secondary)" : "var(--brand-tint)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = item.is_read ? "transparent" : "var(--brand-surface)";
+                  }}
+                >
+                  <span
                     style={{
-                      width: "6px",
-                      height: "6px",
+                      width: "8px",
+                      height: "8px",
                       borderRadius: "50%",
-                      background: n.is_read ? "transparent" : "var(--amber, #b45309)",
-                      marginTop: "6px",
+                      background: item.is_read ? "transparent" : "var(--brand)",
+                      marginTop: "5px",
                       flexShrink: 0,
                     }}
                   />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <b style={{ fontSize: "11px", color: "var(--ink)", display: "block" }}>
-                        {n.title}
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "baseline",
+                        gap: "6px",
+                      }}
+                    >
+                      <b
+                        style={{
+                          fontSize: "12px",
+                          fontWeight: item.is_read ? 500 : 600,
+                          color: "var(--ink)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {item.title}
                       </b>
-                      <span style={{ fontSize: "9px", color: "var(--muted)", flexShrink: 0, marginLeft: "8px" }}>
-                        {new Date(n.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          color: "var(--muted)",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {formatRelativeTime(item.created_at)}
                       </span>
                     </div>
-
-                    {n.body && (
-                      <p style={{ margin: "3px 0 0", fontSize: "11px", color: "var(--muted)", lineHeight: 1.4 }}>
-                        {n.body}
+                    {item.body && (
+                      <p
+                        style={{
+                          margin: "3px 0 0",
+                          fontSize: "11px",
+                          color: "var(--secondary)",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {item.body}
                       </p>
                     )}
-
-                    <div style={{ display: "flex", gap: "10px", marginTop: "6px", alignItems: "center" }}>
-                      {n.document_id && (
-                        <Link
-                          href={`/workspace/documents/${n.document_id}`}
-                          onClick={() => setIsOpen(false)}
-                          style={{
-                            fontSize: "10px",
-                            color: "var(--ink)",
-                            textDecoration: "underline",
-                            fontWeight: 500,
-                          }}
-                        >
-                          View Document →
-                        </Link>
-                      )}
-
-                      {!n.is_read && (
-                        <button
-                          type="button"
-                          onClick={(e) => markAsRead(n.id, e)}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            fontSize: "10px",
-                            color: "var(--muted)",
-                            cursor: "pointer",
-                            padding: 0,
-                          }}
-                        >
-                          Mark read
-                        </button>
-                      )}
-                    </div>
+                    {item.document_id && (
+                      <Link
+                        href={`/workspace/documents/${item.document_id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsOpen(false);
+                          if (!item.is_read) markOneAsRead(item.id);
+                        }}
+                        style={{
+                          display: "inline-block",
+                          marginTop: "6px",
+                          fontSize: "11px",
+                          color: "var(--brand)",
+                          fontWeight: 600,
+                          textDecoration: "none",
+                        }}
+                      >
+                        Inspect Document →
+                      </Link>
+                    )}
                   </div>
                 </div>
               ))

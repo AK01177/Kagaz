@@ -56,7 +56,7 @@ function DocumentsContent() {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const currentOrg = activeOrgId || user?.organization_id || "ACME GLOBAL ENTERPRISE";
+  const currentOrg = activeOrgId || user?.organization_id || "Enterprise Workspace";
 
   const loadDocuments = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -240,31 +240,30 @@ function DocumentsContent() {
       <header className="page-head">
         <div className="crumb">
           <Icon name="inbox" size={14} /> Workspace <span>/</span> Intake &amp; Library
-        </div>
-        <div className="sync">
-          <span className="brand-dot" /> {loading ? "Syncing..." : "Synced just now"}
+          <div className="record-lock">
+            <span className="brand-dot" /> {loading ? "Syncing..." : "Live Storage Active"}
+          </div>
         </div>
         <div className="head-main">
           <div>
-            <h1>Bring a document into focus.</h1>
+            <h1>Document Intake &amp; Repository</h1>
             <p className="subline">
-              DOCUMENT INTAKE · {files.length} RECORDS IN {currentOrg.toUpperCase()}
+              INTAKE PIPELINE · {files.length} RECORDS IN {currentOrg.toUpperCase()}
             </p>
           </div>
-          <Button icon="sliders" onClick={loadDocuments}>
+          <Button icon="refresh" onClick={loadDocuments} disabled={loading}>
             Sync Library
           </Button>
         </div>
       </header>
 
       <div className="intake-body">
-        {/* Upload dropzone matching Figma Board 08 */}
+        {/* Upload dropzone */}
         <div
           className={`upload-panel ${isDragging ? "dragging" : ""}`}
           style={{
-            border: isDragging ? "2px dashed var(--brand)" : "1px dashed var(--line2)",
-            background: isDragging ? "var(--brand-surface)" : "white",
-            transition: "all 0.2s ease",
+            borderColor: isDragging ? "var(--brand)" : undefined,
+            background: isDragging ? "var(--brand-surface)" : "#FFFFFF",
           }}
           onDragOver={(e) => {
             e.preventDefault();
@@ -280,16 +279,18 @@ function DocumentsContent() {
             accept=".pdf,.png,.jpg,.jpeg"
             onChange={(e) => chooseFile(e.target.files?.[0])}
           />
-          <span className="upload-icon">↥</span>
+          <span className="upload-icon">
+            <Icon name="inbox" size={24} />
+          </span>
           <h2>Deposit a file for intelligence.</h2>
           <p>
             {file
               ? `Ready to process: ${file.name} (${formatFileSize(file.size)})`
               : "Drop a PDF or image here or browse files from storage."}
           </p>
-          <span className="upload-spec">PDF · PNG · JPG · JPEG · MAXIMUM 10 MB</span>
+          <span className="upload-spec">PDF · PNG · JPG · JPEG · CEILING 10 MB</span>
 
-          <div style={{ marginTop: "16px", display: "flex", gap: "10px" }}>
+          <div style={{ marginTop: "18px", display: "flex", gap: "10px", alignItems: "center" }}>
             {!file ? (
               <Button variant="primary" icon="file" onClick={() => inputRef.current?.click()}>
                 Select Document File
@@ -307,13 +308,13 @@ function DocumentsContent() {
           </div>
 
           {error && (
-            <p style={{ color: "var(--red)", fontSize: "11px", marginTop: "12px", fontWeight: 500 }}>
+            <p style={{ color: "var(--error)", fontSize: "12px", marginTop: "14px", fontWeight: 600 }}>
               ⚠ {error}
             </p>
           )}
 
           {state === "success" && (
-            <p style={{ color: "var(--green)", fontSize: "11px", marginTop: "12px", fontWeight: 600 }}>
+            <p style={{ color: "var(--success)", fontSize: "12px", marginTop: "14px", fontWeight: 600 }}>
               ✓ File registered. Redirecting to Document Inspector...
             </p>
           )}
@@ -326,21 +327,23 @@ function DocumentsContent() {
               <span className="eyebrow">WORKSPACE REPOSITORY</span>
               <h2>Intake &amp; Library</h2>
             </div>
-            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-              <div style={{ display: "flex", gap: "4px" }}>
+            <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "6px" }}>
                 {["ALL", "INVOICE", "CONTRACT", "RECORD"].map((cat) => (
                   <button
                     key={cat}
                     type="button"
                     onClick={() => setSelectedGenre(cat)}
                     style={{
-                      border: "1px solid var(--line)",
-                      background: selectedGenre === cat ? "var(--brand-surface)" : "white",
-                      color: selectedGenre === cat ? "var(--brand)" : "var(--muted)",
-                      padding: "4px 8px",
-                      borderRadius: "4px",
-                      fontSize: "10px",
+                      border: `1px solid ${selectedGenre === cat ? "var(--brand)" : "var(--line)"}`,
+                      background: selectedGenre === cat ? "var(--brand-surface)" : "#FFFFFF",
+                      color: selectedGenre === cat ? "var(--brand)" : "var(--secondary)",
+                      padding: "5px 10px",
+                      borderRadius: "6px",
+                      fontSize: "11px",
                       fontWeight: 600,
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
                     }}
                   >
                     {cat}
@@ -348,7 +351,7 @@ function DocumentsContent() {
                 ))}
               </div>
               <label className="search" htmlFor="doc-search-input">
-                <Icon name="search" size={13} />
+                <Icon name="search" size={14} />
                 <input
                   id="doc-search-input"
                   placeholder="Find a document…"
@@ -367,37 +370,41 @@ function DocumentsContent() {
               <span>UNIQUE ID</span>
               <span>UPLOADED</span>
               <span>CLASSIFICATION</span>
-              <span>AI CONF.</span>
+              <span>CONFIDENCE &amp; STATUS</span>
             </div>
 
             {filteredFiles.map((d) => (
               <Link className="lib-row" key={d.id} href={`/workspace/documents/${d.id}`}>
                 <span className="doc-name">
                   <span className="doc-icon">
-                    <Icon name="file" />
+                    <Icon name="file" size={16} />
                   </span>
                   <b>{d.name}</b>
                 </span>
                 <code>{d.id}</code>
-                <span>{d.date}</span>
-                <span>{d.genre}</span>
-                <Badge
-                  tone={
-                    d.confidence && parseFloat(d.confidence) < 75
-                      ? "amber"
-                      : d.confidence && parseFloat(d.confidence) >= 90
-                      ? "green"
-                      : "violet"
-                  }
-                >
-                  {d.confidence || "—"}
-                </Badge>
+                <span style={{ color: "var(--secondary)", fontSize: "12px" }}>{d.date}</span>
+                <span style={{ fontWeight: 500, color: "var(--ink)" }}>{d.genre}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Badge
+                    tone={
+                      d.confidence && parseFloat(d.confidence) < 75
+                        ? "amber"
+                        : d.confidence && parseFloat(d.confidence) >= 90
+                        ? "green"
+                        : "violet"
+                    }
+                  >
+                    {d.confidence || "—"}
+                  </Badge>
+                  <small style={{ color: "var(--muted)", fontSize: "11px", fontWeight: 500 }}>{d.status}</small>
+                </div>
               </Link>
             ))}
 
             {filteredFiles.length === 0 && (
-              <div style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>
-                No documents match your query. Deposit a new file above to start extraction.
+              <div style={{ padding: "48px", textAlign: "center", color: "var(--muted)" }}>
+                <p style={{ margin: "0 0 6px", fontSize: "14px", fontWeight: 600, color: "var(--ink)" }}>No documents match your query.</p>
+                <small style={{ fontSize: "12px", color: "var(--secondary)" }}>Deposit a new file above to start extraction and classification.</small>
               </div>
             )}
           </div>

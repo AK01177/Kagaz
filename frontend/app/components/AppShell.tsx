@@ -50,17 +50,176 @@ export const icons: Record<IconName, string> = {
   folder: "fed02.svg",
 };
 
-export function Icon({ name, size = 15 }: { name: IconName; size?: number }) {
-  return (
-    /* eslint-disable-next-line @next/next/no-img-element */
-    <img
-      className="icon"
-      src={`/assets/${icons[name] || "9255a.svg"}`}
-      width={size}
-      height={size}
-      alt=""
-    />
-  );
+export function Icon({ name, size = 16, className = "" }: { name: IconName; size?: number; className?: string }) {
+  const props = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    className: `icon ${className}`,
+    style: { display: "inline-block", verticalAlign: "middle", flexShrink: 0 },
+  };
+
+  switch (name) {
+    case "grid":
+      return (
+        <svg {...props}>
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        </svg>
+      );
+    case "inbox":
+      return (
+        <svg {...props}>
+          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+          <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+        </svg>
+      );
+    case "stamp":
+      return (
+        <svg {...props}>
+          <path d="M5 22h14" />
+          <path d="M19.27 13.73A2.5 2.5 0 0 0 17.5 13h-11a2.5 2.5 0 0 0-1.77.73l-1.5 1.5A2.5 2.5 0 0 0 2.5 17V18h19v-1a2.5 2.5 0 0 0-.73-1.77l-1.5-1.5z" />
+          <path d="M14 13V8.5a2 2 0 0 0-2-2h0a2 2 0 0 0-2 2V13" />
+        </svg>
+      );
+    case "check":
+      return (
+        <svg {...props}>
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      );
+    case "book":
+      return (
+        <svg {...props}>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      );
+    case "shield":
+      return (
+        <svg {...props}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+      );
+    case "settings":
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      );
+    case "file":
+      return (
+        <svg {...props}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+      );
+    case "copy":
+      return (
+        <svg {...props}>
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      );
+    case "pencil":
+      return (
+        <svg {...props}>
+          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+        </svg>
+      );
+    case "refresh":
+      return (
+        <svg {...props}>
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </svg>
+      );
+    case "search":
+      return (
+        <svg {...props}>
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      );
+    case "alert":
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+      );
+    case "receipt":
+      return (
+        <svg {...props}>
+          <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1Z" />
+          <line x1="8" y1="8" x2="16" y2="8" />
+          <line x1="8" y1="12" x2="16" y2="12" />
+          <line x1="8" y1="16" x2="12" y2="16" />
+        </svg>
+      );
+    case "contact":
+      return (
+        <svg {...props}>
+          <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+      );
+    case "sliders":
+      return (
+        <svg {...props}>
+          <line x1="4" y1="21" x2="4" y2="14" />
+          <line x1="4" y1="10" x2="4" y2="3" />
+          <line x1="12" y1="21" x2="12" y2="12" />
+          <line x1="12" y1="8" x2="12" y2="3" />
+          <line x1="20" y1="21" x2="20" y2="16" />
+          <line x1="20" y1="12" x2="20" y2="3" />
+          <line x1="1" y1="14" x2="7" y2="14" />
+          <line x1="9" y1="8" x2="15" y2="8" />
+          <line x1="17" y1="16" x2="23" y2="16" />
+        </svg>
+      );
+    case "flag":
+      return (
+        <svg {...props}>
+          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+          <line x1="4" y1="22" x2="4" y2="15" />
+        </svg>
+      );
+    case "history":
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+      );
+    case "folder":
+      return (
+        <svg {...props}>
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+      );
+    default:
+      return (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img
+          className={`icon ${className}`}
+          src={`/assets/${icons[name] || "9255a.svg"}`}
+          width={size}
+          height={size}
+          alt=""
+        />
+      );
+  }
 }
 
 export function Button({
@@ -70,6 +229,7 @@ export function Button({
   onClick,
   disabled = false,
   type = "button",
+  className = "",
 }: {
   children: React.ReactNode;
   icon?: IconName;
@@ -77,15 +237,16 @@ export function Button({
   onClick?: () => void;
   disabled?: boolean;
   type?: "button" | "submit" | "reset";
+  className?: string;
 }) {
   return (
     <button
       type={type}
-      className={`btn ${variant}`}
+      className={`btn ${variant} ${className}`}
       onClick={onClick}
       disabled={disabled}
     >
-      {icon && <Icon name={icon} size={14} />}
+      {icon && <Icon name={icon} size={15} />}
       {children}
     </button>
   );
@@ -112,7 +273,6 @@ export function Sidebar() {
   const { user, memberships, activeOrgId, switchOrganization, logout, isAuthenticated, fetchWithAuth } =
     useAuth();
 
-  // One number per role: submitters count their files, reviewers their queue, approvers their approvals.
   const [badgeCount, setBadgeCount] = useState<number | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [orgSwitchError, setOrgSwitchError] = useState<string | null>(null);
@@ -147,7 +307,6 @@ export function Sidebar() {
   const currentOrgId = activeOrgId || user?.organization_id || "";
   const currentOrg = memberships.find((m) => m.organization_id === currentOrgId)?.organization_name || currentOrgId || "Kagaz";
 
-  // Each role only sees the links it can use.
   const links: { href: string; label: string; icon: IconName; count?: boolean }[] =
     userRole === "SUBMITTER"
       ? [
@@ -157,7 +316,7 @@ export function Sidebar() {
       : userRole === "REVIEWER"
       ? [
           { href: "/workspace/dashboard", label: "Overview", icon: "grid" },
-          { href: "/workspace/review", label: "Verification Queue", icon: "stamp", count: true },
+          { href: "/workspace/review", label: "Verification Desk", icon: "stamp", count: true },
         ]
       : userRole === "APPROVER"
       ? [
@@ -181,19 +340,18 @@ export function Sidebar() {
       setOrgSwitchError(result.error || "Failed to switch organization");
       return;
     }
-    // The role can differ per organization, so go to that role's home page.
     const role = memberships.find((m) => m.organization_id === targetOrg)?.role;
     router.push(homeForRole(role));
   };
 
   return (
-    <aside className={`sidebar ${isCollapsed ? "collapsed" : ""}`} style={isCollapsed ? { width: "64px", minWidth: "64px", padding: "20px 8px" } : undefined}>
+    <aside className={`sidebar ${isCollapsed ? "collapsed" : ""}`}>
       <div className="brand-row">
-        <Link href={homeForRole(userRole)} className="brand" title="Kagaz">
-          {isCollapsed ? "K." : "Kagaz."}
+        <Link href={homeForRole(userRole)} className="brand" title="Kagaz Intelligence Platform">
+          {isCollapsed ? "K" : "Kagaz"}
+          <span className="brand-dot" />
         </Link>
-        <span className="brand-dot" />
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "4px" }}>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px" }}>
           {!isCollapsed && <NotificationCenter align="left" />}
           <button
             type="button"
@@ -202,7 +360,7 @@ export function Sidebar() {
             title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-label="Toggle Sidebar"
           >
-            ◫
+            {isCollapsed ? "⇥" : "⇤"}
           </button>
         </div>
       </div>
@@ -221,18 +379,19 @@ export function Sidebar() {
                 aria-label="Active Organization"
                 style={{
                   width: "100%",
-                  padding: "3px 6px",
-                  fontSize: "10px",
+                  padding: "4px 8px",
+                  fontSize: "11px",
                   fontFamily: "inherit",
-                  background: "white",
-                  border: "1px solid var(--line2, #e0ddd5)",
-                  borderRadius: "4px",
-                  color: "var(--body)",
+                  background: "rgba(255, 255, 255, 0.08)",
+                  border: "1px solid rgba(255, 255, 255, 0.15)",
+                  borderRadius: "6px",
+                  color: "#FFFFFF",
                   cursor: "pointer",
+                  outline: "none",
                 }}
               >
                 {memberships.map((m) => (
-                  <option key={m.organization_id} value={m.organization_id}>
+                  <option key={m.organization_id} value={m.organization_id} style={{ background: "#0F172A", color: "#FFFFFF" }}>
                     {m.organization_name || m.organization_id} ({ROLE_LABELS[m.role] || m.role})
                   </option>
                 ))}
@@ -243,7 +402,7 @@ export function Sidebar() {
           )}
 
           {orgSwitchError && (
-            <span style={{ color: "var(--red, #dc2626)", fontSize: "9px", marginTop: "2px" }}>
+            <span style={{ color: "#EF4444", fontSize: "10px", marginTop: "2px" }}>
               {orgSwitchError}
             </span>
           )}
@@ -262,17 +421,20 @@ export function Sidebar() {
             className={pathname === link.href || pathname.startsWith(link.href + "/") ? "active" : ""}
             title={link.label}
           >
-            <Icon name={link.icon} />
+            <Icon name={link.icon} size={16} />
             {!isCollapsed && (
               <>
-                <span className="nav-label">{link.label} {link.count && isAuthenticated && badgeCount !== null && badgeCount > 0 && <em>{badgeCount}</em>}</span>
+                <span className="nav-label" style={{ flex: 1 }}>{link.label}</span>
+                {link.count && isAuthenticated && badgeCount !== null && badgeCount > 0 && (
+                  <em>{badgeCount}</em>
+                )}
               </>
             )}
           </Link>
         ))}
         {!isAuthenticated && (
           <Link href="/login" title="Sign In">
-            <Icon name="book" />
+            <Icon name="book" size={16} />
             {!isCollapsed && "Sign In"}
           </Link>
         )}
@@ -281,17 +443,17 @@ export function Sidebar() {
       <div className="side-bottom">
         {!isCollapsed && (
           <div className="side-note">
-            <p style={{ color: "var(--muted)", fontSize: "11px", margin: 0, lineHeight: 1.5 }}>
-              Every document.
+            <p style={{ color: "#94A3B8", fontSize: "11px", margin: 0, lineHeight: 1.5 }}>
+              Archival Intelligence.
               <br />
-              Every decision. Accounted for.
+              Deterministic Governance.
             </p>
           </div>
         )}
 
         {!isCollapsed && (
-          <div className="backend" style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "10px", color: "var(--brand)" }}>
-            <span className="brand-dot" /> Backend online
+          <div className="backend">
+            <span className="brand-dot" /> Verified Enclave Active
           </div>
         )}
 
@@ -323,18 +485,19 @@ export function Sidebar() {
                 logout();
                 router.push("/login");
               }}
-              title="Log out"
+              title="Sign out of workspace"
               aria-label="Log out"
               style={{
-                background: "transparent",
+                background: "rgba(255, 255, 255, 0.06)",
                 border: "none",
                 cursor: "pointer",
-                color: "var(--muted, #666)",
+                color: "#94A3B8",
                 padding: "6px",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                borderRadius: "4px",
+                borderRadius: "6px",
+                transition: "all 0.15s ease",
               }}
             >
               <Icon name="history" size={14} />
